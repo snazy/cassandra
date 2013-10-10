@@ -20,6 +20,10 @@ package org.apache.cassandra.concurrent;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import org.apache.cassandra.concurrent.affinity.CpuAffinityStrategy;
+import org.apache.cassandra.concurrent.affinity.EqualSpreadCpuAffinityStrategy;
+import org.apache.cassandra.concurrent.affinity.NoCpuAffinityStrategy;
+
 /**
  * This class is an implementation of the <i>ThreadFactory</i> interface. This
  * is useful to give Java threads meaningful names which is useful when using
@@ -31,23 +35,41 @@ public class NamedThreadFactory implements ThreadFactory
     protected final String id;
     private final int priority;
     protected final AtomicInteger n = new AtomicInteger(1);
+    private final CpuAffinityStrategy cpuAffinity;
 
     public NamedThreadFactory(String id)
     {
-        this(id, Thread.NORM_PRIORITY);
+        this(id, Thread.NORM_PRIORITY, new NoCpuAffinityStrategy());
     }
 
     public NamedThreadFactory(String id, int priority)
     {
+        this(id, priority, new EqualSpreadCpuAffinityStrategy());
+    }
 
+    public NamedThreadFactory(String id, CpuAffinityStrategy cpuAffinity)
+    {
+        this(id, Thread.NORM_PRIORITY, cpuAffinity);
+    }
+
+    public NamedThreadFactory(String id, int priority, CpuAffinityStrategy cpuAffinity)
+    {
         this.id = id;
         this.priority = priority;
+        this.cpuAffinity = cpuAffinity;
     }
 
     public Thread newThread(Runnable runnable)
     {
         String name = id + ":" + n.getAndIncrement();
-        Thread thread = new Thread(runnable, name);
+        Thread thread = new Thread(runnable, name)
+        {
+            public void run()
+            {
+                cpuAffinity.setCpuAffinity(this);
+                super.run();
+            }
+        };
         thread.setPriority(priority);
         thread.setDaemon(true);
         return thread;
