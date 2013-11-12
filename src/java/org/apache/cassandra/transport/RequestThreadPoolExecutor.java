@@ -17,9 +17,9 @@
  */
 package org.apache.cassandra.transport;
 
-import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 
+import org.apache.cassandra.concurrent.affinity.EqualSpreadCpuAffinityStrategy;
 import org.jboss.netty.handler.execution.MemoryAwareThreadPoolExecutor;
 import org.jboss.netty.util.ObjectSizeEstimator;
 
@@ -40,7 +40,7 @@ public class RequestThreadPoolExecutor extends MemoryAwareThreadPoolExecutor
               MAX_QUEUED_REQUESTS,
               CORE_THREAD_TIMEOUT_SEC, TimeUnit.SECONDS,
               sizeEstimator(),
-              new NamedThreadFactory("Native-Transport-Requests"));
+              new NamedThreadFactory("Native-Transport-Requests", new EqualSpreadCpuAffinityStrategy()));
     }
 
     /*

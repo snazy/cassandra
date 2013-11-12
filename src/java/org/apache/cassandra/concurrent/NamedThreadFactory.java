@@ -39,12 +39,12 @@ public class NamedThreadFactory implements ThreadFactory
 
     public NamedThreadFactory(String id)
     {
-        this(id, Thread.NORM_PRIORITY, new NoCpuAffinityStrategy());
+        this(id, Thread.NORM_PRIORITY, new EqualSpreadCpuAffinityStrategy());
     }
 
     public NamedThreadFactory(String id, int priority)
     {
-        this(id, priority, new NoCpuAffinityStrategy());
+        this(id, priority, new EqualSpreadCpuAffinityStrategy());
     }
 
     public NamedThreadFactory(String id, CpuAffinityStrategy cpuAffinity)
