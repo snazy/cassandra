@@ -1,5 +1,6 @@
 package org.apache.cassandra.concurrent.affinity;
 
+import java.util.Arrays;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import com.higherfrequencytrading.affinity.AffinityLock;
@@ -51,6 +52,7 @@ public class EqualSpreadCpuAffinityStrategy implements CpuAffinityStrategy
         {
             bannedCpus[idx] = Integer.parseInt(cpu.trim());
         }
+        logger.info("excluding cpus {} from use in affinity strategy", Arrays.toString(bannedCpus));
         return bannedCpus;
     }
 
