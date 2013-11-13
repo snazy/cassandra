@@ -51,6 +51,7 @@ public class EqualSpreadCpuAffinityStrategy implements CpuAffinityStrategy
         for (String cpu : cpus)
         {
             bannedCpus[idx] = Integer.parseInt(cpu.trim());
+            idx++;
         }
         logger.info("excluding cpus {} from use in affinity strategy", Arrays.toString(bannedCpus));
         return bannedCpus;
