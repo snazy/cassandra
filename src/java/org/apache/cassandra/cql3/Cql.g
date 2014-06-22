@@ -245,6 +245,7 @@ cqlStatement returns [ParsedStatement stmt]
     | st25=createTypeStatement         { $stmt = st25; }
     | st26=alterTypeStatement          { $stmt = st26; }
     | st27=dropTypeStatement           { $stmt = st27; }
+    | st28=alterSystemStatement        { $stmt = st28; }
     ;
 
 /*
@@ -808,6 +809,22 @@ userOption[UserOptions opts]
     : k=K_PASSWORD v=STRING_LITERAL { opts.put($k.text, $v.text); }
     ;
 
+/**
+ * ALTER NODE SET <name> = <value> [IN DC <dc> [IN RACK <rack>]] | [IN NODE <node>]
+ */
+alterSystemStatement returns [AlterSystemStatement stmt]
+    @init { String dc=null; String rack=null; String node=null; }
+    : K_ALTER K_SYSTEM K_SET cfg_name '=' cfg_value
+          (
+              (K_IN K_DC dc { dc = $dc.text; }
+                  (K_IN K_RACK rack { rack = $rack.text; })?
+              )
+              |
+              (K_IN K_NODE node { node = $node.text; })
+          )?
+          { $stmt = new AlterSystemStatement($cfg_name.text, $cfg_value.text, dc, rack, node); }
+    ;
+
 /** DEFINITIONS **/
 
 // Column Identifiers
@@ -1138,6 +1155,29 @@ username
     | STRING_LITERAL
     ;
 
+cfg_name
+    : IDENT
+    ;
+
+cfg_value
+    : constant
+    ;
+
+dc
+    : IDENT
+    | STRING_LITERAL
+    ;
+
+rack
+    : IDENT
+    | STRING_LITERAL
+    ;
+
+node
+    : IDENT
+    | STRING_LITERAL
+    ;
+
 // Basically the same than cident, but we need to exlude existing CQL3 types
 // (which for some reason are not reserved otherwise)
 non_type_ident returns [ColumnIdentifier id]
@@ -1183,6 +1223,10 @@ basic_unreserved_keyword returns [String str]
         | K_DISTINCT
         | K_CONTAINS
         | K_STATIC
+        | K_SYSTEM
+        | K_NODE
+        | K_RACK
+        | K_DC
         ) { $str = $k.text; }
     ;
 
@@ -1241,6 +1285,11 @@ K_ALLOW:       A L L O W;
 K_FILTERING:   F I L T E R I N G;
 K_IF:          I F;
 K_CONTAINS:    C O N T A I N S;
+
+K_SYSTEM:      S Y S T E M;
+K_NODE:        N O D E;
+K_RACK:        R A C K;
+K_DC:          D C;
 
 K_GRANT:       G R A N T;
 K_ALL:         A L L;
