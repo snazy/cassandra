@@ -32,4 +32,10 @@ public class SeedProviderDef
         class_name = (String)p.get("class_name");
         parameters = (Map<String, String>)((List)p.get("parameters")).get(0);
     }
+
+    @Override public String toString() {
+        String cn = class_name;
+        if (cn.startsWith("org.apache.cassandra.locator.")) cn = cn.substring("org.apache.cassandra.locator.".length());
+        return cn + parameters;
+    }
 }

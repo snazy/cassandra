@@ -36,6 +36,11 @@ public abstract class EncryptionOptions
     public static class ClientEncryptionOptions extends EncryptionOptions
     {
         public boolean enabled = false;
+
+        @Override public String toString() {
+            return "ClientEncryptionOptions(" +
+                "enabled=" + enabled + ")";
+        }
     }
 
     public static class ServerEncryptionOptions extends EncryptionOptions
@@ -45,5 +50,10 @@ public abstract class EncryptionOptions
             all, none, dc, rack
         }
         public InternodeEncryption internode_encryption = InternodeEncryption.none;
+
+        @Override public String toString() {
+            return "ServerEncryptionOptions(" +
+                "internode_encryption=" + internode_encryption + ')';
+        }
     }
 }

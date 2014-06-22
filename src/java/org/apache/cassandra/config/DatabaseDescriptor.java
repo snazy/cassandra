@@ -35,6 +35,7 @@ import java.util.UUID;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.primitives.Longs;
+import org.apache.cassandra.cql3.QueryProcessor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -622,6 +623,16 @@ public class DatabaseDescriptor
         Schema.instance.updateVersion();
     }
 
+    public static void persistConfig(String reason) {
+        if (Config.isClientMode()) return;
+        Object[] values = conf.cqlInsertParams(reason);
+        QueryProcessor.executeInternal(Config.INSERT_CQL, values);
+    }
+
+    private static void configChanged() {
+        persistConfig("changed");
+    }
+
     private static boolean hasExistingNoSystemTables()
     {
         for (String dataDir : getAllDataFileLocations())
@@ -719,6 +730,7 @@ public class DatabaseDescriptor
     public static void setPartitioner(IPartitioner<?> newPartitioner)
     {
         partitioner = newPartitioner;
+        configChanged();
     }
 
     public static IEndpointSnitch getEndpointSnitch()
@@ -728,6 +740,7 @@ public class DatabaseDescriptor
     public static void setEndpointSnitch(IEndpointSnitch eps)
     {
         snitch = eps;
+        configChanged();
     }
 
     public static IRequestScheduler getRequestScheduler()
@@ -856,6 +869,7 @@ public class DatabaseDescriptor
     public static void setRpcTimeout(Long timeOutInMillis)
     {
         conf.request_timeout_in_ms = timeOutInMillis;
+        configChanged();
     }
 
     public static long getReadRpcTimeout()
@@ -866,6 +880,7 @@ public class DatabaseDescriptor
     public static void setReadRpcTimeout(Long timeOutInMillis)
     {
         conf.read_request_timeout_in_ms = timeOutInMillis;
+        configChanged();
     }
 
     public static long getRangeRpcTimeout()
@@ -876,6 +891,7 @@ public class DatabaseDescriptor
     public static void setRangeRpcTimeout(Long timeOutInMillis)
     {
         conf.range_request_timeout_in_ms = timeOutInMillis;
+        configChanged();
     }
 
     public static long getWriteRpcTimeout()
@@ -886,6 +902,7 @@ public class DatabaseDescriptor
     public static void setWriteRpcTimeout(Long timeOutInMillis)
     {
         conf.write_request_timeout_in_ms = timeOutInMillis;
+        configChanged();
     }
 
     public static long getCounterWriteRpcTimeout()
@@ -896,6 +913,7 @@ public class DatabaseDescriptor
     public static void setCounterWriteRpcTimeout(Long timeOutInMillis)
     {
         conf.counter_write_request_timeout_in_ms = timeOutInMillis;
+        configChanged();
     }
 
     public static long getCasContentionTimeout()
@@ -906,6 +924,7 @@ public class DatabaseDescriptor
     public static void setCasContentionTimeout(Long timeOutInMillis)
     {
         conf.cas_contention_timeout_in_ms = timeOutInMillis;
+        configChanged();
     }
 
     public static long getTruncateRpcTimeout()
@@ -916,6 +935,7 @@ public class DatabaseDescriptor
     public static void setTruncateRpcTimeout(Long timeOutInMillis)
     {
         conf.truncate_request_timeout_in_ms = timeOutInMillis;
+        configChanged();
     }
 
     public static boolean hasCrossNodeTimeout()
@@ -965,6 +985,7 @@ public class DatabaseDescriptor
     public static void setPhiConvictThreshold(double phiConvictThreshold)
     {
         conf.phi_convict_threshold = phiConvictThreshold;
+        configChanged();
     }
 
     public static int getConcurrentReaders()
@@ -995,6 +1016,7 @@ public class DatabaseDescriptor
     public static void setInMemoryCompactionLimit(int sizeInMB)
     {
         conf.in_memory_compaction_limit_in_mb = sizeInMB;
+        configChanged();
     }
 
     public static int getConcurrentCompactors()
@@ -1010,6 +1032,7 @@ public class DatabaseDescriptor
     public static void setCompactionThroughputMbPerSec(int value)
     {
         conf.compaction_throughput_mb_per_sec = value;
+        configChanged();
     }
 
     public static int getStreamThroughputOutboundMegabitsPerSec()
@@ -1020,6 +1043,7 @@ public class DatabaseDescriptor
     public static void setStreamThroughputOutboundMegabitsPerSec(int value)
     {
         conf.stream_throughput_outbound_megabits_per_sec = value;
+        configChanged();
     }
 
     public static int getInterDCStreamThroughputOutboundMegabitsPerSec()
@@ -1030,6 +1054,7 @@ public class DatabaseDescriptor
     public static void setInterDCStreamThroughputOutboundMegabitsPerSec(int value)
     {
         conf.inter_dc_stream_throughput_outbound_megabits_per_sec = value;
+        configChanged();
     }
 
     public static String[] getAllDataFileLocations()
@@ -1050,6 +1075,7 @@ public class DatabaseDescriptor
     public static void setTombstoneWarnThreshold(int threshold)
     {
         conf.tombstone_warn_threshold = threshold;
+        configChanged();
     }
 
     public static int getTombstoneFailureThreshold()
@@ -1060,6 +1086,7 @@ public class DatabaseDescriptor
     public static void setTombstoneFailureThreshold(int threshold)
     {
         conf.tombstone_failure_threshold = threshold;
+        configChanged();
     }
 
     /**
@@ -1098,6 +1125,7 @@ public class DatabaseDescriptor
     public static void setBroadcastAddress(InetAddress broadcastAdd)
     {
         broadcastAddress = broadcastAdd;
+        configChanged();
     }
 
     public static boolean startRpc()
@@ -1113,6 +1141,7 @@ public class DatabaseDescriptor
     public static void setBroadcastRpcAddress(InetAddress broadcastRPCAddr)
     {
         broadcastRpcAddress = broadcastRPCAddr;
+        configChanged();
     }
 
     public static InetAddress getBroadcastRpcAddress()
@@ -1213,6 +1242,7 @@ public class DatabaseDescriptor
     public static void setDiskFailurePolicy(Config.DiskFailurePolicy policy)
     {
         conf.disk_failure_policy = policy;
+        configChanged();
     }
 
     public static Config.DiskFailurePolicy getDiskFailurePolicy()
@@ -1238,6 +1268,7 @@ public class DatabaseDescriptor
     {
         conf.hinted_handoff_enabled_global = hintedHandoffEnabled;
         conf.hinted_handoff_enabled_by_dc.clear();
+        configChanged();
     }
 
     public static void setHintedHandoffEnabled(final String dcNames)
@@ -1257,6 +1288,7 @@ public class DatabaseDescriptor
 
         conf.hinted_handoff_enabled_by_dc.clear();
         conf.hinted_handoff_enabled_by_dc.addAll(dcNameList);
+        configChanged();
     }
 
     public static boolean hintedHandoffEnabled()
@@ -1282,6 +1314,7 @@ public class DatabaseDescriptor
     public static void setMaxHintWindow(int ms)
     {
         conf.max_hint_window_in_ms = ms;
+        configChanged();
     }
 
     public static int getMaxHintWindow()
@@ -1314,6 +1347,7 @@ public class DatabaseDescriptor
     public static void setDynamicUpdateInterval(Integer dynamicUpdateInterval)
     {
         conf.dynamic_snitch_update_interval_in_ms = dynamicUpdateInterval;
+        configChanged();
     }
 
     public static int getDynamicResetInterval()
@@ -1323,6 +1357,7 @@ public class DatabaseDescriptor
     public static void setDynamicResetInterval(Integer dynamicResetInterval)
     {
         conf.dynamic_snitch_reset_interval_in_ms = dynamicResetInterval;
+        configChanged();
     }
 
     public static double getDynamicBadnessThreshold()
@@ -1333,6 +1368,7 @@ public class DatabaseDescriptor
     public static void setDynamicBadnessThreshold(Double dynamicBadnessThreshold)
     {
         conf.dynamic_snitch_badness_threshold = dynamicBadnessThreshold;
+        configChanged();
     }
 
     public static ServerEncryptionOptions getServerEncryptionOptions()
@@ -1368,6 +1404,7 @@ public class DatabaseDescriptor
     public static void setIncrementalBackupsEnabled(boolean value)
     {
         conf.incremental_backups = value;
+        configChanged();
     }
 
     public static int getFileCacheSizeInMB()
@@ -1413,6 +1450,7 @@ public class DatabaseDescriptor
     public static void setKeyCacheSavePeriod(int keyCacheSavePeriod)
     {
         conf.key_cache_save_period = keyCacheSavePeriod;
+        configChanged();
     }
 
     public static int getKeyCacheKeysToSave()
@@ -1423,6 +1461,7 @@ public class DatabaseDescriptor
     public static void setKeyCacheKeysToSave(int keyCacheKeysToSave)
     {
         conf.key_cache_keys_to_save = keyCacheKeysToSave;
+        configChanged();
     }
 
     public static long getRowCacheSizeInMB()
@@ -1438,6 +1477,7 @@ public class DatabaseDescriptor
     public static void setRowCacheSavePeriod(int rowCacheSavePeriod)
     {
         conf.row_cache_save_period = rowCacheSavePeriod;
+        configChanged();
     }
 
     public static int getRowCacheKeysToSave()
@@ -1458,6 +1498,7 @@ public class DatabaseDescriptor
     public static void setCounterCacheSavePeriod(int counterCacheSavePeriod)
     {
         conf.counter_cache_save_period = counterCacheSavePeriod;
+        configChanged();
     }
 
     public static int getCounterCacheKeysToSave()
@@ -1468,6 +1509,7 @@ public class DatabaseDescriptor
     public static void setCounterCacheKeysToSave(int counterCacheKeysToSave)
     {
         conf.counter_cache_keys_to_save = counterCacheKeysToSave;
+        configChanged();
     }
 
     public static IAllocator getoffHeapMemoryAllocator()
@@ -1478,6 +1520,7 @@ public class DatabaseDescriptor
     public static void setRowCacheKeysToSave(int rowCacheKeysToSave)
     {
         conf.row_cache_keys_to_save = rowCacheKeysToSave;
+        configChanged();
     }
 
     public static int getStreamingSocketTimeout()

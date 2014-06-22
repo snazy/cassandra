@@ -19,7 +19,9 @@ package org.apache.cassandra.config;
 
 import java.io.DataInput;
 import java.lang.reflect.Constructor;
+import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Modifier;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -137,6 +139,8 @@ public final class CFMetaData
             return ByteBufferUtil.compareUnsigned(def1.name.bytes, def2.name.bytes);
         }
     };
+
+    public static final CFMetaData HostConfigCf = compile(Config.CREATE_CQL_TABLE);
 
     public static final CFMetaData IndexCf = compile("CREATE TABLE \"" + SystemKeyspace.INDEX_CF + "\" ("
                                                      + "table_name text,"

@@ -74,6 +74,7 @@ public class SystemKeyspace
     public static final String HINTS_CF = "hints";
     public static final String RANGE_XFERS_CF = "range_xfers";
     public static final String BATCHLOG_CF = "batchlog";
+    public static final String HOST_CONFIG_CF = "host_config";
     // see layout description in the DefsTables class header
     public static final String SCHEMA_KEYSPACES_CF = "schema_keyspaces";
     public static final String SCHEMA_COLUMNFAMILIES_CF = "schema_columnfamilies";

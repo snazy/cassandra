@@ -298,6 +298,9 @@ public class CassandraDaemon
             throw new RuntimeException(e);
         }
 
+        // persist server configuration
+        DatabaseDescriptor.persistConfig("startup");
+
         // enable auto compaction
         for (Keyspace keyspace : Keyspace.all())
         {
