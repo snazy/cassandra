@@ -19,16 +19,10 @@ package org.apache.cassandra.config;
 
 import java.io.IOException;
 import java.io.StringReader;
-import java.lang.reflect.Field;
-import java.lang.reflect.Modifier;
-import java.util.Arrays;
-import java.util.Date;
 import java.util.List;
 import java.util.Set;
 
 import com.google.common.collect.Sets;
-import org.apache.cassandra.db.Keyspace;
-import org.apache.cassandra.db.SystemKeyspace;
 import org.supercsv.io.CsvListReader;
 import org.supercsv.prefs.CsvPreference;
 
@@ -220,88 +214,6 @@ public class Config
 
     private static final CsvPreference STANDARD_SURROUNDING_SPACES_NEED_QUOTES = new CsvPreference.Builder(CsvPreference.STANDARD_PREFERENCE)
                                                                                                   .surroundingSpacesNeedQuotes(true).build();
-
-    public static final String CREATE_CQL_TABLE;
-    public static final String INSERT_CQL;
-    private static final int INSERT_CQL_PARAMS;
-
-    static {
-        StringBuilder cqlCreateTable = new StringBuilder("CREATE TABLE ").append(Keyspace.SYSTEM_KS).append('.').append(SystemKeyspace.HOST_CONFIG_CF).
-            append(" (\n  node inet,\n  ts timestamp,\n  reason text,");
-        StringBuilder cqlInsert = new StringBuilder("INSERT INTO ").append(Keyspace.SYSTEM_KS).append('.').append(SystemKeyspace.HOST_CONFIG_CF).
-            append(" (node, ts, reason");
-        int fieldCount = 0;
-        for (Field field : Config.class.getDeclaredFields())
-        {
-            if (Modifier.isStatic(field.getModifiers())) continue;
-            Class<?> type = field.getType();
-            String ctype = type.isArray() ? "list<"+ctype(type)+'>' : ctype(type);
-            cqlCreateTable.append("\n  ").append(field.getName()).append(' ').append(ctype).append(',');
-            cqlInsert.append(", ").append(field.getName());
-            fieldCount++;
-        }
-
-        INSERT_CQL_PARAMS = 3 + fieldCount;
-
-        cqlInsert.append(") VALUES (?, ?, ?");
-        while (fieldCount-->0)
-            cqlInsert.append(", ?");
-        cqlInsert.append(')');
-
-        CREATE_CQL_TABLE = cqlCreateTable.append("\n  primary key (node, ts)\n) WITH CLUSTERING ORDER BY (ts DESC)\n").toString();
-        INSERT_CQL = cqlInsert.toString();
-    }
-
-    private static String ctype(Class<?> type) {
-        String ctype;
-        if (type == String.class) ctype = "text";
-        else if (type == Integer.class) ctype = "int";
-        else if (type == int.class) ctype = "int";
-        else if (type == Long.class) ctype = "bigint";
-        else if (type == long.class) ctype = "bigint";
-        else if (type == Boolean.class) ctype = "boolean";
-        else if (type == boolean.class) ctype = "boolean";
-        else if (type == Double.class) ctype = "double";
-        else if (type == double.class) ctype = "double";
-        else if (type.isEnum()) ctype = "text";
-        else ctype = "text"; // use "Object.toString()" as default for now
-        return ctype;
-    }
-
-    public Object[] cqlInsertParams(String reason) {
-        Object[] params = new Object[INSERT_CQL_PARAMS];
-        params[0] = FBUtilities.getBroadcastAddress();
-        params[1] = new Date();
-        params[2] = reason;
-        int param = 3;
-        try {
-            for (Field field : Config.class.getDeclaredFields())
-            {
-                if (Modifier.isStatic(field.getModifiers())) continue;
-                Class<?> type = field.getType();
-                Object v = field.get(this);
-                if (type == String.class ||
-                    type == Integer.class || type == int.class ||
-                    type == Long.class || type == long.class ||
-                    type == Boolean.class || type == boolean.class ||
-                    type == Double.class || type == double.class)
-                {}
-                else if (type.isArray())
-                {
-                    if (v != null) v = Arrays.asList((Object[]) v);
-                }
-                else
-                {
-                    // use "Object.toString()" as default for now
-                    if (v != null) v = v.toString();
-                }
-                params[param++] = v;
-            }
-        } catch (IllegalAccessException e) {
-            e.printStackTrace();
-        }
-        return params;
-    }
 
     public static boolean getOutboundBindAny()
     {

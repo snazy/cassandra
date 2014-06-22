@@ -96,6 +96,7 @@ public class DatabaseDescriptor
     private static Config.DiskAccessMode indexAccessMode;
 
     private static Config conf;
+    private static ConfigProxy confProxy;
 
     private static IAuthenticator authenticator = new AllowAllAuthenticator();
     private static IAuthorizer authorizer = new AllowAllAuthorizer();
@@ -590,6 +591,8 @@ public class DatabaseDescriptor
         }
         if (seedProvider.getSeeds().size() == 0)
             throw new ConfigurationException("The seed provider lists no seeds.");
+
+        confProxy = new ConfigProxy(conf);
     }
 
     private static IEndpointSnitch createEndpointSnitch(String snitchClassName) throws ConfigurationException
@@ -625,8 +628,8 @@ public class DatabaseDescriptor
 
     public static void persistConfig(String reason) {
         if (Config.isClientMode()) return;
-        Object[] values = conf.cqlInsertParams(reason);
-        QueryProcessor.executeInternal(Config.INSERT_CQL, values);
+        Object[] values = confProxy.cqlInsertParams(reason);
+        QueryProcessor.executeInternal(ConfigProxy.INSERT_CQL, values);
     }
 
     private static void configChanged() {

@@ -140,7 +140,7 @@ public final class CFMetaData
         }
     };
 
-    public static final CFMetaData HostConfigCf = compile(Config.CREATE_CQL_TABLE);
+    public static final CFMetaData HostConfigCf = compile(ConfigProxy.CREATE_CQL_TABLE);
 
     public static final CFMetaData IndexCf = compile("CREATE TABLE \"" + SystemKeyspace.INDEX_CF + "\" ("
                                                      + "table_name text,"
