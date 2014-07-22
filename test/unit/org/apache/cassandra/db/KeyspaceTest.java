@@ -101,7 +101,7 @@ public class KeyspaceTest
         ColumnFamily cf = ArrayBackedSortedColumns.factory.create(KEYSPACE2, "Standard3");
         cf.addColumn(column("col1","val1", 1L));
         Mutation rm = new Mutation(KEYSPACE2, TEST_KEY.getKey(), cf);
-        rm.apply();
+        rm.applyUnsafe();
 
         Runnable verify = new WrappedRunnable()
         {
@@ -133,7 +133,7 @@ public class KeyspaceTest
         cf.addColumn(column("col2","val2", 1L));
         cf.addColumn(column("col3","val3", 1L));
         Mutation rm = new Mutation(KEYSPACE1, TEST_KEY.getKey(), cf);
-        rm.apply();
+        rm.applyUnsafe();
 
         Runnable verify = new WrappedRunnable()
         {
@@ -163,7 +163,7 @@ public class KeyspaceTest
         cf.addColumn(column("b", "val2", 1L));
         cf.addColumn(column("c", "val3", 1L));
         Mutation rm = new Mutation(KEYSPACE1, key.getKey(), cf);
-        rm.apply();
+        rm.applyUnsafe();
 
         cf = cfStore.getColumnFamily(key, cellname("b"), cellname("c"), false, 100, System.currentTimeMillis());
         assertEquals(2, cf.getColumnCount());
@@ -182,7 +182,7 @@ public class KeyspaceTest
         ColumnFamily cf = ArrayBackedSortedColumns.factory.create(KEYSPACE1, "Standard2");
         cf.addColumn(column("col1", "val1", 1));
         Mutation rm = new Mutation(KEYSPACE1, ByteBufferUtil.bytes("row1000"), cf);
-        rm.apply();
+        rm.applyUnsafe();
 
         validateGetSliceNoMatch(keyspace);
         keyspace.getColumnFamilyStore("Standard2").forceBlockingFlush();
@@ -209,7 +209,7 @@ public class KeyspaceTest
         for (int i = 0; i < 300; i++)
             cf.addColumn(column("col" + fmt.format(i), "omg!thisisthevalue!"+i, 1L));
         Mutation rm = new Mutation(KEYSPACE1, ROW.getKey(), cf);
-        rm.apply();
+        rm.applyUnsafe();
 
         Runnable verify = new WrappedRunnable()
         {
@@ -264,7 +264,7 @@ public class KeyspaceTest
             ColumnFamily cf = ArrayBackedSortedColumns.factory.create(KEYSPACE1, "StandardLong1");
             cf.addColumn(new BufferCell(cellname((long)i), ByteBufferUtil.EMPTY_BYTE_BUFFER, 0));
             Mutation rm = new Mutation(KEYSPACE1, ROW.getKey(), cf);
-            rm.apply();
+            rm.applyUnsafe();
         }
 
         cfs.forceBlockingFlush();
@@ -274,7 +274,7 @@ public class KeyspaceTest
             ColumnFamily cf = ArrayBackedSortedColumns.factory.create(KEYSPACE1, "StandardLong1");
             cf.addColumn(new BufferCell(cellname((long)i), ByteBufferUtil.EMPTY_BYTE_BUFFER, 0));
             Mutation rm = new Mutation(KEYSPACE1, ROW.getKey(), cf);
-            rm.apply();
+            rm.applyUnsafe();
 
             cf = cfs.getColumnFamily(ROW, Composites.EMPTY, Composites.EMPTY, true, 1, System.currentTimeMillis());
             assertEquals(1, Iterables.size(cf.getColumnNames()));
@@ -312,11 +312,11 @@ public class KeyspaceTest
         cf.addColumn(column("col7", "val7", 1L));
         cf.addColumn(column("col9", "val9", 1L));
         Mutation rm = new Mutation(KEYSPACE1, ROW.getKey(), cf);
-        rm.apply();
+        rm.applyUnsafe();
 
         rm = new Mutation(KEYSPACE1, ROW.getKey());
         rm.delete("Standard1", cellname("col4"), 2L);
-        rm.apply();
+        rm.applyUnsafe();
 
         Runnable verify = new WrappedRunnable()
         {
@@ -364,7 +364,7 @@ public class KeyspaceTest
         cf.addColumn(expiringColumn("col2", "val2", 1L, 60)); // long enough not to be tombstoned
         cf.addColumn(column("col3", "val3", 1L));
         Mutation rm = new Mutation(KEYSPACE1, ROW.getKey(), cf);
-        rm.apply();
+        rm.applyUnsafe();
 
         Runnable verify = new WrappedRunnable()
         {
@@ -401,7 +401,7 @@ public class KeyspaceTest
         cf.addColumn(column("col5", "val5", 1L));
         cf.addColumn(column("col6", "val6", 1L));
         Mutation rm = new Mutation(KEYSPACE1, ROW.getKey(), cf);
-        rm.apply();
+        rm.applyUnsafe();
         cfStore.forceBlockingFlush();
 
         cf = ArrayBackedSortedColumns.factory.create(KEYSPACE1, "Standard1");
@@ -409,7 +409,7 @@ public class KeyspaceTest
         cf.addColumn(column("col2", "valx", 2L));
         cf.addColumn(column("col3", "valx", 2L));
         rm = new Mutation(KEYSPACE1, ROW.getKey(), cf);
-        rm.apply();
+        rm.applyUnsafe();
 
         Runnable verify = new WrappedRunnable()
         {
@@ -445,7 +445,7 @@ public class KeyspaceTest
         for (int i = 1000; i < 2000; i++)
             cf.addColumn(column("col" + i, ("v" + i), 1L));
         Mutation rm = new Mutation(KEYSPACE1, key.getKey(), cf);
-        rm.apply();
+        rm.applyUnsafe();
         cfStore.forceBlockingFlush();
 
         validateSliceLarge(cfStore);
@@ -478,21 +478,21 @@ public class KeyspaceTest
                 cf.addColumn(column("col" + i, ("v" + i), i));
             }
             Mutation rm = new Mutation(KEYSPACE1, key.getKey(), cf);
-            rm.apply();
+            rm.applyUnsafe();
             cfStore.forceBlockingFlush();
         }
-        cfStore.metric.sstablesPerReadHistogram.clear();
+        cfStore.metric.sstablesPerReadHistogram.cf.clear();
         ColumnFamily cf = cfStore.getColumnFamily(key, Composites.EMPTY, cellname("col1499"), false, 1000, System.currentTimeMillis());
-        assertEquals(cfStore.metric.sstablesPerReadHistogram.max(), 5, 0.1);
+        assertEquals(cfStore.metric.sstablesPerReadHistogram.cf.max(), 5, 0.1);
         int i = 0;
         for (Cell c : cf.getSortedColumns())
         {
             assertEquals(ByteBufferUtil.string(c.name().toByteBuffer()), "col" + (1000 + i++));
         }
         assertEquals(i, 500);
-        cfStore.metric.sstablesPerReadHistogram.clear();
+        cfStore.metric.sstablesPerReadHistogram.cf.clear();
         cf = cfStore.getColumnFamily(key, cellname("col1500"), cellname("col2000"), false, 1000, System.currentTimeMillis());
-        assertEquals(cfStore.metric.sstablesPerReadHistogram.max(), 5, 0.1);
+        assertEquals(cfStore.metric.sstablesPerReadHistogram.cf.max(), 5, 0.1);
 
         for (Cell c : cf.getSortedColumns())
         {
@@ -501,9 +501,9 @@ public class KeyspaceTest
         assertEquals(i, 1000);
 
         // reverse
-        cfStore.metric.sstablesPerReadHistogram.clear();
+        cfStore.metric.sstablesPerReadHistogram.cf.clear();
         cf = cfStore.getColumnFamily(key, cellname("col2000"), cellname("col1500"), true, 1000, System.currentTimeMillis());
-        assertEquals(cfStore.metric.sstablesPerReadHistogram.max(), 5, 0.1);
+        assertEquals(cfStore.metric.sstablesPerReadHistogram.cf.max(), 5, 0.1);
         i = 500;
         for (Cell c : cf.getSortedColumns())
         {
@@ -544,19 +544,19 @@ public class KeyspaceTest
                 Mutation rm = new Mutation(KEYSPACE1, key.getKey());
                 CellName colName = type.makeCellName(ByteBufferUtil.bytes("a" + i), ByteBufferUtil.bytes(j*10 + i));
                 rm.add("StandardComposite2", colName, ByteBufferUtil.EMPTY_BYTE_BUFFER, 0);
-                rm.apply();
+                rm.applyUnsafe();
             }
             cfs.forceBlockingFlush();
         }
         Composite start = type.builder().add(ByteBufferUtil.bytes("a5")).add(ByteBufferUtil.bytes(85)).build();
         Composite finish = type.builder().add(ByteBufferUtil.bytes("a5")).build().end();
-        cfs.metric.sstablesPerReadHistogram.clear();
+        cfs.metric.sstablesPerReadHistogram.cf.clear();
         ColumnFamily cf = cfs.getColumnFamily(key, start, finish, false, 1000, System.currentTimeMillis());
         int colCount = 0;
         for (Cell c : cf)
             colCount++;
         assertEquals(2, colCount);
-        assertEquals(2, cfs.metric.sstablesPerReadHistogram.max(), 0.1);
+        assertEquals(2, cfs.metric.sstablesPerReadHistogram.cf.max(), 0.1);
     }
 
     private void validateSliceLarge(ColumnFamilyStore cfStore) throws IOException

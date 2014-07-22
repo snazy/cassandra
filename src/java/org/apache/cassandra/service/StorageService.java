@@ -656,6 +656,8 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
                 throw new RuntimeException("Replace method removed; use cassandra.replace_address instead");
             if (DatabaseDescriptor.isReplacing())
             {
+                if (SystemKeyspace.bootstrapComplete())
+                    throw new RuntimeException("Cannot replace address with a node that is already bootstrapped");
                 if (!DatabaseDescriptor.isAutoBootstrap())
                     throw new RuntimeException("Trying to replace_address with auto_bootstrap disabled will not work, check your configuration");
                 bootstrapTokens = prepareReplacementInfo();
@@ -2571,6 +2573,11 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
         int cmd = nextRepairCommand.incrementAndGet();
         if (ranges.size() > 0)
         {
+            if (!FBUtilities.isUnix() && isSequential)
+            {
+                logger.warn("Snapshot-based repair is not yet supported on Windows.  Reverting to parallel repair.");
+                isSequential = false;
+            }
             new Thread(createRepairTask(cmd, keyspace, ranges, isSequential, dataCenters, hosts, fullRepair, columnFamilies)).start();
         }
         return cmd;
@@ -2758,6 +2765,7 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
                     }
                 }
 
+                boolean successful = true;
                 for (RepairFuture future : futures)
                 {
                     try
@@ -2769,19 +2777,21 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
                     }
                     catch (ExecutionException e)
                     {
+                        successful = false;
                         message = String.format("Repair session %s for range %s failed with error %s", future.session.getId(), future.session.getRange().toString(), e.getCause().getMessage());
                         logger.error(message, e);
                         sendNotification("repair", message, new int[]{cmd, ActiveRepairService.Status.SESSION_FAILED.ordinal()});
                     }
                     catch (Exception e)
                     {
+                        successful = false;
                         message = String.format("Repair session %s for range %s failed with error %s", future.session.getId(), future.session.getRange().toString(), e.getMessage());
                         logger.error(message, e);
                         sendNotification("repair", message, new int[]{cmd, ActiveRepairService.Status.SESSION_FAILED.ordinal()});
                     }
                 }
                 if (!fullRepair)
-                    ActiveRepairService.instance.finishParentSession(parentSession, allNeighbors);
+                    ActiveRepairService.instance.finishParentSession(parentSession, allNeighbors, successful);
                 sendNotification("repair", String.format("Repair command #%d finished", cmd), new int[]{cmd, ActiveRepairService.Status.FINISHED.ordinal()});
             }
         }, null);

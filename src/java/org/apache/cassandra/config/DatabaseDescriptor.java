@@ -21,12 +21,15 @@ import java.io.File;
 import java.io.FileFilter;
 import java.io.IOException;
 import java.net.InetAddress;
+import java.net.NetworkInterface;
+import java.net.SocketException;
 import java.net.UnknownHostException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.Enumeration;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -38,7 +41,6 @@ import com.google.common.primitives.Longs;
 import org.apache.cassandra.cql3.QueryProcessor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
 import org.apache.cassandra.auth.AllowAllAuthenticator;
 import org.apache.cassandra.auth.AllowAllAuthorizer;
 import org.apache.cassandra.auth.AllowAllInternodeAuthenticator;
@@ -301,18 +303,13 @@ public class DatabaseDescriptor
             logger.info("Global memtable off-heap threshold is disabled, HeapAllocator will be used instead");
         else
             logger.info("Global memtable off-heap threshold is enabled at {}MB", conf.memtable_offheap_space_in_mb);
-        if (conf.memtable_cleanup_threshold < 0.01f)
-            throw new ConfigurationException("memtable_cleanup_threshold must be >= 0.01");
-        if (conf.memtable_cleanup_threshold > 0.99f)
-            throw new ConfigurationException("memtable_cleanup_threshold must be <= 0.99");
-        if (conf.memtable_cleanup_threshold < 0.1f)
-            logger.warn("memtable_cleanup_threshold is set very low, which may cause performance degradation");
 
-        if (conf.memtable_flush_writers < 1)
-            throw new ConfigurationException("memtable_flush_writers must be at least 1");
-
-        /* Local IP or hostname to bind services to */
-        if (conf.listen_address != null)
+        /* Local IP, hostname or interface to bind services to */
+        if (conf.listen_address != null && conf.listen_interface != null)
+        {
+            throw new ConfigurationException("Set listen_address OR listen_interface, not both");
+        }
+        else if (conf.listen_address != null)
         {
             if (conf.listen_address.equals("0.0.0.0"))
                 throw new ConfigurationException("listen_address cannot be 0.0.0.0!");
@@ -324,6 +321,21 @@ public class DatabaseDescriptor
             {
                 throw new ConfigurationException("Unknown listen_address '" + conf.listen_address + "'");
             }
+        }
+        else if (conf.listen_interface != null)
+        {
+            try
+            {
+                Enumeration<InetAddress> addrs = NetworkInterface.getByName(conf.listen_interface).getInetAddresses();
+                listenAddress = addrs.nextElement();
+                if (addrs.hasMoreElements())
+                    throw new ConfigurationException("Interface " + conf.listen_interface +" can't have more than one address");
+            }
+            catch (SocketException e)
+            {
+                throw new ConfigurationException("Unknown network interface in listen_interface " + conf.listen_interface);
+            }
+
         }
 
         /* Gossip Address to broadcast */
@@ -344,8 +356,12 @@ public class DatabaseDescriptor
             }
         }
 
-        /* Local IP or hostname to bind RPC server to */
-        if (conf.rpc_address != null)
+        /* Local IP, hostname or interface to bind RPC server to */
+        if (conf.rpc_address != null && conf.rpc_interface != null)
+        {
+            throw new ConfigurationException("Set rpc_address OR rpc_interface, not both");
+        }
+        else if (conf.rpc_address != null)
         {
             try
             {
@@ -354,6 +370,20 @@ public class DatabaseDescriptor
             catch (UnknownHostException e)
             {
                 throw new ConfigurationException("Unknown host in rpc_address " + conf.rpc_address);
+            }
+        }
+        else if (conf.rpc_interface != null)
+        {
+            try
+            {
+                Enumeration<InetAddress> addrs = NetworkInterface.getByName(conf.rpc_interface).getInetAddresses();
+                rpcAddress = addrs.nextElement();
+                if (addrs.hasMoreElements())
+                    throw new ConfigurationException("Interface " + conf.rpc_interface +" can't have more than one address");
+            }
+            catch (SocketException e)
+            {
+                throw new ConfigurationException("Unknown network interface in rpc_interface " + conf.rpc_interface);
             }
         }
         else
@@ -460,11 +490,6 @@ public class DatabaseDescriptor
             requestSchedulerId = RequestSchedulerId.keyspace;
         }
 
-        if (conf.in_memory_compaction_limit_in_mb != null && conf.in_memory_compaction_limit_in_mb <= 0)
-        {
-            throw new ConfigurationException("in_memory_compaction_limit_in_mb must be a positive integer");
-        }
-
         // if data dirs, commitlog dir, or saved caches dir are set in cassandra.yaml, use that.  Otherwise,
         // use -Dcassandra.storagedir (set in cassandra-env.sh) as the parent dir for data/, commitlog/, and saved_caches/
         if (conf.commitlog_directory == null)
@@ -500,6 +525,22 @@ public class DatabaseDescriptor
 
         if (conf.commitlog_directory.equals(conf.saved_caches_directory))
             throw new ConfigurationException("saved_caches_directory must not be the same as the commitlog_directory");
+
+        if (conf.memtable_flush_writers == null)
+            conf.memtable_flush_writers = Math.min(8, Math.max(2, Math.min(FBUtilities.getAvailableProcessors(), conf.data_file_directories.length)));
+
+        if (conf.memtable_flush_writers < 1)
+            throw new ConfigurationException("memtable_flush_writers must be at least 1");
+
+        if (conf.memtable_cleanup_threshold == null)
+            conf.memtable_cleanup_threshold = (float) (1.0 / (1 + conf.memtable_flush_writers));
+
+        if (conf.memtable_cleanup_threshold < 0.01f)
+            throw new ConfigurationException("memtable_cleanup_threshold must be >= 0.01");
+        if (conf.memtable_cleanup_threshold > 0.99f)
+            throw new ConfigurationException("memtable_cleanup_threshold must be <= 0.99");
+        if (conf.memtable_cleanup_threshold < 0.1f)
+            logger.warn("memtable_cleanup_threshold is set very low, which may cause performance degradation");
 
         if (conf.concurrent_compactors == null)
             conf.concurrent_compactors = Math.min(8, Math.max(2, Math.min(FBUtilities.getAvailableProcessors(), conf.data_file_directories.length)));
@@ -829,8 +870,6 @@ public class DatabaseDescriptor
             logger.info("Replace address on first boot requested; this node is already bootstrapped");
             return false;
         }
-        if (getReplaceAddress() != null && SystemKeyspace.bootstrapComplete())
-            throw new RuntimeException("Cannot replace address with a node that is already bootstrapped");
         return getReplaceAddress() != null;
     }
 
@@ -1011,17 +1050,6 @@ public class DatabaseDescriptor
             return conf.memtable_flush_writers;
     }
 
-    public static int getInMemoryCompactionLimit()
-    {
-        return conf.in_memory_compaction_limit_in_mb * 1024 * 1024;
-    }
-
-    public static void setInMemoryCompactionLimit(int sizeInMB)
-    {
-        conf.in_memory_compaction_limit_in_mb = sizeInMB;
-        configChanged();
-    }
-
     public static int getConcurrentCompactors()
     {
         return conf.concurrent_compactors;
@@ -1036,6 +1064,11 @@ public class DatabaseDescriptor
     {
         conf.compaction_throughput_mb_per_sec = value;
         configChanged();
+    }
+
+    public static boolean getDisableSTCSInL0()
+    {
+        return Boolean.getBoolean("cassandra.disable_stcs_in_l0");
     }
 
     public static int getStreamThroughputOutboundMegabitsPerSec()
@@ -1251,6 +1284,17 @@ public class DatabaseDescriptor
     public static Config.DiskFailurePolicy getDiskFailurePolicy()
     {
         return conf.disk_failure_policy;
+    }
+
+    public static void setCommitFailurePolicy(Config.CommitFailurePolicy policy)
+    {
+        conf.commit_failure_policy = policy;
+        configChanged();
+    }
+
+    public static Config.CommitFailurePolicy getCommitFailurePolicy()
+    {
+        return conf.commit_failure_policy;
     }
 
     public static boolean isSnapshotBeforeCompaction()
