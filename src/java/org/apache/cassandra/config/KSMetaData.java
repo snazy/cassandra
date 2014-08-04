@@ -25,6 +25,8 @@ import com.google.common.collect.ImmutableMap;
 import org.apache.cassandra.cql3.QueryProcessor;
 import org.apache.cassandra.cql3.UntypedResultSet;
 import org.apache.cassandra.db.*;
+import org.apache.cassandra.db.marshal.BooleanType;
+import org.apache.cassandra.db.marshal.UTF8Type;
 import org.apache.cassandra.exceptions.ConfigurationException;
 import org.apache.cassandra.locator.*;
 import org.apache.cassandra.service.StorageService;
@@ -321,5 +323,29 @@ public final class KSMetaData
             cfms.put(cfm.cfName, cfm);
         }
         return cfms;
+    }
+
+    public boolean compatible(ColumnFamily cf)
+    {
+        for (Cell cell : cf)
+        {
+            String colName = cell.name().cql3ColumnName(CFMetaData.SchemaKeyspacesCf).toString();
+            if ("durable_writes".equals(colName))
+            {
+                if (durableWrites != BooleanType.instance.compose(cell.value()))
+                    return false;
+            }
+            else if ("strategy_class".equals(colName))
+            {
+                if (!strategyClass.getName().equals(UTF8Type.instance.compose(cell.value())))
+                    return false;
+            }
+            else if ("strategy_options".equals(colName))
+            {
+                if (!strategyOptions.equals(fromJsonMap(UTF8Type.instance.compose(cell.value()))))
+                    return false;
+            }
+        }
+        return true;
     }
 }

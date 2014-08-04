@@ -170,13 +170,32 @@ public class DefsTables
     {
         // compare before/after schemas of the affected keyspaces only
         Set<String> keyspaces = new HashSet<>(mutations.size());
+        boolean withKeyspaces = false;
+        boolean withTables = false;
+        boolean withTypes = false;
         for (Mutation mutation : mutations)
-            keyspaces.add(ByteBufferUtil.string(mutation.key()));
+        {
+            String ksName = ByteBufferUtil.string(mutation.key());
+            for (ColumnFamily cf : mutation.getColumnFamilies())
+            {
+                if (SystemKeyspace.SCHEMA_KEYSPACES_CF.equals(cf.metadata.cfName))
+                {
+                    KSMetaData ksMetaData = Schema.instance.getKSMetaData(ksName);
+                    if (ksMetaData == null || !ksMetaData.compatible(cf))
+                        withKeyspaces = true;
+                }
+                if (SystemKeyspace.SCHEMA_COLUMNFAMILIES_CF.equals(cf.metadata.cfName))
+                    withTables = true;
+                if (SystemKeyspace.SCHEMA_USER_TYPES_CF.equals(cf.metadata.cfName))
+                    withTypes = true;
+            }
+            keyspaces.add(ksName);
+        }
 
         // current state of the schema
-        Map<DecoratedKey, ColumnFamily> oldKeyspaces = SystemKeyspace.getSchema(SystemKeyspace.SCHEMA_KEYSPACES_CF, keyspaces);
-        Map<DecoratedKey, ColumnFamily> oldColumnFamilies = SystemKeyspace.getSchema(SystemKeyspace.SCHEMA_COLUMNFAMILIES_CF, keyspaces);
-        Map<DecoratedKey, ColumnFamily> oldTypes = SystemKeyspace.getSchema(SystemKeyspace.SCHEMA_USER_TYPES_CF, keyspaces);
+        Map<DecoratedKey, ColumnFamily> oldKeyspaces = withKeyspaces ? SystemKeyspace.getSchema(SystemKeyspace.SCHEMA_KEYSPACES_CF, keyspaces) : null;
+        Map<DecoratedKey, ColumnFamily> oldColumnFamilies = withTables ? SystemKeyspace.getSchema(SystemKeyspace.SCHEMA_COLUMNFAMILIES_CF, keyspaces) : null;
+        Map<DecoratedKey, ColumnFamily> oldTypes = withTypes ? SystemKeyspace.getSchema(SystemKeyspace.SCHEMA_USER_TYPES_CF, keyspaces) : null;
 
         for (Mutation mutation : mutations)
             mutation.apply();
@@ -185,17 +204,20 @@ public class DefsTables
             flushSchemaCFs();
 
         // with new data applied
-        Map<DecoratedKey, ColumnFamily> newKeyspaces = SystemKeyspace.getSchema(SystemKeyspace.SCHEMA_KEYSPACES_CF, keyspaces);
-        Map<DecoratedKey, ColumnFamily> newColumnFamilies = SystemKeyspace.getSchema(SystemKeyspace.SCHEMA_COLUMNFAMILIES_CF, keyspaces);
-        Map<DecoratedKey, ColumnFamily> newTypes = SystemKeyspace.getSchema(SystemKeyspace.SCHEMA_USER_TYPES_CF, keyspaces);
+        Map<DecoratedKey, ColumnFamily> newKeyspaces = withKeyspaces ? SystemKeyspace.getSchema(SystemKeyspace.SCHEMA_KEYSPACES_CF, keyspaces) : null;
+        Map<DecoratedKey, ColumnFamily> newColumnFamilies = withTables ? SystemKeyspace.getSchema(SystemKeyspace.SCHEMA_COLUMNFAMILIES_CF, keyspaces) : null;
+        Map<DecoratedKey, ColumnFamily> newTypes = withTypes ? SystemKeyspace.getSchema(SystemKeyspace.SCHEMA_USER_TYPES_CF, keyspaces) : null;
 
-        Set<String> keyspacesToDrop = mergeKeyspaces(oldKeyspaces, newKeyspaces);
-        mergeColumnFamilies(oldColumnFamilies, newColumnFamilies);
-        mergeTypes(oldTypes, newTypes);
+        Set<String> keyspacesToDrop = withKeyspaces ? mergeKeyspaces(oldKeyspaces, newKeyspaces) : null;
+        if (withTables)
+            mergeColumnFamilies(oldColumnFamilies, newColumnFamilies);
+        if (withTypes)
+            mergeTypes(oldTypes, newTypes);
 
         // it is safe to drop a keyspace only when all nested ColumnFamilies where deleted
-        for (String keyspaceToDrop : keyspacesToDrop)
-            dropKeyspace(keyspaceToDrop);
+        if (keyspacesToDrop != null)
+            for (String keyspaceToDrop : keyspacesToDrop)
+                dropKeyspace(keyspaceToDrop);
     }
 
     private static Set<String> mergeKeyspaces(Map<DecoratedKey, ColumnFamily> old, Map<DecoratedKey, ColumnFamily> updated)
