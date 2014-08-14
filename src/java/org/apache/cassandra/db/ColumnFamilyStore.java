@@ -2269,9 +2269,19 @@ public class ColumnFamilyStore implements ColumnFamilyStoreMBean
         return metric.tombstoneScannedHistogram.cf.getSnapshot().getMedian();
     }
 
+    public double getTombstonesPerSliceMax()
+    {
+        return metric.tombstoneScannedHistogram.cf.getSnapshot().getValue(1d);
+    }
+
     public double getLiveCellsPerSlice()
     {
         return metric.liveScannedHistogram.cf.getSnapshot().getMedian();
+    }
+
+    public double getLiveCellsPerSliceMax()
+    {
+        return metric.liveScannedHistogram.cf.getSnapshot().getValue(1d);
     }
 
     // End JMX get/set.

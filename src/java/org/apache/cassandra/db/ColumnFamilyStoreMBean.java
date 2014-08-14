@@ -283,13 +283,21 @@ public interface ColumnFamilyStoreMBean
 
     public boolean isAutoCompactionDisabled();
 
-    /** Number of tombstoned cells retreived during the last slicequery */
+    /** Average number of tombstoned cells retrieved during the last slice query */
     @Deprecated
     public double getTombstonesPerSlice();
 
-    /** Number of live cells retreived during the last slicequery */
+    /** Max number of tombstoned cells retrieved during the last slice query */
+    @Deprecated
+    public double getTombstonesPerSliceMax();
+
+    /** Average number of live cells retrieved during the last slice query */
     @Deprecated
     public double getLiveCellsPerSlice();
+
+    /** Max number of live cells retrieved during the last slice query */
+    @Deprecated
+    public double getLiveCellsPerSliceMax();
 
     public long estimateKeys();
 
