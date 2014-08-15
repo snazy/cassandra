@@ -23,15 +23,18 @@ package org.apache.cassandra.db.commitlog;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import com.google.common.base.Joiner;
+
 import org.apache.cassandra.net.MessagingService;
 
 public class CommitLogDescriptor
 {
     private static final String SEPARATOR = "-";
     private static final String FILENAME_PREFIX = "CommitLog" + SEPARATOR;
+    static final String ENCRYPTED_TAG = "enc";
     private static final String FILENAME_EXTENSION = ".log";
     // match both legacy and new version of commitlogs Ex: CommitLog-12345.log and CommitLog-4-12345.log.
-    private static final Pattern COMMIT_LOG_FILE_PATTERN = Pattern.compile(FILENAME_PREFIX + "((\\d+)(" + SEPARATOR + "\\d+)?)" + FILENAME_EXTENSION);
+    private static final Pattern COMMIT_LOG_FILE_PATTERN = Pattern.compile(FILENAME_PREFIX + "((\\d+)(" + SEPARATOR + "\\d+)?(" + SEPARATOR + ENCRYPTED_TAG + ")?)" + FILENAME_EXTENSION);
 
     public static final int VERSION_12 = 2;
     public static final int VERSION_20 = 3;
@@ -43,16 +46,18 @@ public class CommitLogDescriptor
 
     private final int version;
     public final long id;
+    private final boolean encrypted;
 
-    public CommitLogDescriptor(int version, long id)
+    public CommitLogDescriptor(int version, long id, boolean encrypted)
     {
         this.version = version;
         this.id = id;
+        this.encrypted = encrypted;
     }
 
-    public CommitLogDescriptor(long id)
+    public CommitLogDescriptor(long id, boolean encrypted)
     {
-        this(current_version, id);
+        this(current_version, id, encrypted);
     }
 
     public static CommitLogDescriptor fromFileName(String name)
@@ -65,7 +70,8 @@ public class CommitLogDescriptor
             throw new UnsupportedOperationException("Commitlog segment is too old to open; upgrade to 1.2.5+ first");
 
         long id = Long.parseLong(matcher.group(3).split(SEPARATOR)[1]);
-        return new CommitLogDescriptor(Integer.parseInt(matcher.group(2)), id);
+        boolean encrypted = name.contains(ENCRYPTED_TAG);
+        return new CommitLogDescriptor(Integer.parseInt(matcher.group(2)), id, encrypted);
     }
 
     public int getMessagingVersion()
@@ -86,9 +92,16 @@ public class CommitLogDescriptor
         return version;
     }
 
+    public boolean isEncrypted()
+    {
+        return encrypted;
+    }
+
     public String fileName()
     {
-        return FILENAME_PREFIX + version + SEPARATOR + id + FILENAME_EXTENSION;
+        String encTag = encrypted ? ENCRYPTED_TAG : null;
+        String baseName = Joiner.on(SEPARATOR).skipNulls().join(FILENAME_PREFIX + version, id, encTag);
+        return baseName + FILENAME_EXTENSION;
     }
 
     /**

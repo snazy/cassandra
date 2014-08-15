@@ -75,7 +75,7 @@ public class SSTableWriter extends SSTable
         if (metadata.getBloomFilterFpChance() < 1.0)
             components.add(Component.FILTER);
 
-        if (metadata.compressionParameters().sstableCompressor != null)
+        if (metadata.compressionParameters().sstableCompressionClass != null)
         {
             components.add(Component.COMPRESSION_INFO);
         }

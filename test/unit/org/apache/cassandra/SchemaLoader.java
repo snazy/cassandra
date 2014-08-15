@@ -374,7 +374,7 @@ public class SchemaLoader
         {
             for (CFMetaData cfm : ksm.cfMetaData().values())
             {
-                cfm.compressionParameters(new CompressionParameters(SnappyCompressor.instance));
+                cfm.compressionParameters(new CompressionParameters(SnappyCompressor.class.getName()));
             }
         }
     }

@@ -53,4 +53,14 @@ public class ChecksummedOutputStream extends OutputStream
         out.write(b, off, len);
         checksum.update(b, off, len);
     }
+
+    public void flush() throws IOException
+    {
+        out.flush();
+    }
+
+    public void close() throws IOException
+    {
+        out.close();
+    }
 }

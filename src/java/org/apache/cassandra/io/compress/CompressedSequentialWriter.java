@@ -69,14 +69,14 @@ public class CompressedSequentialWriter extends SequentialWriter
                                       Collector sstableMetadataCollector)
     {
         super(file, parameters.chunkLength(), skipIOCache);
-        this.compressor = parameters.sstableCompressor;
+        this.compressor = parameters.getCompressorInstance();
 
         // buffer for compression should be the same size as buffer itself
         compressed = new ICompressor.WrappedArray(new byte[compressor.initialCompressedBufferLength(buffer.length)]);
 
         /* Index File (-CompressionInfo.db component) and it's header */
         metadataWriter = CompressionMetadata.Writer.open(indexFilePath);
-        metadataWriter.writeHeader(parameters);
+        metadataWriter.writeHeader(parameters, compressor);
 
         this.sstableMetadataCollector = sstableMetadataCollector;
     }

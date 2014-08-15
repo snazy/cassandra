@@ -156,6 +156,7 @@ public class Config
 
     public ServerEncryptionOptions server_encryption_options = new ServerEncryptionOptions();
     public ClientEncryptionOptions client_encryption_options = new ClientEncryptionOptions();
+    public TransparentDataEncryptionOptions transparent_data_encryption_options = new TransparentDataEncryptionOptions();
     // this encOptions is for backward compatibility (a warning is logged by DatabaseDescriptor)
     public ServerEncryptionOptions encryption_options;
 

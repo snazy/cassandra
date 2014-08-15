@@ -113,6 +113,9 @@ public class CommitLogAllocator
                     }
                     catch (Throwable t)
                     {
+                        // if the process isn't fully init'd yet, we really should log
+                        if (!MessagingService.instance().isListening())
+                            logger.error("Failed to allocate new commit log segments", t);
                         if (!CommitLog.handleCommitError("Failed to allocate new commit log segments", t))
                             return;
                     }
@@ -189,6 +192,7 @@ public class CommitLogAllocator
     public void recycleSegment(final File file)
     {
         // check against SEGMENT_SIZE avoids recycling odd-sized or empty segments from old C* versions and unit tests
+        // also, don't recycle logs if the encryption status has changed (after a bounce)
         if (isCapExceeded() || file.length() != DatabaseDescriptor.getCommitLogSegmentSize()
                 || CommitLogDescriptor.fromFileName(file.getName()).getMessagingVersion() != MessagingService.current_version)
         {

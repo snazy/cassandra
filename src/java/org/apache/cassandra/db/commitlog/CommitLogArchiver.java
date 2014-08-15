@@ -175,7 +175,8 @@ public class CommitLogArchiver
             }
             for (File fromFile : files)
             {
-                File toFile = new File(DatabaseDescriptor.getCommitLogLocation(), new CommitLogDescriptor(CommitLogSegment.getNextId()).fileName());
+                boolean encrypted = fromFile.getName().contains(CommitLogDescriptor.ENCRYPTED_TAG);
+                File toFile = new File(DatabaseDescriptor.getCommitLogLocation(), new CommitLogDescriptor(CommitLogSegment.getNextId(), encrypted).fileName());
                 String command = restoreCommand.replace("%from", fromFile.getPath());
                 command = command.replace("%to", toFile.getPath());
                 try

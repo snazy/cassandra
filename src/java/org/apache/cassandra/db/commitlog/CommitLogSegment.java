@@ -17,23 +17,17 @@
  */
 package org.apache.cassandra.db.commitlog;
 
-import java.io.DataOutputStream;
 import java.io.File;
-import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.RandomAccessFile;
 import java.nio.ByteBuffer;
-import java.nio.MappedByteBuffer;
-import java.nio.channels.FileChannel;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.zip.Checksum;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -44,16 +38,12 @@ import org.apache.cassandra.config.Schema;
 import org.apache.cassandra.db.ColumnFamily;
 import org.apache.cassandra.db.RowMutation;
 import org.apache.cassandra.io.FSWriteError;
-import org.apache.cassandra.io.util.ByteBufferOutputStream;
-import org.apache.cassandra.io.util.ChecksummedOutputStream;
 import org.apache.cassandra.io.util.FileUtils;
-import org.apache.cassandra.net.MessagingService;
-import org.apache.cassandra.utils.PureJavaCrc32;
 
-/*
+/**
  * A single commit log file on disk. Manages creation of the file and writing row mutations to disk,
  * as well as tracking the last mutation position of any "dirty" CFs covered by the segment file. Segment
- * files are initially allocated to a fixed size and can grow to accomidate a larger value if necessary.
+ * files are initially allocated to a fixed size and can grow to accomodate a larger value if necessary.
  */
 public class CommitLogSegment
 {
@@ -62,22 +52,15 @@ public class CommitLogSegment
     private final static long idBase = System.currentTimeMillis();
     private final static AtomicInteger nextId = new AtomicInteger(1);
 
-    // The commit log entry overhead in bytes (int: length + long: head checksum + long: tail checksum)
-    static final int ENTRY_OVERHEAD_SIZE = 4 + 8 + 8;
-
     // cache which cf is dirty in this segment to avoid having to lookup all ReplayPositions to decide if we can delete this segment
     private final Map<UUID, Integer> cfLastWrite = new HashMap<>();
 
     public final long id;
 
     private final File logFile;
-    private final RandomAccessFile logFileAccessor;
-
+    private final SegmentWriter segmentWriter;
     private boolean needsSync = false;
 
-    private final MappedByteBuffer buffer;
-    private final Checksum checksum;
-    private final DataOutputStream bufferStream;
     private boolean closed;
 
     public final CommitLogDescriptor descriptor;
@@ -102,7 +85,7 @@ public class CommitLogSegment
     CommitLogSegment(String filePath)
     {
         id = getNextId();
-        descriptor = new CommitLogDescriptor(id);
+        descriptor = new CommitLogDescriptor(id, DatabaseDescriptor.getTransparentDataEncryptionOptions().enabled);
         logFile = new File(DatabaseDescriptor.getCommitLogLocation(), descriptor.fileName());
         boolean isCreating = true;
 
@@ -121,20 +104,12 @@ public class CommitLogSegment
                 }
             }
 
-            // Open the initial the segment file
-            logFileAccessor = new RandomAccessFile(logFile, "rw");
-
             if (isCreating)
                 logger.debug("Creating new commit log segment {}", logFile.getPath());
 
-            // Map the segment, extending or truncating it to the standard segment size
-            logFileAccessor.setLength(DatabaseDescriptor.getCommitLogSegmentSize());
-
-            buffer = logFileAccessor.getChannel().map(FileChannel.MapMode.READ_WRITE, 0, DatabaseDescriptor.getCommitLogSegmentSize());
-            checksum = new PureJavaCrc32();
-            bufferStream = new DataOutputStream(new ChecksummedOutputStream(new ByteBufferOutputStream(buffer), checksum));
-            buffer.putInt(CommitLog.END_OF_SEGMENT_MARKER);
-            buffer.position(0);
+            segmentWriter = descriptor.isEncrypted() ? new EncryptedSegmentWriter(logFile, DatabaseDescriptor.getTransparentDataEncryptionOptions())
+                                                     : new RAFSegmentWriter(logFile);
+            segmentWriter.init();
             needsSync = true;
             sync();
         }
@@ -176,6 +151,7 @@ public class CommitLogSegment
 
                 try
                 {
+                    // this works for both unencrypted and encrypted commit logs
                     RandomAccessFile raf = new RandomAccessFile(file, "rw");
                     ByteBuffer write = ByteBuffer.allocate(8);
                     write.putInt(CommitLog.END_OF_SEGMENT_MARKER);
@@ -217,7 +193,7 @@ public class CommitLogSegment
      */
     public boolean hasCapacityFor(long size)
     {
-        return size <= buffer.remaining();
+        return segmentWriter.hasCapacityFor(size);
     }
 
     /**
@@ -247,30 +223,12 @@ public class CommitLogSegment
      * @param   mutation   the mutation to append to the commit log.
      * @return  the position of the appended mutation
      */
-    public ReplayPosition write(RowMutation mutation) throws IOException
+    public ReplayPosition write(RowMutation mutation, int mutationSize) throws IOException
     {
         assert !closed;
         ReplayPosition repPos = getContext();
         markDirty(mutation, repPos);
-
-        checksum.reset();
-
-        // checksummed length
-        int length = (int) RowMutation.serializer.serializedSize(mutation, MessagingService.current_version);
-        bufferStream.writeInt(length);
-        buffer.putLong(checksum.getValue());
-
-        // checksummed mutation
-        RowMutation.serializer.serialize(mutation, bufferStream, MessagingService.current_version);
-        buffer.putLong(checksum.getValue());
-
-        if (buffer.remaining() >= 4)
-        {
-            // writes end of segment marker and rewinds back to position where it starts
-            buffer.putInt(CommitLog.END_OF_SEGMENT_MARKER);
-            buffer.position(buffer.position() - CommitLog.END_OF_SEGMENT_MARKER_SIZE);
-        }
-
+        segmentWriter.write(mutation, mutationSize);
         needsSync = true;
         return repPos;
     }
@@ -284,9 +242,9 @@ public class CommitLogSegment
         {
             try
             {
-                buffer.force();
+                segmentWriter.sync();
             }
-            catch (Exception e) // MappedByteBuffer.force() does not declare IOException but can actually throw it
+            catch (Exception e)
             {
                 throw new FSWriteError(e, getPath());
             }
@@ -299,7 +257,7 @@ public class CommitLogSegment
      */
     public ReplayPosition getContext()
     {
-        return new ReplayPosition(id, buffer.position());
+        return new ReplayPosition(id, segmentWriter.position());
     }
 
     /**
@@ -329,8 +287,7 @@ public class CommitLogSegment
         needsSync = false;
         try
         {
-            FileUtils.clean(buffer);
-            logFileAccessor.close();
+            segmentWriter.close();
             closed = true;
         }
         catch (IOException e)
@@ -411,11 +368,6 @@ public class CommitLogSegment
     public String toString()
     {
         return "CommitLogSegment(" + getPath() + ')';
-    }
-
-    public int position()
-    {
-        return buffer.position();
     }
 
     public static class CommitLogSegmentFileComparator implements Comparator<File>

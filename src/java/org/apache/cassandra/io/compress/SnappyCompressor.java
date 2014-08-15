@@ -78,6 +78,11 @@ public class SnappyCompressor implements ICompressor
         return Collections.emptySet();
     }
 
+    public Map<String, String> compressionParameters()
+    {
+        return Collections.EMPTY_MAP;
+    }
+
     public int initialCompressedBufferLength(int chunkLength)
     {
         return Snappy.maxCompressedLength(chunkLength);

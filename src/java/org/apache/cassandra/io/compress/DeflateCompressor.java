@@ -63,6 +63,11 @@ public class DeflateCompressor implements ICompressor
         return Collections.emptySet();
     }
 
+    public Map<String, String> compressionParameters()
+    {
+        return Collections.EMPTY_MAP;
+    }
+
     public int initialCompressedBufferLength(int chunkLength)
     {
         return chunkLength;

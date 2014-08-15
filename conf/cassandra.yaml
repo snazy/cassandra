@@ -694,3 +694,24 @@ inter_dc_tcp_nodelay: false
 # for sequential access. Note: This could be harmful for fat rows, see CASSANDRA-4937
 # for further details on that topic.
 preheat_kernel_page_cache: false
+
+### TDE settings
+# when enabled is set to true, the following elements are encrypted
+# - commit logs
+# - hints
+# - batchlog
+# - indices (TODO)
+# - key/row cache (TODO)
+transparent_data_encryption_options:
+    enabled: true
+    chunk_length_kb: 64
+    cipher: AES/CBC/PKCS5Padding
+    key_alias: aes/cbc/pkcs5padding:1
+    # CBC requires iv length to be 16 bytes
+    # iv_length: 16
+    key_provider: org.apache.cassandra.security.JKSKeyProvider
+    key_provider_parameters: 
+      - keystore: /usr/local/src/cassandra/conf/.keystore
+        keystore_password: cassandra
+        store_type: JCEKS
+
