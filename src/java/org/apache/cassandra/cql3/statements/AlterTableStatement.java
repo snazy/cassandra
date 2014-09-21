@@ -74,7 +74,7 @@ public class AlterTableStatement extends SchemaAlteringStatement
         // validated in announceMigration()
     }
 
-    public void announceMigration(boolean isLocalOnly) throws RequestValidationException
+    public boolean announceMigration(boolean isLocalOnly) throws RequestValidationException
     {
         CFMetaData meta = validateColumnFamily(keyspace(), columnFamily());
         CFMetaData cfm = meta.copy();
@@ -107,6 +107,10 @@ public class AlterTableStatement extends SchemaAlteringStatement
                             throw new InvalidRequestException(String.format("Invalid column name %s because it conflicts with an existing column", columnName));
                     }
                 }
+
+                // Cannot re-add a dropped counter column. See #7831.
+                if (meta.isCounter() && meta.getDroppedColumns().containsKey(columnName))
+                    throw new InvalidRequestException(String.format("Cannot re-add previously dropped counter column %s", columnName));
 
                 AbstractType<?> type = validator.getType();
                 if (type instanceof CollectionType)
@@ -257,6 +261,7 @@ public class AlterTableStatement extends SchemaAlteringStatement
         }
 
         MigrationManager.announceColumnFamilyUpdate(cfm, false, isLocalOnly);
+        return true;
     }
 
     public String toString()

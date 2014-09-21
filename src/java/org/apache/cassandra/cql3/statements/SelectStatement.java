@@ -20,6 +20,7 @@ package org.apache.cassandra.cql3.statements;
 import java.nio.ByteBuffer;
 import java.util.*;
 
+import com.google.common.base.Joiner;
 import com.google.common.base.Objects;
 import com.google.common.base.Predicate;
 import com.google.common.collect.AbstractIterator;
@@ -1386,6 +1387,8 @@ public class SelectStatement implements CQLStatement, MeasurableForPreparedCache
              */
             boolean hasQueriableIndex = false;
             boolean hasQueriableClusteringColumnIndex = false;
+            boolean hasSingleColumnRelations = false;
+            boolean hasMultiColumnRelations = false;
             for (Relation relation : whereClause)
             {
                 if (relation.isMultiColumn())
@@ -1399,6 +1402,7 @@ public class SelectStatement implements CQLStatement, MeasurableForPreparedCache
                         hasQueriableIndex |= queriable[0];
                         hasQueriableClusteringColumnIndex |= queriable[1];
                         names.add(def);
+                        hasMultiColumnRelations |= ColumnDefinition.Kind.CLUSTERING_COLUMN.equals(def.kind);
                     }
                     updateRestrictionsForRelation(stmt, names, rel, boundNames);
                 }
@@ -1410,9 +1414,12 @@ public class SelectStatement implements CQLStatement, MeasurableForPreparedCache
                     boolean[] queriable = processRelationEntity(stmt, relation, entity, def);
                     hasQueriableIndex |= queriable[0];
                     hasQueriableClusteringColumnIndex |= queriable[1];
+                    hasSingleColumnRelations |= ColumnDefinition.Kind.CLUSTERING_COLUMN.equals(def.kind);
                     updateRestrictionsForRelation(stmt, def, rel, boundNames);
                 }
             }
+            if (hasSingleColumnRelations && hasMultiColumnRelations)
+                throw new InvalidRequestException("Mixing single column relations and multi column relations on clustering columns is not allowed");
 
              // At this point, the select statement if fully constructed, but we still have a few things to validate
             processPartitionKeyRestrictions(stmt, hasQueriableIndex, cfm);
@@ -1587,7 +1594,10 @@ public class SelectStatement implements CQLStatement, MeasurableForPreparedCache
                         restriction.setBound(def.name, relation.operator(), t);
                         stmt.columnRestrictions[def.position()] = restriction;
                     }
+                    break;
                 }
+                case NEQ:
+                    throw new InvalidRequestException(String.format("Unsupported \"!=\" relation: %s", relation));
             }
         }
 
@@ -1645,6 +1655,13 @@ public class SelectStatement implements CQLStatement, MeasurableForPreparedCache
                                                    StorageService.getPartitioner().getTokenValidator());
             }
 
+            // We don't support relations against entire collections, like "numbers = {1, 2, 3}"
+            if (receiver.type.isCollection() && !(newRel.operator().equals(Relation.Type.CONTAINS_KEY) || newRel.operator() == Relation.Type.CONTAINS))
+            {
+                throw new InvalidRequestException(String.format("Collection column '%s' (%s) cannot be restricted by a '%s' relation",
+                                                                def.name, receiver.type.asCQL3Type(), newRel.operator()));
+            }
+
             switch (newRel.operator())
             {
                 case EQ:
@@ -1680,6 +1697,8 @@ public class SelectStatement implements CQLStatement, MeasurableForPreparedCache
                         existingRestriction = new SingleColumnRestriction.InWithValues(inValues);
                     }
                     break;
+                case NEQ:
+                    throw new InvalidRequestException(String.format("Unsupported \"!=\" relation on column \"%s\"", def.name));
                 case GT:
                 case GTE:
                 case LT:
@@ -1691,6 +1710,11 @@ public class SelectStatement implements CQLStatement, MeasurableForPreparedCache
                             throw new InvalidRequestException(String.format("Column \"%s\" cannot be restricted by both an equality and an inequality relation", def.name));
                         else if (existingRestriction.isMultiColumn())
                             throw new InvalidRequestException(String.format("Column \"%s\" cannot be restricted by both a tuple notation inequality and a single column inequality (%s)", def.name, newRel));
+                        else if (existingRestriction.isOnToken() != newRel.onToken)
+                            // For partition keys, we shouldn't have slice restrictions without token(). And while this is rejected later by
+                            // processPartitionKeysRestrictions, we shouldn't update the existing restriction by the new one if the old one was using token()
+                            // and the new one isn't since that would bypass that later test.
+                            throw new InvalidRequestException("Only EQ and IN relation are supported on the partition key (unless you use the token() function)");
 
                         Term t = newRel.getValue().prepare(keyspace(), receiver);
                         t.collectMarkerSpecification(boundNames);
@@ -1715,6 +1739,7 @@ public class SelectStatement implements CQLStatement, MeasurableForPreparedCache
                     Term t = newRel.getValue().prepare(keyspace(), receiver);
                     t.collectMarkerSpecification(boundNames);
                     ((SingleColumnRestriction.Contains)existingRestriction).add(t, isKey);
+                    break;
                 }
             }
             return existingRestriction;
@@ -1797,6 +1822,27 @@ public class SelectStatement implements CQLStatement, MeasurableForPreparedCache
                     throw new InvalidRequestException("Only EQ and IN relation are supported on the partition key (unless you use the token() function)");
                 }
                 previous = cdef;
+            }
+
+            if (stmt.onToken && cfm.partitionKeyColumns().size() > 0)
+                checkTokenFunctionArgumentsOrder(cfm);
+        }
+
+        /**
+         * Checks that the column identifiers used as argument for the token function have been specified in the
+         * partition key order.
+         * @param cfm the Column Family MetaData
+         * @throws InvalidRequestException if the arguments have not been provided in the proper order.
+         */
+        private void checkTokenFunctionArgumentsOrder(CFMetaData cfm) throws InvalidRequestException
+        {
+            Iterator<ColumnDefinition> iter = cfm.partitionKeyColumns().iterator();
+            for (Relation relation : whereClause)
+            {
+                SingleColumnRelation singleColumnRelation = (SingleColumnRelation) relation;
+                if (singleColumnRelation.onToken && !cfm.getColumnDefinition(singleColumnRelation.getEntity()).equals(iter.next()))
+                    throw new InvalidRequestException(String.format("The token function arguments must be in the partition key order: %s",
+                                                                    Joiner.on(',').join(cfm.partitionKeyColumns())));
             }
         }
 

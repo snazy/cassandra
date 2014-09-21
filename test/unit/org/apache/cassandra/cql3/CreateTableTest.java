@@ -15,25 +15,18 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.apache.cassandra.service;
+package org.apache.cassandra.cql3;
 
-import org.apache.cassandra.db.ColumnFamily;
-import org.apache.cassandra.db.filter.IDiskAtomFilter;
-import org.apache.cassandra.exceptions.InvalidRequestException;
+import org.junit.Test;
 
-/**
- * Abstract the conditions to be fulfilled by a CAS operation.
- */
-public interface CASConditions
+import static junit.framework.Assert.assertFalse;
+
+public class CreateTableTest extends CQLTester
 {
-    /**
-     * The filter to use to fetch the value to compare for the CAS.
-     */
-    public IDiskAtomFilter readFilter();
-
-    /**
-     * Returns whether the provided CF, that represents the values fetched using the
-     * readFilter(), match the CAS conditions this object stands for.
-     */
-    public boolean appliesTo(ColumnFamily current) throws InvalidRequestException;
+    @Test
+    public void testCQL3PartitionKeyOnlyTable()
+    {
+        createTable("CREATE TABLE %s (id text PRIMARY KEY);");
+        assertFalse(currentTableMetadata().isThriftCompatible());
+    }
 }

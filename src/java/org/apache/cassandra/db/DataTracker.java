@@ -200,6 +200,18 @@ public class DataTracker
             if (inactive.size() < set.size())
                 return false;
 
+            if (Iterables.any(set, new Predicate<SSTableReader>()
+            {
+                @Override
+                public boolean apply(SSTableReader sstable)
+                {
+                    return sstable.isMarkedCompacted();
+                }
+            }))
+            {
+                return false;
+            }
+
             View newView = currentView.markCompacting(set);
             if (view.compareAndSet(currentView, newView))
                 return true;
@@ -252,6 +264,12 @@ public class DataTracker
     {
         replace(sstables, Collections.<SSTableReader>emptyList());
         notifySSTablesChanged(sstables, allReplacements, compactionType);
+        for (SSTableReader sstable : sstables)
+        {
+            long bytesOnDisk = sstable.bytesOnDisk();
+            cfstore.metric.totalDiskSpaceUsed.inc(bytesOnDisk);
+            cfstore.metric.liveDiskSpaceUsed.inc(bytesOnDisk);
+        }
     }
 
     public void addInitialSSTables(Collection<SSTableReader> sstables)
@@ -302,7 +320,7 @@ public class DataTracker
     void removeUnreadableSSTables(File directory)
     {
         View currentView, newView;
-        List<SSTableReader> remaining = new ArrayList<>();
+        Set<SSTableReader> remaining = new HashSet<>();
         do
         {
             currentView = view.get();
@@ -316,6 +334,9 @@ public class DataTracker
             newView = currentView.replace(currentView.sstables, remaining);
         }
         while (!view.compareAndSet(currentView, newView));
+        for (SSTableReader sstable : currentView.sstables)
+            if (!remaining.contains(sstable))
+                sstable.releaseReference();
         notifySSTablesChanged(remaining, Collections.<SSTableReader>emptySet(), OperationType.UNKNOWN);
     }
 

@@ -38,6 +38,8 @@ public class StreamPlan
     private final long repairedAt;
     private final StreamCoordinator coordinator;
 
+    private StreamConnectionFactory connectionFactory = new DefaultConnectionFactory();
+
     private boolean flushBeforeTransfer = true;
 
     /**
@@ -54,7 +56,7 @@ public class StreamPlan
     {
         this.description = description;
         this.repairedAt = repairedAt;
-        this.coordinator = new StreamCoordinator(connectionsPerHost);
+        this.coordinator = new StreamCoordinator(connectionsPerHost, connectionFactory);
     }
 
     /**
@@ -139,11 +141,23 @@ public class StreamPlan
     }
 
     /**
+     * Set custom StreamConnectionFactory to be used for establishing connection
+     *
+     * @param factory StreamConnectionFactory to use
+     * @return self
+     */
+    public StreamPlan connectionFactory(StreamConnectionFactory factory)
+    {
+        this.coordinator.setConnectionFactory(factory);
+        return this;
+    }
+
+    /**
      * @return true if this plan has no plan to execute
      */
     public boolean isEmpty()
     {
-        return coordinator.hasActiveSessions();
+        return !coordinator.hasActiveSessions();
     }
 
     /**
@@ -168,4 +182,5 @@ public class StreamPlan
         this.flushBeforeTransfer = flushBeforeTransfer;
         return this;
     }
+
 }

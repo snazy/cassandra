@@ -23,6 +23,7 @@ import java.io.InputStream;
 import java.util.Iterator;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.zip.Adler32;
 import java.util.zip.CRC32;
 import java.util.zip.Checksum;
@@ -58,6 +59,8 @@ public class CompressedInputStream extends InputStream
     // raw checksum bytes
     private final byte[] checksumBytes = new byte[4];
 
+    private static final byte[] POISON_PILL = new byte[0];
+
     private long totalCompressedBytesRead;
     private final boolean hasPostCompressionAdlerChecksums;
 
@@ -83,7 +86,10 @@ public class CompressedInputStream extends InputStream
         {
             try
             {
-                decompress(dataBuffer.take());
+                byte[] compressedWithCRC = dataBuffer.take();
+                if (compressedWithCRC == POISON_PILL)
+                    throw new EOFException("No chunk available");
+                decompress(compressedWithCRC);
             }
             catch (InterruptedException e)
             {
@@ -109,7 +115,7 @@ public class CompressedInputStream extends InputStream
         totalCompressedBytesRead += compressed.length;
 
         // validate crc randomly
-        if (info.parameters.getCrcCheckChance() > FBUtilities.threadLocalRandom().nextDouble())
+        if (info.parameters.getCrcCheckChance() > ThreadLocalRandom.current().nextDouble())
         {
             if (hasPostCompressionAdlerChecksums)
             {
@@ -162,7 +168,15 @@ public class CompressedInputStream extends InputStream
 
                 int bufferRead = 0;
                 while (bufferRead < readLength)
-                    bufferRead += source.read(compressedWithCRC, bufferRead, readLength - bufferRead);
+                {
+                    int r = source.read(compressedWithCRC, bufferRead, readLength - bufferRead);
+                    if (r < 0)
+                    {
+                        dataBuffer.put(POISON_PILL);
+                        return; // throw exception where we consume dataBuffer
+                    }
+                    bufferRead += r;
+                }
                 dataBuffer.put(compressedWithCRC);
             }
         }

@@ -19,13 +19,15 @@ package org.apache.cassandra.cql3;
 
 import java.nio.ByteBuffer;
 import java.util.*;
-import java.util.concurrent.ConcurrentMap;
-import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicInteger;
 
+import com.google.common.annotations.VisibleForTesting;
 import com.google.common.primitives.Ints;
 
 import com.googlecode.concurrentlinkedhashmap.ConcurrentLinkedHashMap;
 import com.googlecode.concurrentlinkedhashmap.EntryWeigher;
+import com.googlecode.concurrentlinkedhashmap.EvictionListener;
 import org.antlr.runtime.*;
 import org.github.jamm.MemoryMeter;
 import org.slf4j.Logger;
@@ -36,8 +38,8 @@ import org.apache.cassandra.db.*;
 import org.apache.cassandra.db.composites.*;
 import org.apache.cassandra.db.marshal.AbstractType;
 import org.apache.cassandra.exceptions.*;
-import org.apache.cassandra.service.ClientState;
-import org.apache.cassandra.service.QueryState;
+import org.apache.cassandra.metrics.CQLMetrics;
+import org.apache.cassandra.service.*;
 import org.apache.cassandra.service.pager.QueryPager;
 import org.apache.cassandra.service.pager.QueryPagers;
 import org.apache.cassandra.thrift.ThriftClientState;
@@ -56,7 +58,6 @@ public class QueryProcessor implements QueryHandler
     private static final Logger logger = LoggerFactory.getLogger(QueryProcessor.class);
     private static final MemoryMeter meter = new MemoryMeter().withGuessing(MemoryMeter.Guess.FALLBACK_BEST);
     private static final long MAX_CACHE_PREPARED_MEMORY = Runtime.getRuntime().maxMemory() / 256;
-    private static final int MAX_CACHE_PREPARED_COUNT = 10000;
 
     private static EntryWeigher<MD5Digest, ParsedStatement.Prepared> cqlMemoryUsageWeigher = new EntryWeigher<MD5Digest, ParsedStatement.Prepared>()
     {
@@ -83,20 +84,58 @@ public class QueryProcessor implements QueryHandler
     // bother with expiration on those.
     private static final ConcurrentMap<String, ParsedStatement.Prepared> internalStatements = new ConcurrentHashMap<>();
 
+    @VisibleForTesting
+    public static final CQLMetrics metrics = new CQLMetrics();
+
+    private static final AtomicInteger lastMinuteEvictionsCount = new AtomicInteger(0);
+    private static final ScheduledExecutorService evictionCheckTimer = Executors.newScheduledThreadPool(1);
+
     static
     {
         preparedStatements = new ConcurrentLinkedHashMap.Builder<MD5Digest, ParsedStatement.Prepared>()
                              .maximumWeightedCapacity(MAX_CACHE_PREPARED_MEMORY)
                              .weigher(cqlMemoryUsageWeigher)
-                             .build();
+                             .listener(new EvictionListener<MD5Digest, ParsedStatement.Prepared>()
+                             {
+                                 public void onEviction(MD5Digest md5Digest, ParsedStatement.Prepared prepared)
+                                 {
+                                     metrics.preparedStatementsEvicted.inc();
+                                     lastMinuteEvictionsCount.incrementAndGet();
+                                 }
+                             }).build();
+
         thriftPreparedStatements = new ConcurrentLinkedHashMap.Builder<Integer, CQLStatement>()
                                    .maximumWeightedCapacity(MAX_CACHE_PREPARED_MEMORY)
                                    .weigher(thriftMemoryUsageWeigher)
+                                   .listener(new EvictionListener<Integer, CQLStatement>()
+                                   {
+                                       public void onEviction(Integer integer, CQLStatement cqlStatement)
+                                       {
+                                           metrics.preparedStatementsEvicted.inc();
+                                           lastMinuteEvictionsCount.incrementAndGet();
+                                       }
+                                   })
                                    .build();
 
+        evictionCheckTimer.scheduleAtFixedRate(new Runnable()
+        {
+            public void run()
+            {
+                long count = lastMinuteEvictionsCount.getAndSet(0);
+                if (count > 0)
+                    logger.info("{} prepared statements discarded in the last minute because cache limit reached ({} bytes)",
+                                count,
+                                MAX_CACHE_PREPARED_MEMORY);
+            }
+        }, 1, 1, TimeUnit.MINUTES);
     }
 
-    // Work aound initialization dependency
+    public static int preparedStatementsCount()
+    {
+        return preparedStatements.size() + thriftPreparedStatements.size();
+    }
+
+    // Work around initialization dependency
     private static enum InternalStateInstance
     {
         INSTANCE;
@@ -125,6 +164,7 @@ public class QueryProcessor implements QueryHandler
 
     private QueryProcessor()
     {
+        MigrationManager.instance.register(new MigrationSubscriber());
     }
 
     public ParsedStatement.Prepared getPrepared(MD5Digest id)
@@ -174,7 +214,7 @@ public class QueryProcessor implements QueryHandler
                                                             Cell.MAX_NAME_LENGTH));
     }
 
-    public static ResultMessage processStatement(CQLStatement statement,
+    private static ResultMessage processStatement(CQLStatement statement,
                                                   QueryState queryState,
                                                   QueryOptions options)
     throws RequestExecutionException, RequestValidationException
@@ -202,6 +242,9 @@ public class QueryProcessor implements QueryHandler
         CQLStatement prepared = p.statement;
         if (prepared.getBoundTerms() != options.getValues().size())
             throw new InvalidRequestException("Invalid amount of bind variables");
+
+        if (!queryState.getClientState().isInternal)
+            metrics.regularStatementsExecuted.inc();
 
         return processStatement(prepared, queryState, options);
     }
@@ -370,23 +413,16 @@ public class QueryProcessor implements QueryHandler
             throw new InvalidRequestException(String.format("Prepared statement of size %d bytes is larger than allowed maximum of %d bytes.",
                                                             statementSize,
                                                             MAX_CACHE_PREPARED_MEMORY));
-
         if (forThrift)
         {
             int statementId = toHash.hashCode();
             thriftPreparedStatements.put(statementId, prepared.statement);
-            logger.trace(String.format("Stored prepared statement #%d with %d bind markers",
-                                       statementId,
-                                       prepared.statement.getBoundTerms()));
             return ResultMessage.Prepared.forThrift(statementId, prepared.boundNames);
         }
         else
         {
             MD5Digest statementId = MD5Digest.compute(toHash);
             preparedStatements.put(statementId, prepared);
-            logger.trace(String.format("Stored prepared statement %s with %d bind markers",
-                                       statementId,
-                                       prepared.statement.getBoundTerms()));
             return new ResultMessage.Prepared(statementId, prepared);
         }
     }
@@ -410,6 +446,7 @@ public class QueryProcessor implements QueryHandler
                     logger.trace("[{}] '{}'", i+1, variables.get(i));
         }
 
+        metrics.preparedStatementsExecuted.inc();
         return processStatement(statement, queryState, options);
     }
 
@@ -479,4 +516,68 @@ public class QueryProcessor implements QueryHandler
              ? ((MeasurableForPreparedCache)key).measureForPreparedCache(meter)
              : meter.measureDeep(key);
     }
+
+    private static class MigrationSubscriber implements IMigrationListener
+    {
+        private void removeInvalidPreparedStatements(String ksName, String cfName)
+        {
+            Iterator<ParsedStatement.Prepared> iterator = preparedStatements.values().iterator();
+            while (iterator.hasNext())
+            {
+                if (shouldInvalidate(ksName, cfName, iterator.next().statement))
+                    iterator.remove();
+            }
+
+            Iterator<CQLStatement> thriftIterator = thriftPreparedStatements.values().iterator();
+            while (thriftIterator.hasNext())
+            {
+                if (shouldInvalidate(ksName, cfName, thriftIterator.next()))
+                    thriftIterator.remove();
+            }
+        }
+
+        private boolean shouldInvalidate(String ksName, String cfName, CQLStatement statement)
+        {
+            String statementKsName;
+            String statementCfName;
+
+            if (statement instanceof ModificationStatement)
+            {
+                ModificationStatement modificationStatement = ((ModificationStatement) statement);
+                statementKsName = modificationStatement.keyspace();
+                statementCfName = modificationStatement.columnFamily();
+            }
+            else if (statement instanceof SelectStatement)
+            {
+                SelectStatement selectStatement = ((SelectStatement) statement);
+                statementKsName = selectStatement.keyspace();
+                statementCfName = selectStatement.columnFamily();
+            }
+            else
+            {
+                return false;
+            }
+
+            return ksName.equals(statementKsName) && (cfName == null || cfName.equals(statementCfName));
+        }
+
+        public void onCreateKeyspace(String ksName) { }
+        public void onCreateColumnFamily(String ksName, String cfName) { }
+        public void onCreateUserType(String ksName, String typeName) { }
+        public void onUpdateKeyspace(String ksName) { }
+        public void onUpdateColumnFamily(String ksName, String cfName) { }
+        public void onUpdateUserType(String ksName, String typeName) { }
+
+        public void onDropKeyspace(String ksName)
+        {
+            removeInvalidPreparedStatements(ksName, null);
+        }
+
+        public void onDropColumnFamily(String ksName, String cfName)
+        {
+            removeInvalidPreparedStatements(ksName, cfName);
+        }
+
+        public void onDropUserType(String ksName, String typeName) { }
+	}
 }

@@ -35,6 +35,7 @@ import java.util.Set;
 import java.util.SortedSet;
 import java.util.TreeSet;
 import java.util.UUID;
+import java.util.concurrent.ThreadLocalRandom;
 
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Objects;
@@ -156,6 +157,7 @@ public final class CFMetaData
                                                                     + "columnfamily_name text,"
                                                                     + "cf_id uuid," // post-2.1 UUID cfid
                                                                     + "type text,"
+                                                                    + "is_dense boolean,"
                                                                     + "comparator text,"
                                                                     + "subcomparator text,"
                                                                     + "comment text,"
@@ -309,7 +311,8 @@ public final class CFMetaData
                                                      + "most_recent_commit_at timeuuid,"
                                                      + "most_recent_commit blob,"
                                                      + "PRIMARY KEY (row_key, cf_id)"
-                                                     + ") WITH COMMENT='in-progress paxos proposals'");
+                                                     + ") WITH COMMENT='in-progress paxos proposals' "
+                                                     + "AND COMPACTION={'class' : 'LeveledCompactionStrategy'}");
 
     public static final CFMetaData SSTableActivityCF = compile("CREATE TABLE " + SystemKeyspace.SSTABLE_ACTIVITY_CF + " ("
                                                                + "keyspace_name text,"
@@ -445,6 +448,11 @@ public final class CFMetaData
     public static final String DEFAULT_COLUMN_ALIAS = "column";
     public static final String DEFAULT_VALUE_ALIAS = "value";
 
+    // We call dense a CF for which each component of the comparator is a clustering column, i.e. no
+    // component is used to store a regular column names. In other words, non-composite static "thrift"
+    // and CQL3 CF are *not* dense.
+    private volatile Boolean isDense; // null means "we don't know and need to infer from other data"
+
     private volatile Map<ByteBuffer, ColumnDefinition> columnMetadata = new HashMap<>();
     private volatile List<ColumnDefinition> partitionKeyColumns;  // Always of size keyValidator.componentsCount, null padded if necessary
     private volatile List<ColumnDefinition> clusteringColumns;    // Of size comparator.componentsCount or comparator.componentsCount -1, null padded if necessary
@@ -478,6 +486,7 @@ public final class CFMetaData
     public CFMetaData speculativeRetry(SpeculativeRetry prop) {speculativeRetry = prop; return this;}
     public CFMetaData droppedColumns(Map<ColumnIdentifier, Long> cols) {droppedColumns = cols; return this;}
     public CFMetaData triggers(Map<String, TriggerDefinition> prop) {triggers = prop; return this;}
+    public CFMetaData isDense(Boolean prop) {isDense = prop; return this;}
 
     /**
      * Create new ColumnFamily metadata with generated random ID.
@@ -655,6 +664,7 @@ public final class CFMetaData
                       .memtableFlushPeriod(oldCFMD.memtableFlushPeriod)
                       .droppedColumns(new HashMap<>(oldCFMD.droppedColumns))
                       .triggers(new HashMap<>(oldCFMD.triggers))
+                      .isDense(oldCFMD.isDense)
                       .rebuild();
     }
 
@@ -694,7 +704,7 @@ public final class CFMetaData
 
     public ReadRepairDecision newReadRepairDecision()
     {
-        double chance = FBUtilities.threadLocalRandom().nextDouble();
+        double chance = ThreadLocalRandom.current().nextDouble();
         if (getReadRepairChance() > chance)
             return ReadRepairDecision.GLOBAL;
 
@@ -871,6 +881,11 @@ public final class CFMetaData
         return droppedColumns;
     }
 
+    public Boolean getIsDense()
+    {
+        return isDense;
+    }
+
     @Override
     public boolean equals(Object o)
     {
@@ -907,7 +922,8 @@ public final class CFMetaData
             && Objects.equal(maxIndexInterval, other.maxIndexInterval)
             && Objects.equal(speculativeRetry, other.speculativeRetry)
             && Objects.equal(droppedColumns, other.droppedColumns)
-            && Objects.equal(triggers, other.triggers);
+            && Objects.equal(triggers, other.triggers)
+            && Objects.equal(isDense, other.isDense);
     }
 
     @Override
@@ -940,6 +956,7 @@ public final class CFMetaData
             .append(speculativeRetry)
             .append(droppedColumns)
             .append(triggers)
+            .append(isDense)
             .toHashCode();
     }
 
@@ -1042,7 +1059,7 @@ public final class CFMetaData
                 defs.add(def);
             }
 
-            CellNameType comparator = CellNames.fromAbstractType(fullRawComparator, isDense(fullRawComparator, defs));
+            CellNameType comparator = CellNames.fromAbstractType(fullRawComparator, calculateIsDense(fullRawComparator, defs));
 
             UUID cfId = Schema.instance.getId(cf_def.keyspace, cf_def.name);
             if (cfId == null)
@@ -1201,6 +1218,8 @@ public final class CFMetaData
         compressionParameters = cfm.compressionParameters;
 
         triggers = cfm.triggers;
+
+        isDense(cfm.isDense);
 
         rebuild();
         logger.debug("application result is {}", this);
@@ -1712,6 +1731,8 @@ public final class CFMetaData
         for (Map.Entry<ColumnIdentifier, Long> entry : droppedColumns.entrySet())
             adder.addMapEntry("dropped_columns", entry.getKey().toString(), entry.getValue());
 
+        adder.add("is_dense", isDense);
+
         // Save the CQL3 metadata "the old way" for compatibility sake
         adder.add("key_aliases", aliasesToJson(partitionKeyColumns));
         adder.add("column_aliases", aliasesToJson(clusteringColumns));
@@ -1738,7 +1759,11 @@ public final class CFMetaData
                                                                             fullRawComparator,
                                                                             cfType == ColumnFamilyType.Super);
 
-            CellNameType comparator = CellNames.fromAbstractType(fullRawComparator, isDense(fullRawComparator, columnDefs));
+            boolean isDense = result.has("is_dense")
+                            ? result.getBoolean("is_dense")
+                            : calculateIsDense(fullRawComparator, columnDefs);
+
+            CellNameType comparator = CellNames.fromAbstractType(fullRawComparator, isDense);
 
             // if we are upgrading, we use id generated from names initially
             UUID cfId = result.has("cf_id")
@@ -1746,6 +1771,7 @@ public final class CFMetaData
                       : generateLegacyCfId(ksName, cfName);
 
             CFMetaData cfm = new CFMetaData(ksName, cfName, cfType, comparator, cfId);
+            cfm.isDense(isDense);
 
             cfm.readRepairChance(result.getDouble("read_repair_chance"));
             cfm.dcLocalReadRepairChance(result.getDouble("local_read_repair_chance"));
@@ -1956,11 +1982,17 @@ public final class CFMetaData
             cfDef.triggers.put(td.name, td);
     }
 
-    public void addTriggerDefinition(TriggerDefinition def) throws ConfigurationException
+    public void addTriggerDefinition(TriggerDefinition def) throws InvalidRequestException
     {
-        if (triggers.containsKey(def.name))
-            throw new ConfigurationException(String.format("Cannot create trigger %s, a trigger with the same name already exists", def.name));
+        if (containsTriggerDefinition(def))
+            throw new InvalidRequestException(
+                String.format("Cannot create trigger %s, a trigger with the same name already exists", def.name));
         triggers.put(def.name, def);
+    }
+
+    public boolean containsTriggerDefinition(TriggerDefinition def)
+    {
+        return triggers.containsKey(def.name);
     }
 
     public boolean removeTrigger(String name)
@@ -2001,9 +2033,12 @@ public final class CFMetaData
 
     public CFMetaData rebuild()
     {
+        if (isDense == null)
+            isDense(calculateIsDense(comparator.asAbstractType(), allColumns()));
+
         List<ColumnDefinition> pkCols = nullInitializedList(keyValidator.componentsCount());
         List<ColumnDefinition> ckCols = nullInitializedList(comparator.clusteringPrefixSize());
-        // We keep things sorted to get consistent/predicatable order in select queries
+        // We keep things sorted to get consistent/predictable order in select queries
         SortedSet<ColumnDefinition> regCols = new TreeSet<>(regularColumnComparator);
         SortedSet<ColumnDefinition> statCols = new TreeSet<>(regularColumnComparator);
         ColumnDefinition compactCol = null;
@@ -2038,7 +2073,7 @@ public final class CFMetaData
         clusteringColumns = addDefaultColumnAliases(ckCols);
         regularColumns = regCols;
         staticColumns = statCols;
-        compactValueColumn = addDefaultValueAlias(compactCol, comparator.isDense());
+        compactValueColumn = addDefaultValueAlias(compactCol);
         return this;
     }
 
@@ -2093,9 +2128,9 @@ public final class CFMetaData
         return ckCols;
     }
 
-    private ColumnDefinition addDefaultValueAlias(ColumnDefinition compactValueDef, boolean isDense)
+    private ColumnDefinition addDefaultValueAlias(ColumnDefinition compactValueDef)
     {
-        if (isDense)
+        if (comparator.isDense())
         {
             if (compactValueDef != null)
                 return compactValueDef;
@@ -2115,19 +2150,19 @@ public final class CFMetaData
      * We call dense a CF for which each component of the comparator is a clustering column, i.e. no
      * component is used to store a regular column names. In other words, non-composite static "thrift"
      * and CQL3 CF are *not* dense.
-     * Note that his method is only used by rebuildCQL3Metadata. Once said metadata are built, finding
-     * if a CF is dense amounts more simply to check if clusteringColumns.size() == comparator.componentsCount().
+     * We save whether the table is dense or not during table creation through CQL, but we don't have this
+     * information for table just created through thrift, nor for table prior to CASSANDRA-7744, so this
+     * method does its best to infer whether the table is dense or not based on other elements.
      */
-    private static boolean isDense(AbstractType<?> comparator, Collection<ColumnDefinition> defs)
+    private static boolean calculateIsDense(AbstractType<?> comparator, Collection<ColumnDefinition> defs)
     {
         /*
          * As said above, this method is only here because we need to deal with thrift upgrades.
          * Once a CF has been "upgraded", i.e. we've rebuilt and save its CQL3 metadata at least once,
-         * then checking for isDense amounts to looking whether the maximum componentIndex for the
-         * CLUSTERING_COLUMN ColumnDefinitions is equal to comparator.componentsCount() - 1 or not.
+         * then we'll have saved the "is_dense" value and will be good to go.
          *
-         * But non-upgraded thrift CF will have no such CLUSTERING_COLUMN column definitions, so we need
-         * to infer that information without relying on them in that case. And for the most part this is
+         * But non-upgraded thrift CF (and pre-7744 CF) will have no value for "is_dense", so we need
+         * to infer that information without relying on it in that case. And for the most part this is
          * easy, a CF that has at least one REGULAR definition is not dense. But the subtlety is that not
          * having a REGULAR definition may not mean dense because of CQL3 definitions that have only the
          * PRIMARY KEY defined.
@@ -2158,7 +2193,6 @@ public final class CFMetaData
         return maxClusteringIdx >= 0
              ? maxClusteringIdx == comparator.componentsCount() - 1
              : !hasRegular && !isCQL3OnlyPKComparator(comparator);
-
     }
 
     private static boolean isCQL3OnlyPKComparator(AbstractType<?> comparator)
@@ -2200,6 +2234,11 @@ public final class CFMetaData
             if (def.kind == ColumnDefinition.Kind.REGULAR && !def.isThriftCompatible())
                 return false;
         }
+
+        // The table might also have no REGULAR columns (be PK-only), but still be "thrift incompatible". See #7832.
+        if (isCQL3OnlyPKComparator(comparator.asAbstractType()) && !isDense)
+            return false;
+
         return true;
     }
 
@@ -2230,7 +2269,7 @@ public final class CFMetaData
             .append("keyValidator", keyValidator)
             .append("minCompactionThreshold", minCompactionThreshold)
             .append("maxCompactionThreshold", maxCompactionThreshold)
-            .append("columnMetadata", columnMetadata)
+            .append("columnMetadata", columnMetadata.values())
             .append("compactionStrategyClass", compactionStrategyClass)
             .append("compactionStrategyOptions", compactionStrategyOptions)
             .append("compressionParameters", compressionParameters.asThriftOptions())
@@ -2242,7 +2281,8 @@ public final class CFMetaData
             .append("maxIndexInterval", maxIndexInterval)
             .append("speculativeRetry", speculativeRetry)
             .append("droppedColumns", droppedColumns)
-            .append("triggers", triggers)
+            .append("triggers", triggers.values())
+            .append("isDense", isDense)
             .toString();
     }
 }
