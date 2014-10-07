@@ -144,7 +144,8 @@ public class NodeTool
                 TruncateHints.class,
                 TpStats.class,
                 SetLoggingLevel.class,
-                GetLoggingLevels.class
+                GetLoggingLevels.class,
+                GetManifest.class
         );
 
         Cli<Runnable> parser = Cli.<Runnable>builder("nodetool")
@@ -2428,6 +2429,22 @@ public class NodeTool
             System.out.printf("%n%-50s%10s%n", "Logger Name", "Log Level");
             for (Map.Entry<String, String> entry : probe.getLoggingLevels().entrySet())
                 System.out.printf("%-50s%10s%n", entry.getKey(), entry.getValue());
+        }
+    }
+
+    @Command(name = "getmanifest", description = "Show Leveled/Overlapping manifest")
+    public static class GetManifest extends NodeToolCmd
+    {
+        @Arguments(usage = "<keyspace> <table>", description = "The keyspace and table name whose manifest should be output")
+        List<String> args = new ArrayList<>();
+
+        @Override
+        public void execute(NodeProbe probe)
+        {
+            for(Map.Entry<Integer, List<String>> entry: probe.getManifestDescription(args.get(0), args.get(1)).entrySet())
+            {
+                System.out.printf("%8s %-50s%n", entry.getKey(), entry.getValue());
+            }
         }
     }
 

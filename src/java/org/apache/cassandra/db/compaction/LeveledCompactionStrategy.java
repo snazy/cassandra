@@ -33,7 +33,9 @@ import java.util.SortedSet;
 
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Joiner;
-import com.google.common.collect.*;
+import com.google.common.collect.AbstractIterator;
+import com.google.common.collect.ArrayListMultimap;
+import com.google.common.collect.Multimap;
 import com.google.common.primitives.Doubles;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -44,45 +46,49 @@ import org.apache.cassandra.dht.Range;
 import org.apache.cassandra.dht.Token;
 import org.apache.cassandra.exceptions.ConfigurationException;
 import org.apache.cassandra.io.sstable.SSTableReader;
-import org.apache.cassandra.notifications.INotification;
-import org.apache.cassandra.notifications.INotificationConsumer;
-import org.apache.cassandra.notifications.SSTableAddedNotification;
-import org.apache.cassandra.notifications.SSTableListChangedNotification;
-import org.apache.cassandra.notifications.SSTableRepairStatusChanged;
+import org.apache.cassandra.notifications.*;
 
 public class LeveledCompactionStrategy extends AbstractCompactionStrategy implements INotificationConsumer
 {
     private static final Logger logger = LoggerFactory.getLogger(LeveledCompactionStrategy.class);
     private static final String SSTABLE_SIZE_OPTION = "sstable_size_in_mb";
+    private static final String MAX_OVERLAPPING_LEVEL_OPTION = "max_overlapping_level";
 
     @VisibleForTesting
     final LeveledManifest manifest;
     private final int maxSSTableSizeInMB;
+    public final int maxOverlappingLevel;
 
     public LeveledCompactionStrategy(ColumnFamilyStore cfs, Map<String, String> options)
     {
         super(cfs, options);
-        int configuredMaxSSTableSize = 160;
+        int configuredMaxSSTableSize = 160, configuredMaxOverlappingLevel = 0;
         SizeTieredCompactionStrategyOptions localOptions = new SizeTieredCompactionStrategyOptions(options);
         if (options != null)
-        {             
-            if (options.containsKey(SSTABLE_SIZE_OPTION))             
-            {                 
-                configuredMaxSSTableSize = Integer.parseInt(options.get(SSTABLE_SIZE_OPTION));                 
-                if (!Boolean.getBoolean("cassandra.tolerate_sstable_size"))                 
-                {                     
+        {
+            if (options.containsKey(MAX_OVERLAPPING_LEVEL_OPTION))
+            {
+                configuredMaxOverlappingLevel = Integer.parseInt(options.get(MAX_OVERLAPPING_LEVEL_OPTION));
+            }
+
+            if (options.containsKey(SSTABLE_SIZE_OPTION))
+            {
+                configuredMaxSSTableSize = Integer.parseInt(options.get(SSTABLE_SIZE_OPTION));
+                if (!Boolean.getBoolean("cassandra.tolerate_sstable_size"))
+                {
                     if (configuredMaxSSTableSize >= 1000)
                         logger.warn("Max sstable size of {}MB is configured for {}.{}; having a unit of compaction this large is probably a bad idea",
                                 configuredMaxSSTableSize, cfs.name, cfs.getColumnFamilyName());
-                    if (configuredMaxSSTableSize < 50)  
+                    if (configuredMaxSSTableSize < 50)
                         logger.warn("Max sstable size of {}MB is configured for {}.{}.  Testing done for CASSANDRA-5727 indicates that performance improves up to 160MB",
                                 configuredMaxSSTableSize, cfs.name, cfs.getColumnFamilyName());
                 }
             }
         }
         maxSSTableSizeInMB = configuredMaxSSTableSize;
+        maxOverlappingLevel = configuredMaxOverlappingLevel;
 
-        manifest = LeveledManifest.create(cfs, this.maxSSTableSizeInMB, cfs.getSSTables(), localOptions);
+        manifest = LeveledManifest.create(cfs, this.maxSSTableSizeInMB, this.maxOverlappingLevel, cfs.getSSTables(), localOptions);
         logger.debug("Created {}", manifest);
     }
 
@@ -277,6 +283,12 @@ public class LeveledCompactionStrategy extends AbstractCompactionStrategy implem
                     for (SSTableReader sstable : byLevel.get(level))
                         scanners.add(sstable.getScanner(range, CompactionManager.instance.getRateLimiter()));
                 }
+                else if (level <= maxOverlappingLevel)
+                {
+                    List<SSTableReader> intersecting = LeveledScanner.intersecting(byLevel.get(level), range);
+                    for (SSTableReader sstable : intersecting)
+                        scanners.add(sstable.getScanner(range, CompactionManager.instance.getRateLimiter()));
+                }
                 else
                 {
                     // Create a LeveledScanner that only opens one sstable at a time, in sorted order
@@ -319,7 +331,7 @@ public class LeveledCompactionStrategy extends AbstractCompactionStrategy implem
             this.range = range;
 
             // add only sstables that intersect our range, and estimate how much data that involves
-            this.sstables = new ArrayList<SSTableReader>(sstables.size());
+            this.sstables = new ArrayList<>(sstables.size());
             long length = 0;
             for (SSTableReader sstable : sstables)
             {
@@ -439,6 +451,11 @@ public class LeveledCompactionStrategy extends AbstractCompactionStrategy implem
         return null;
     }
 
+    public CompactionManifest getManifest()
+    {
+        return manifest;
+    }
+
     public static Map<String, String> validateOptions(Map<String, String> options) throws ConfigurationException
     {
         Map<String, String> uncheckedOptions = AbstractCompactionStrategy.validateOptions(options);
@@ -458,6 +475,26 @@ public class LeveledCompactionStrategy extends AbstractCompactionStrategy implem
         }
 
         uncheckedOptions.remove(SSTABLE_SIZE_OPTION);
+
+        String level = options.containsKey(MAX_OVERLAPPING_LEVEL_OPTION)
+                ? options.get(MAX_OVERLAPPING_LEVEL_OPTION)
+                : "0";
+
+        try
+        {
+            int moLevel = Integer.parseInt(level);
+            if (moLevel < 0)
+            {
+                throw new ConfigurationException(String.format("%s must be at least 0, but was %s", MAX_OVERLAPPING_LEVEL_OPTION, moLevel));
+            }
+        }
+        catch (NumberFormatException ex)
+        {
+            throw new ConfigurationException(String.format("%s is not a parsable int (base10) for %s", level, MAX_OVERLAPPING_LEVEL_OPTION), ex);
+        }
+
+
+        uncheckedOptions.remove(MAX_OVERLAPPING_LEVEL_OPTION);
 
         uncheckedOptions = SizeTieredCompactionStrategyOptions.validateOptions(options, uncheckedOptions);
 

@@ -133,6 +133,8 @@ public interface StorageServiceMBean extends NotificationEmitter
      */
     public Map<List<String>, List<String>> getRangeToRpcaddressMap(String keyspace);
 
+    public Map<Integer, List<String>> getManifestDescription(String keyspace, String table);
+
     /**
      * The same as {@code describeRing(String)} but converts TokenRange to the String for JMX compatibility
      *

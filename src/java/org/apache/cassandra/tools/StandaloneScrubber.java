@@ -98,7 +98,8 @@ public class StandaloneScrubber
             if (cfs.getCompactionStrategy() instanceof LeveledCompactionStrategy)
             {
                 int maxSizeInMB = (int)((cfs.getCompactionStrategy().getMaxSSTableBytes()) / (1024L * 1024L));
-                manifest = LeveledManifest.create(cfs, maxSizeInMB, sstables);
+                int maxOverlappingLevel = ((LeveledCompactionStrategy)cfs.getCompactionStrategy()).maxOverlappingLevel;
+                manifest = LeveledManifest.create(cfs, maxSizeInMB, maxOverlappingLevel, sstables);
             }
 
             if (!options.manifestCheckOnly)
@@ -148,7 +149,7 @@ public class StandaloneScrubber
     private static void checkManifest(LeveledManifest manifest)
     {
         System.out.println(String.format("Checking leveled manifest"));
-        for (int i = 1; i <= manifest.getLevelCount(); ++i)
+        for (int i = manifest.maxOverlappingLevel; i <= manifest.getLevelCount(); ++i)
             manifest.repairOverlappingSSTables(i);
     }
 

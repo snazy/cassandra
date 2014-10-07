@@ -64,6 +64,7 @@ import org.apache.cassandra.config.Schema;
 import org.apache.cassandra.db.*;
 import org.apache.cassandra.db.commitlog.CommitLog;
 import org.apache.cassandra.db.compaction.CompactionManager;
+import org.apache.cassandra.db.compaction.CompactionManifest;
 import org.apache.cassandra.db.index.SecondaryIndex;
 import org.apache.cassandra.dht.*;
 import org.apache.cassandra.dht.Range;
@@ -1112,6 +1113,32 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
                 rpcaddrs.add(getRpcaddress(endpoint));
             }
             map.put(entry.getKey().asList(), rpcaddrs);
+        }
+        return map;
+    }
+
+    @Override
+    public Map<Integer, List<String>> getManifestDescription(String keyspace, String table)
+    {
+        UUID cfId = Schema.instance.getId(keyspace, table);
+        if (cfId == null)
+        {
+            return Collections.emptyMap();
+        }
+        ColumnFamilyStore cfs = Schema.instance.getColumnFamilyStoreInstance(cfId);
+        if (cfs == null)
+        {
+            return Collections.emptyMap();
+        }
+
+        CompactionManifest manifest = cfs.getCompactionManifest();
+        Map<Integer, List<String>> map = new HashMap<>();
+        if (manifest != null)
+        {
+            for (int i = 0; i <= manifest.getLevelCount(); i++)
+            {
+                map.put(i, manifest.getSSTables(i));
+            }
         }
         return map;
     }

@@ -1161,6 +1161,11 @@ public class NodeProbe implements AutoCloseable
     {
         return ssProxy.getLoggingLevels();
     }
+
+    public Map<Integer, List<String>> getManifestDescription(String keyspace, String table)
+    {
+        return ssProxy.getManifestDescription(keyspace, table);
+    }
 }
 
 class ColumnFamilyStoreMBeanIterator implements Iterator<Map.Entry<String, ColumnFamilyStoreMBean>>

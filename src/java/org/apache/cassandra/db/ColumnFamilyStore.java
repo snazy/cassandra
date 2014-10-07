@@ -908,6 +908,18 @@ public class ColumnFamilyStore implements ColumnFamilyStoreMBean
         FBUtilities.waitOnFuture(forceFlush());
     }
 
+    public CompactionManifest getCompactionManifest()
+    {
+        if (compactionStrategy instanceof LeveledCompactionStrategy)
+        {
+            return ((LeveledCompactionStrategy)compactionStrategy).getManifest();
+        }
+        else
+        {
+            return null;
+        }
+    }
+
     /**
      * Both synchronises custom secondary indexes and provides ordering guarantees for futures on switchMemtable/flush
      * etc, which expect to be able to wait until the flush (and all prior flushes) requested have completed.
