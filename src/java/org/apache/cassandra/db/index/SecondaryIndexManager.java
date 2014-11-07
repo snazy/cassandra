@@ -17,21 +17,45 @@
  */
 package org.apache.cassandra.db.index;
 
+import java.io.File;
 import java.nio.ByteBuffer;
-import java.util.*;
-import java.util.concurrent.*;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.IdentityHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.ConcurrentNavigableMap;
+import java.util.concurrent.ConcurrentSkipListMap;
+import java.util.concurrent.Future;
 
+import com.google.common.collect.ImmutableSet;
 import org.apache.commons.lang3.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import org.apache.cassandra.config.ColumnDefinition;
-import org.apache.cassandra.db.*;
+import org.apache.cassandra.db.Column;
+import org.apache.cassandra.db.ColumnFamily;
+import org.apache.cassandra.db.ColumnFamilyStore;
+import org.apache.cassandra.db.DecoratedKey;
+import org.apache.cassandra.db.Row;
+import org.apache.cassandra.db.SystemKeyspace;
 import org.apache.cassandra.db.compaction.CompactionManager;
 import org.apache.cassandra.db.filter.ExtendedFilter;
 import org.apache.cassandra.exceptions.ConfigurationException;
+import org.apache.cassandra.io.sstable.Component;
+import org.apache.cassandra.io.sstable.Descriptor;
 import org.apache.cassandra.io.sstable.ReducingKeyIterator;
 import org.apache.cassandra.io.sstable.SSTableReader;
+import org.apache.cassandra.io.sstable.SSTableWriterListenable;
+import org.apache.cassandra.io.sstable.SSTableWriterListener;
+import org.apache.cassandra.io.util.RandomAccessReader;
 import org.apache.cassandra.thrift.IndexExpression;
 import org.apache.cassandra.thrift.IndexType;
 import org.apache.cassandra.utils.FBUtilities;
@@ -73,6 +97,9 @@ public class SecondaryIndexManager
      */
     private final Set<SecondaryIndex> allIndexes;
 
+    private final Set<SSTableWriterListenable> writerListenables;
+    private final InbuiltSecondaryIndexHolder secondaryIndexHolder;
+
     /**
      * The underlying column family containing the source data for these indexes
      */
@@ -83,6 +110,8 @@ public class SecondaryIndexManager
         indexesByColumn = new ConcurrentSkipListMap<>();
         rowLevelIndexMap = new ConcurrentHashMap<>();
         allIndexes = Collections.newSetFromMap(new ConcurrentHashMap<SecondaryIndex, Boolean>());
+        writerListenables = new HashSet<>();
+        secondaryIndexHolder = new InbuiltSecondaryIndexHolder();
 
         this.baseCfs = baseCfs;
     }
@@ -230,11 +259,13 @@ public class SecondaryIndexManager
             {
                 allIndexes.remove(index);
                 rowLevelIndexMap.remove(index.getClass());
+                writerListenables.remove(index);
             }
         }
         else
         {
             allIndexes.remove(index);
+            writerListenables.remove(index);
         }
 
         index.removeIndex(column);
@@ -299,6 +330,10 @@ public class SecondaryIndexManager
 
         // Add to all indexes set:
         allIndexes.add(index);
+        index.setInbuiltIndexHolder(secondaryIndexHolder);
+
+        if (index instanceof SSTableWriterListenable)
+            writerListenables.add((SSTableWriterListenable)index);
 
         // if we're just linking in the index to indexedColumns on an
         // already-built index post-restart, we're done
@@ -576,6 +611,28 @@ public class SecondaryIndexManager
     {
         SecondaryIndex index = getIndexForColumn(column.name());
         return index == null || index.validate(column);
+    }
+
+    /**
+     * @return a immutable view of the current SSTableWriter listeners
+     * @param descriptor
+     */
+    public Set<SSTableWriterListener> getSSTableWriterListsners(Descriptor descriptor)
+    {
+        ImmutableSet.Builder<SSTableWriterListener> set = ImmutableSet.builder();
+        for (SSTableWriterListenable listenable : writerListenables)
+            set.add(listenable.getListener(descriptor));
+        return set.build();
+    }
+
+    public void registerSecondaryIndexes(SSTableReader ssTableReader)
+    {
+        secondaryIndexHolder.add(ssTableReader);
+    }
+
+    public void closeSecondaryIndexes(SSTableReader ssTableReader)
+    {
+        secondaryIndexHolder.remove(ssTableReader);
     }
 
     public static interface Updater

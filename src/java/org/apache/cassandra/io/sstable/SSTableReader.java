@@ -303,7 +303,7 @@ public class SSTableReader extends SSTable implements Closeable
                                       SSTableMetadata sstableMetadata)
     {
         assert desc != null && partitioner != null && ifile != null && dfile != null && isummary != null && bf != null && sstableMetadata != null;
-        return new SSTableReader(desc,
+        SSTableReader ssTableReader = new SSTableReader(desc,
                                  components,
                                  metadata,
                                  partitioner,
@@ -312,6 +312,8 @@ public class SSTableReader extends SSTable implements Closeable
                                  bf,
                                  maxDataAge,
                                  sstableMetadata);
+        ssTableReader.loadSecondaryIndexes();
+        return ssTableReader;
     }
 
 
@@ -387,6 +389,8 @@ public class SSTableReader extends SSTable implements Closeable
         // close the BF so it can be opened later.
         bf.close();
         indexSummary.close();
+        ColumnFamilyStore cfs = Keyspace.open(metadata.ksName).getColumnFamilyStore(metadata.cfName);
+        cfs.indexManager.closeSecondaryIndexes(this);
     }
 
     public void setTrackedBy(DataTracker tracker)
@@ -458,6 +462,13 @@ public class SSTableReader extends SSTable implements Closeable
         dfile = dbuilder.complete(descriptor.filenameFor(Component.DATA));
         if (saveSummaryIfCreated && (recreateBloomFilter || !summaryLoaded)) // save summary information to disk
             saveSummary(this, ibuilder, dbuilder);
+        loadSecondaryIndexes();
+    }
+
+    private void loadSecondaryIndexes()
+    {
+        ColumnFamilyStore cfs = Keyspace.open(metadata.ksName).getColumnFamilyStore(metadata.cfName);
+        cfs.indexManager.registerSecondaryIndexes(this);
     }
 
      private void buildSummary(boolean recreateBloomFilter, SegmentedFile.Builder ibuilder, SegmentedFile.Builder dbuilder, boolean summaryLoaded) throws IOException

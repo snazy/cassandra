@@ -39,6 +39,7 @@ import org.apache.cassandra.db.marshal.AbstractType;
 import org.apache.cassandra.db.marshal.BytesType;
 import org.apache.cassandra.db.marshal.LocalByPartionerType;
 import org.apache.cassandra.dht.*;
+import org.apache.cassandra.io.sstable.Component;
 import org.apache.cassandra.io.sstable.ReducingKeyIterator;
 import org.apache.cassandra.io.sstable.SSTableReader;
 import org.apache.cassandra.service.StorageService;
@@ -69,6 +70,8 @@ public abstract class SecondaryIndex
      * The column definitions which this index is responsible for
      */
     protected final Set<ColumnDefinition> columnDefs = Collections.newSetFromMap(new ConcurrentHashMap<ColumnDefinition,Boolean>());
+
+    protected InbuiltSecondaryIndexHolder secondaryIndexHolder;
 
     /**
      * Perform any initialization work
@@ -370,5 +373,21 @@ public abstract class SecondaryIndex
                 return null;
         }
         throw new AssertionError();
+    }
+
+    @Override
+    public String toString()
+    {
+        return String.format("%s: columnDefs %s", getClass().getName(), columnDefs);
+    }
+
+    public Collection<Component> getIndexComponents()
+    {
+        return Collections.EMPTY_LIST;
+    }
+
+    public void setInbuiltIndexHolder(InbuiltSecondaryIndexHolder secondaryIndexHolder)
+    {
+        this.secondaryIndexHolder = secondaryIndexHolder;
     }
 }
