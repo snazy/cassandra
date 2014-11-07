@@ -30,6 +30,7 @@ import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.config.Schema;
 import org.apache.cassandra.db.*;
 import org.apache.cassandra.db.compaction.AbstractCompactedRow;
+import org.apache.cassandra.db.index.SecondaryIndex;
 import org.apache.cassandra.dht.IPartitioner;
 import org.apache.cassandra.io.FSWriteError;
 import org.apache.cassandra.io.compress.CompressedSequentialWriter;
@@ -55,6 +56,8 @@ public class SSTableWriter extends SSTable
     private DecoratedKey lastWrittenKey;
     private FileMark dataMark;
     private final SSTableMetadata.Collector sstableMetadataCollector;
+
+    private final Set<SSTableWriterListener> listeners;
 
     public SSTableWriter(String filename, long keyCount)
     {
@@ -87,6 +90,12 @@ public class SSTableWriter extends SSTable
             components.add(Component.DIGEST);
             components.add(Component.CRC);
         }
+
+        //TODO:JEB would be great to pass the listeners in here, rather than reaching out to an explicit component
+        ColumnFamilyStore cfs = Keyspace.open(metadata.ksName).getColumnFamilyStore(metadata.cfName);
+        for (SecondaryIndex secondaryIndex : cfs.indexManager.getIndexes())
+            components.addAll(secondaryIndex.getIndexComponents());
+
         return components;
     }
 
@@ -119,6 +128,13 @@ public class SSTableWriter extends SSTable
         }
 
         this.sstableMetadataCollector = sstableMetadataCollector;
+
+        //TODO:JEB would be great to pass the listeners in here, rather than reaching out to an explicit component
+        // TODO:JEB esp, think about how this will work with offline components (scrub, etc)
+        ColumnFamilyStore cfs = Keyspace.open(metadata.ksName).getColumnFamilyStore(metadata.cfName);
+        listeners = cfs.indexManager.getSSTableWriterListsners(descriptor);
+        for (SSTableWriterListener listener : listeners)
+            listener.begin();
     }
 
     public void mark()
@@ -131,6 +147,8 @@ public class SSTableWriter extends SSTable
     {
         dataFile.resetAndTruncate(dataMark);
         iwriter.resetAndTruncate();
+
+        //TODO:JEB do something with listeners here...
     }
 
     /**
@@ -155,6 +173,8 @@ public class SSTableWriter extends SSTable
             logger.trace("wrote " + decoratedKey + " at " + dataPosition);
         iwriter.append(decoratedKey, index);
         dbuilder.addPotentialBoundary(dataPosition);
+        for (SSTableWriterListener listener : listeners)
+            listener.nextRow(decoratedKey, dataPosition);
     }
 
     /**
@@ -370,6 +390,10 @@ public class SSTableWriter extends SSTable
         iwriter.close();
         // main data, close will truncate if necessary
         dataFile.close();
+
+        for (SSTableWriterListener listener : listeners)
+            listener.complete();
+
         // write sstable statistics
         SSTableMetadata sstableMetadata = sstableMetadataCollector.finalizeMetadata(partitioner.getClass().getCanonicalName(),
                                                                                     metadata.getBloomFilterFpChance());
