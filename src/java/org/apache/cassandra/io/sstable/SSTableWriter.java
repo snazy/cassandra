@@ -30,6 +30,7 @@ import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.config.Schema;
 import org.apache.cassandra.db.*;
 import org.apache.cassandra.db.compaction.AbstractCompactedRow;
+import org.apache.cassandra.db.compaction.PrecompactedRow;
 import org.apache.cassandra.db.index.SecondaryIndex;
 import org.apache.cassandra.dht.IPartitioner;
 import org.apache.cassandra.io.FSWriteError;
@@ -173,8 +174,6 @@ public class SSTableWriter extends SSTable
             logger.trace("wrote " + decoratedKey + " at " + dataPosition);
         iwriter.append(decoratedKey, index);
         dbuilder.addPotentialBoundary(dataPosition);
-        for (SSTableWriterListener listener : listeners)
-            listener.nextRow(decoratedKey, dataPosition);
     }
 
     /**
@@ -187,7 +186,10 @@ public class SSTableWriter extends SSTable
         RowIndexEntry entry;
         try
         {
-            entry = row.write(currentPosition, dataFile.stream);
+            for (SSTableWriterListener listener : listeners)
+                listener.startRow(row.key, currentPosition);
+
+            entry = row.write(currentPosition, dataFile.stream, listeners);
             if (entry == null)
                 return null;
         }
@@ -210,28 +212,7 @@ public class SSTableWriter extends SSTable
             return;
         }
 
-        long startPosition = beforeAppend(decoratedKey);
-        try
-        {
-            RowIndexEntry entry = rawAppend(cf, startPosition, decoratedKey, dataFile.stream);
-            afterAppend(decoratedKey, startPosition, entry);
-        }
-        catch (IOException e)
-        {
-            throw new FSWriteError(e, dataFile.getPath());
-        }
-        sstableMetadataCollector.update(dataFile.getFilePointer() - startPosition, cf.getColumnStats());
-    }
-
-    public static RowIndexEntry rawAppend(ColumnFamily cf, long startPosition, DecoratedKey key, DataOutput out) throws IOException
-    {
-        assert cf.getColumnCount() > 0 || cf.isMarkedForDelete();
-
-        ColumnIndex.Builder builder = new ColumnIndex.Builder(cf, key.key, out);
-        ColumnIndex index = builder.build(cf);
-
-        out.writeShort(END_OF_ROW);
-        return RowIndexEntry.create(startPosition, cf.deletionInfo().getTopLevelDeletion(), index);
+        append(new PrecompactedRow(decoratedKey, cf));
     }
 
     /**
@@ -256,7 +237,9 @@ public class SSTableWriter extends SSTable
 
         cf.delete(DeletionTime.serializer.deserialize(in));
 
-        ColumnIndex.Builder columnIndexer = new ColumnIndex.Builder(cf, key.key, dataFile.stream);
+        for (SSTableWriterListener listener : listeners)
+            listener.startRow(key, currentPosition);
+        ColumnIndex.Builder columnIndexer = new ColumnIndex.Builder(cf, key.key, dataFile.stream, listeners);
 
         // read column count for version < ja
         int columnCount = Integer.MAX_VALUE;
