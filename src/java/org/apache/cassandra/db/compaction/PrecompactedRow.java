@@ -21,6 +21,7 @@ import java.io.DataOutput;
 import java.io.IOException;
 import java.security.MessageDigest;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Comparator;
 import java.util.Iterator;
 import java.util.List;
@@ -32,6 +33,7 @@ import org.apache.cassandra.db.index.SecondaryIndexManager;
 import org.apache.cassandra.io.sstable.ColumnStats;
 import org.apache.cassandra.io.sstable.SSTableIdentityIterator;
 import org.apache.cassandra.io.sstable.SSTableWriter;
+import org.apache.cassandra.io.sstable.SSTableWriterListener;
 import org.apache.cassandra.io.util.DataOutputBuffer;
 import org.apache.cassandra.utils.CloseableIterator;
 import org.apache.cassandra.utils.FBUtilities;
@@ -144,12 +146,17 @@ public class PrecompactedRow extends AbstractCompactedRow
         filter.collectReducedColumns(returnCF, reduced, CompactionManager.NO_GC, System.currentTimeMillis());
     }
 
-    public RowIndexEntry write(long currentPosition, DataOutput out) throws IOException
+    public RowIndexEntry writeInternal(long currentPosition, DataOutput out, Collection<SSTableWriterListener> listeners) throws IOException
     {
         if (compactedCf == null)
             return null;
+        assert compactedCf.getColumnCount() > 0 || compactedCf.isMarkedForDelete();
 
-        return SSTableWriter.rawAppend(compactedCf, currentPosition, key, out);
+        ColumnIndex.Builder builder = new ColumnIndex.Builder(compactedCf, key.key, out, listeners);
+        ColumnIndex index = builder.build(compactedCf);
+
+        out.writeShort(SSTableWriter.END_OF_ROW);
+        return RowIndexEntry.create(currentPosition, compactedCf.deletionInfo().getTopLevelDeletion(), index);
     }
 
     public void update(MessageDigest digest)

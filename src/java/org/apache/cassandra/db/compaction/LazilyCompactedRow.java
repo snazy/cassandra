@@ -21,6 +21,7 @@ import java.io.DataOutput;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.security.MessageDigest;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.Iterator;
 import java.util.List;
@@ -36,6 +37,7 @@ import org.apache.cassandra.io.sstable.ColumnNameHelper;
 import org.apache.cassandra.io.sstable.ColumnStats;
 import org.apache.cassandra.io.sstable.SSTable;
 import org.apache.cassandra.io.sstable.SSTableWriter;
+import org.apache.cassandra.io.sstable.SSTableWriterListener;
 import org.apache.cassandra.io.util.DataOutputBuffer;
 import org.apache.cassandra.utils.MergeIterator;
 import org.apache.cassandra.utils.StreamingHistogram;
@@ -90,14 +92,14 @@ public class LazilyCompactedRow extends AbstractCompactedRow implements Iterable
             emptyColumnFamily.purgeTombstones(controller.gcBefore);
     }
 
-    public RowIndexEntry write(long currentPosition, DataOutput out) throws IOException
+    public RowIndexEntry writeInternal(long currentPosition, DataOutput out, Collection<SSTableWriterListener> listeners) throws IOException
     {
         assert !closed;
 
         ColumnIndex columnsIndex;
         try
         {
-            indexBuilder = new ColumnIndex.Builder(emptyColumnFamily, key.key, out);
+            indexBuilder = new ColumnIndex.Builder(emptyColumnFamily, key.key, out, listeners);
             columnsIndex = indexBuilder.buildForCompaction(iterator());
 
             // if there aren't any columns or tombstones, return null
@@ -149,7 +151,7 @@ public class LazilyCompactedRow extends AbstractCompactedRow implements Iterable
         }
 
         // initialize indexBuilder for the benefit of its tombstoneTracker, used by our reducing iterator
-        indexBuilder = new ColumnIndex.Builder(emptyColumnFamily, key.key, out);
+        indexBuilder = new ColumnIndex.Builder(emptyColumnFamily, key.key, out, null);
         Iterator<OnDiskAtom> iter = iterator();
         while (iter.hasNext())
             iter.next().updateDigest(digest);

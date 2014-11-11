@@ -3,8 +3,8 @@ package org.apache.cassandra.db.index;
 import java.io.DataOutputStream;
 import java.io.FileOutputStream;
 import java.io.IOError;
+import java.io.IOException;
 import java.nio.ByteBuffer;
-import java.nio.charset.CharacterCodingException;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
@@ -21,11 +21,13 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import org.apache.cassandra.config.ColumnDefinition;
+import org.apache.cassandra.db.Column;
 import org.apache.cassandra.db.ColumnFamily;
 import org.apache.cassandra.db.ColumnFamilyStore;
 import org.apache.cassandra.db.DecoratedKey;
 import org.apache.cassandra.db.Row;
 import org.apache.cassandra.db.filter.ExtendedFilter;
+import org.apache.cassandra.db.index.search.OnDiskSABuilder;
 import org.apache.cassandra.db.marshal.AbstractType;
 import org.apache.cassandra.exceptions.ConfigurationException;
 import org.apache.cassandra.io.sstable.Component;
@@ -35,7 +37,8 @@ import org.apache.cassandra.io.sstable.SSTableWriterListenable;
 import org.apache.cassandra.io.sstable.SSTableWriterListener;
 import org.apache.cassandra.io.util.RandomAccessReader;
 import org.apache.cassandra.thrift.IndexExpression;
-import org.apache.cassandra.utils.ByteBufferUtil;
+import org.apache.cassandra.utils.Pair;
+import org.roaringbitmap.RoaringBitmap;
 
 public class PositionedPerRowSecondaryIndex extends PerRowSecondaryIndex implements SSTableWriterListenable
 {
@@ -47,7 +50,7 @@ public class PositionedPerRowSecondaryIndex extends PerRowSecondaryIndex impleme
     private String indexName;
     private final List<Component> components;
 
-    private final Set<String> columnDefNames;
+    private final Set<ByteBuffer> columnDefNames;
 
     public PositionedPerRowSecondaryIndex()
     {
@@ -65,7 +68,7 @@ public class PositionedPerRowSecondaryIndex extends PerRowSecondaryIndex impleme
         // while init() is called form SIM when the class is first created, and only one columnDef has been set,
         //  we'll loop here just for sanity sake ...
         for (ColumnDefinition col : columnDefs)
-            columnDefNames.add(getComparator().getString(col.name));
+            columnDefNames.add(col.name);
     }
 
     private AbstractType<?> getComparator()
@@ -79,7 +82,7 @@ public class PositionedPerRowSecondaryIndex extends PerRowSecondaryIndex impleme
         AbstractType<?> type = getComparator();
         logger.info("adding a columnDef: {}, baseCfs = {}", columnDef, baseCfs);
         if (type != null)
-            columnDefNames.add(type.getString(columnDef.name));
+            columnDefNames.add(columnDef.name);
     }
 
     public void validateOptions() throws ConfigurationException
@@ -195,8 +198,7 @@ public class PositionedPerRowSecondaryIndex extends PerRowSecondaryIndex impleme
         {
             for (IndexExpression expression : clause)
             {
-                String columnName = getComparator().getString(expression.column_name);
-                if (columnDefNames.contains(columnName))
+                if (columnDefNames.contains(expression.column_name))
                     return true;
             }
             return false;
@@ -215,59 +217,66 @@ public class PositionedPerRowSecondaryIndex extends PerRowSecondaryIndex impleme
     {
         private final Descriptor descriptor;
 
-        // strictly for JEB testing
-        private final Map<String, Long> mapping;
         private final String fileName;
-        private DataOutputStream outputFile;
+
+        // need one builders for each column (that is, column name) we index
+        private final Map<ByteBuffer, Pair<OnDiskSABuilder, RoaringBitmap>> builders;
+
+        private DecoratedKey curKey;
+        private long curFilePosition;
 
         public LocalSSTableWriterListener(Descriptor descriptor)
         {
             this.descriptor = descriptor;
             fileName = descriptor.filenameFor(getIndexComponents().iterator().next());
-            mapping = new ConcurrentHashMap<>();
+            builders = new ConcurrentHashMap<>();
         }
 
         public void begin()
         {
-            //TODO:JEB open file?
             logger.info("received listener.begin() call");
-
-            //TODO:JEB fix this, but can I assume there's only one component?????
-            try
-            {
-                outputFile = new DataOutputStream(new FileOutputStream(fileName));
-            }
-            catch (Exception e)
-            {
-                logger.error("cannot open file for sstable secondary index {}", fileName);
-                throw new IOError(e);
-            }
+            for (ByteBuffer name : columnDefNames)
+                builders.put(name, null);
         }
 
-        public void nextRow(DecoratedKey key, long position)
+        public void startRow(DecoratedKey key, long curPosition)
         {
-            //TODO:JEB pass key/pos off to Pavel's lib
-            logger.info("received listener.nextRow() call");
+            this.curKey = key;
+            this.curFilePosition = curPosition;
+        }
+
+        public void nextColumn(Column column)
+        {
+            if (!builders.containsKey(column.name()))
+                return;
+
+            Pair<OnDiskSABuilder, RoaringBitmap> pair = builders.get(column.name());
+            if (pair == null)
+            {
+                pair = Pair.create(new OnDiskSABuilder(getComparator(), OnDiskSABuilder.Mode.SUFFIX),
+                                   new RoaringBitmap());
+                builders.put(column.name(), pair);
+            }
+
             try
             {
-                mapping.put(ByteBufferUtil.string(key.key), position);
+                pair.right.add((int)curFilePosition);
+                pair.left.add(column.value(), pair.right);
             }
-            catch (CharacterCodingException e)
+            catch (IOException e)
             {
-                logger.warn("byte me", e);
+                logger.error("failed to add add column to secondary index: {}", column, e);
             }
         }
 
         public void complete()
         {
             logger.info("received listener.complete() call");
+            DataOutputStream outputFile;
             try
             {
-                for (Map.Entry<String, Long> entry : mapping.entrySet())
-                {
-                    outputFile.writeUTF(entry.getKey());
-                    outputFile.writeLong(entry.getValue());
-                }
+                outputFile = new DataOutputStream(new FileOutputStream(fileName));
+
                 outputFile.flush();
                 outputFile.close();
             }

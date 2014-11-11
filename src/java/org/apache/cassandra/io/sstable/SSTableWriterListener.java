@@ -1,5 +1,6 @@
 package org.apache.cassandra.io.sstable;
 
+import org.apache.cassandra.db.Column;
 import org.apache.cassandra.db.DecoratedKey;
 
 /**
@@ -12,12 +13,9 @@ public interface SSTableWriterListener extends Comparable<String> //?????? with 
      */
     void begin();
 
-    /**
-     * Called after the row has been written to the sstable, with the offset of the row.
-     * @param key The key written
-     * @param position the file offset of the row.
-     */
-    void nextRow(DecoratedKey key, long position);
+    void startRow(DecoratedKey key, long curPosition);
+
+    void nextColumn(Column column);
 
     /**
      * Called when all data is written to the file and it's ready to be finished up.

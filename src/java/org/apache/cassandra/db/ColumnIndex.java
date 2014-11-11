@@ -26,6 +26,7 @@ import com.google.common.annotations.VisibleForTesting;
 
 import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.io.sstable.IndexHelper;
+import org.apache.cassandra.io.sstable.SSTableWriterListener;
 import org.apache.cassandra.utils.ByteBufferUtil;
 
 public class ColumnIndex
@@ -68,10 +69,12 @@ public class ColumnIndex
         private int atomCount;
         private final ByteBuffer key;
         private final DeletionInfo deletionInfo; // only used for serializing and calculating row header size
+        private final Collection<SSTableWriterListener> listeners;
 
         public Builder(ColumnFamily cf,
                        ByteBuffer key,
-                       DataOutput output)
+                       DataOutput output,
+                       Collection<SSTableWriterListener> listeners)
         {
             assert cf != null;
             assert key != null;
@@ -83,6 +86,7 @@ public class ColumnIndex
             this.result = new ColumnIndex(new ArrayList<IndexHelper.IndexInfo>());
             this.output = output;
             this.tombstoneTracker = new RangeTombstone.Tracker(cf.getComparator());
+            this.listeners = listeners;
         }
 
         /**
@@ -192,6 +196,11 @@ public class ColumnIndex
             tombstoneTracker.update(column);
 
             lastColumn = column;
+            if (listeners != null && column instanceof Column)
+            {
+                for (SSTableWriterListener listener : listeners)
+                    listener.nextColumn((Column)column);
+            }
         }
 
         private void maybeWriteRowHeader() throws IOException
