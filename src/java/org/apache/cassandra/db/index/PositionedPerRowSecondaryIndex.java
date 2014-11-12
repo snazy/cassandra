@@ -1,32 +1,45 @@
 package org.apache.cassandra.db.index;
 
-import java.io.DataOutputStream;
-import java.io.FileOutputStream;
+import java.io.File;
 import java.io.IOError;
 import java.io.IOException;
+import java.io.RandomAccessFile;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Collection;
-import java.util.Collections;
+import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.Callable;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Future;
 import java.util.concurrent.FutureTask;
+import java.util.concurrent.TimeUnit;
 
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.Iterables;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import org.apache.cassandra.concurrent.Stage;
+import org.apache.cassandra.concurrent.StageManager;
 import org.apache.cassandra.config.ColumnDefinition;
+import org.apache.cassandra.db.ArrayBackedSortedColumns;
 import org.apache.cassandra.db.Column;
 import org.apache.cassandra.db.ColumnFamily;
 import org.apache.cassandra.db.ColumnFamilyStore;
+import org.apache.cassandra.db.ColumnSerializer;
 import org.apache.cassandra.db.DecoratedKey;
+import org.apache.cassandra.db.DeletionTime;
+import org.apache.cassandra.db.EmptyColumns;
+import org.apache.cassandra.db.OnDiskAtom;
 import org.apache.cassandra.db.Row;
 import org.apache.cassandra.db.filter.ExtendedFilter;
+import org.apache.cassandra.db.index.search.OnDiskSA;
 import org.apache.cassandra.db.index.search.OnDiskSABuilder;
 import org.apache.cassandra.db.marshal.AbstractType;
 import org.apache.cassandra.exceptions.ConfigurationException;
@@ -37,6 +50,8 @@ import org.apache.cassandra.io.sstable.SSTableWriterListenable;
 import org.apache.cassandra.io.sstable.SSTableWriterListener;
 import org.apache.cassandra.io.util.RandomAccessReader;
 import org.apache.cassandra.thrift.IndexExpression;
+import org.apache.cassandra.thrift.IndexOperator;
+import org.apache.cassandra.utils.ByteBufferUtil;
 import org.apache.cassandra.utils.Pair;
 import org.roaringbitmap.RoaringBitmap;
 
@@ -186,12 +201,142 @@ public class PositionedPerRowSecondaryIndex extends PerRowSecondaryIndex impleme
         public List<Row> search(ExtendedFilter filter)
         {
             logger.info("received a search() call");
-            Map<SSTableReader, Set<RandomAccessReader>> candidates = secondaryIndexHolder.getIndexes();
+            IndexExpression indexExpression = highestSelectivityPredicate(filter.getClause());
+
+            Map<SSTableReader, Set<OnDiskSA>> candidates = secondaryIndexHolder.getIndexes();
             logger.info("found {} candidate sstables with indices", candidates.keySet().size());
+            Map<SSTableReader, Set<RoaringBitmap>> targets = getTargets(candidates, indexExpression.bufferForValue(), filter.maxRows());
+            logger.info("found {} target sstables with indices", candidates.keySet().size());
 
-            //TODO:JEB plug into pavel's code *here*, get some positions back, and load the rows
+            return loadRows(targets, filter.maxRows());
+        }
 
-            return Collections.EMPTY_LIST;
+        protected IndexExpression highestSelectivityPredicate(List<IndexExpression> clause)
+        {
+            List<IndexExpression> candidates = new ArrayList<>(clause.size());
+            for (IndexExpression expression : clause)
+            {
+                //skip columns belonging to a different index type
+                if(expression.op != IndexOperator.EQ || !columns.contains(expression.column_name))
+                    continue;
+
+                SecondaryIndex index = indexManager.getIndexForColumn(expression.column_name);
+                if (index == null)
+                    continue;
+
+                candidates.add(expression);
+            }
+
+            //TODO:JEB need better selection process here rather than just the first entry...
+            return candidates.isEmpty() ? null : candidates.get(0);
+        }
+
+        private Map<SSTableReader, Set<RoaringBitmap>> getTargets(Map<SSTableReader, Set<OnDiskSA>> candidates, ByteBuffer val, int maxRows)
+        {
+            int curRows = 0;
+            Map<SSTableReader, Set<RoaringBitmap>> targets = new HashMap<>();
+            for (Map.Entry<SSTableReader, Set<OnDiskSA>> entry : candidates.entrySet())
+            {
+                boolean inTargets = false;
+                for (OnDiskSA sa : entry.getValue())
+                {
+                    try
+                    {
+                        RoaringBitmap bitmap = sa.search(val);
+                        if (bitmap == null || bitmap.isEmpty())
+                            continue;
+
+                        if (!inTargets)
+                        {
+                            Set<RoaringBitmap> s = new HashSet<>();
+                            s.add(bitmap);
+                            targets.put(entry.getKey(), s);
+                            inTargets = true;
+                        }
+                        else
+                        {
+                            targets.get(entry.getKey()).add(bitmap);
+                        }
+
+                        // TODO:JEB this is a bit unfortunate, that we have to iterate through the bitmap just to get it's size
+                        curRows += Iterables.size(bitmap);
+                        if (curRows > maxRows)
+                            break;
+                    }
+                    catch (IOException e)
+                    {
+                        logger.warn("failed to read index for bitmap {}", entry.getKey());
+                    }
+                }
+            }
+            return targets;
+        }
+
+        private List<Row> loadRows(Map<SSTableReader, Set<RoaringBitmap>> targets, int maxRows)
+        {
+            ExecutorService readStage = StageManager.getStage(Stage.READ);
+            int cur = 0;
+
+            List<Future<Row>> futures = new ArrayList<>(targets.size());
+            outer: for (Map.Entry<SSTableReader, Set<RoaringBitmap>> entry : targets.entrySet())
+            {
+                for (RoaringBitmap bitmap : entry.getValue())
+                {
+                    for (Integer i : bitmap)
+                    {
+                        futures.add(readStage.submit(new RowReader(entry.getKey(), i.longValue())));
+                        cur++;
+                        if (cur >= maxRows)
+                            break outer;
+                    }
+                }
+            }
+
+            List<Row> rows = new ArrayList<>();
+            for (Future<Row> future : futures)
+            {
+                try
+                {
+                    rows.add(future.get(10, TimeUnit.SECONDS));
+                }
+                catch (Exception e)
+                {
+                    logger.error("problem reading row", e);
+                }
+            }
+
+            return rows;
+        }
+
+        private class RowReader implements Callable<Row>
+        {
+            private final SSTableReader sstable;
+            private final long position;
+
+            public RowReader(SSTableReader sstable, long position)
+            {
+                this.sstable = sstable;
+                this.position = position;
+            }
+
+            public Row call() throws Exception
+            {
+                RandomAccessReader in = sstable.openDataReader();
+                in.seek(position);
+                DecoratedKey key = sstable.partitioner.decorateKey(ByteBufferUtil.readWithShortLength(in));
+
+                ColumnFamily columnFamily = EmptyColumns.factory.create(sstable.metadata);
+                columnFamily.delete(DeletionTime.serializer.deserialize(in));
+                int columnCount = sstable.descriptor.version.hasRowSizeAndColumnCount ? in.readInt() : Integer.MAX_VALUE;
+                Iterator<OnDiskAtom> atomIterator = columnFamily.metadata().getOnDiskIterator(in, columnCount, ColumnSerializer.Flag.LOCAL,
+                                                                                              (int)(System.currentTimeMillis() / 1000),
+                                                                                              sstable.descriptor.version);
+
+                ColumnFamily cf = columnFamily.cloneMeShallow(ArrayBackedSortedColumns.factory, false);
+                while (atomIterator.hasNext())
+                    cf.addAtom(atomIterator.next());
+                return new Row(key, cf);
+            }
         }
 
         public boolean isIndexing(List<IndexExpression> clause)
@@ -217,8 +362,6 @@ public class PositionedPerRowSecondaryIndex extends PerRowSecondaryIndex impleme
     {
         private final Descriptor descriptor;
 
-        private final String fileName;
-
         // need one builders for each column (that is, column name) we index
         private final Map<ByteBuffer, Pair<OnDiskSABuilder, RoaringBitmap>> builders;
 
@@ -228,7 +371,6 @@ public class PositionedPerRowSecondaryIndex extends PerRowSecondaryIndex impleme
         public LocalSSTableWriterListener(Descriptor descriptor)
         {
             this.descriptor = descriptor;
-            fileName = descriptor.filenameFor(getIndexComponents().iterator().next());
             builders = new ConcurrentHashMap<>();
         }
 
@@ -272,18 +414,24 @@ public class PositionedPerRowSecondaryIndex extends PerRowSecondaryIndex impleme
         public void complete()
         {
             logger.info("received listener.complete() call");
-            DataOutputStream outputFile;
             try
             {
-                outputFile = new DataOutputStream(new FileOutputStream(fileName));
+                for (Map.Entry<ByteBuffer, Pair<OnDiskSABuilder, RoaringBitmap>> entry : builders.entrySet())
+                {
+                    String fileName = null;
 
-                outputFile.flush();
-                outputFile.close();
-            }
-            catch (Exception e)
-            {
-                logger.error("failed to write output file {}", fileName);
-                throw new IOError(e);
+                    try
+                    {
+                        fileName = descriptor.filenameFor(ByteBufferUtil.string(entry.getKey()));
+                        RandomAccessFile raf = new RandomAccessFile(new File(fileName), "rw");
+                        entry.getValue().left.finish(raf);
+                    }
+                    catch (Exception e)
+                    {
+                        logger.error("failed to write output file {}", fileName);
+                        throw new IOError(e);
+                    }
+                }
             }
             finally
             {
