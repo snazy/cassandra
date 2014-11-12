@@ -39,7 +39,7 @@ public class OnDiskSATest
         File index = File.createTempFile("on-disk-sa-string", "db");
         index.deleteOnExit();
 
-        builder.finish(new RandomAccessFile(index, "rw"));
+        builder.finish(index);
 
         OnDiskSA onDisk = new OnDiskSA(index, UTF8Type.instance);
 
@@ -92,7 +92,7 @@ public class OnDiskSATest
         File index = File.createTempFile("on-disk-sa-int", "db");
         index.deleteOnExit();
 
-        builder.finish(new RandomAccessFile(index, "rw"));
+        builder.finish(index);
 
         OnDiskSA onDisk = new OnDiskSA(index, Int32Type.instance);
 

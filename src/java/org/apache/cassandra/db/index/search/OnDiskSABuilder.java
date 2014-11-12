@@ -1,6 +1,7 @@
 package org.apache.cassandra.db.index.search;
 
 import java.io.DataOutput;
+import java.io.File;
 import java.io.IOException;
 import java.io.RandomAccessFile;
 import java.nio.ByteBuffer;
@@ -11,6 +12,8 @@ import com.carrotsearch.hppc.LongArrayList;
 import com.google.common.collect.AbstractIterator;
 
 import org.apache.cassandra.db.marshal.AbstractType;
+import org.apache.cassandra.io.FSWriteError;
+import org.apache.cassandra.io.util.FileUtils;
 import org.apache.cassandra.utils.ByteBufferDataOutput;
 import org.apache.cassandra.utils.ByteBufferUtil;
 import org.apache.cassandra.utils.Pair;
@@ -88,47 +91,49 @@ public class OnDiskSABuilder
         }
     }
 
-    public void finish(RandomAccessFile out) throws IOException
+    public void finish(File file) throws FSWriteError
     {
-        Iterator<Pair<ByteBuffer, RoaringBitmap>> suffixes = sa.finish();
-        while (suffixes.hasNext())
+        RandomAccessFile out = null;
+
+        try
         {
-            Pair<ByteBuffer, RoaringBitmap> suffix = suffixes.next();
-            addSuffix(suffix.left, suffix.right, out);
+            out = new RandomAccessFile(file, "rw");
+
+            Iterator<Pair<ByteBuffer, RoaringBitmap>> suffixes = sa.finish();
+            while (suffixes.hasNext())
+            {
+                Pair<ByteBuffer, RoaringBitmap> suffix = suffixes.next();
+                addSuffix(suffix.left, suffix.right, out);
+            }
+
+            // add the very last processed suffix
+            addSuffix(lastProcessed, out);
+
+            for (MutableLevel l : levels)
+                l.flush(); // flush all of the buffers
+
+            // and finally write levels index
+
+            final long levelIndexPosition = out.getFilePointer();
+
+            out.writeInt(levels.size() - 1);
+            for (int i = levels.size() - 1; i >= 0; i--)
+                levels.get(i).flushMetadata();
+
+            out.writeLong(levelIndexPosition);
         }
-
-        // add the very last processed suffix
-        addSuffix(lastProcessed, out);
-
-        for (MutableLevel l : levels)
-            l.flush(); // flush all of the buffers
-
-        // and finally write levels index
-
-        final long levelIndexPosition = out.getFilePointer();
-
-        out.writeInt(levels.size() - 1);
-        for (int i = levels.size() - 1; i >= 0; i--)
-            levels.get(i).flushMetadata();
-
-        out.writeLong(levelIndexPosition);
+        catch (IOException e)
+        {
+            throw new FSWriteError(e, file);
+        }
+        finally
+        {
+            FileUtils.closeQuietly(out);
+        }
     }
 
-
-    @VisibleForTesting
-    protected int serializedSize()
+    private MutableLevel<InMemorySuffix> getLevel(int idx, RandomAccessFile out)
     {
-        /*
-        int indexSize = 4 + levels.size() * 4; // number of levels + level positions
-        for (MutableLevel l : levels)
-            indexSize += l.serializedSize();
-
-        return indexSize + dataLevel.serializedSize();
-        */
-        throw new UnsupportedOperationException();
-    }
-
-    private MutableLevel<InMemorySuffix> getLevel(int idx, RandomAccessFile out) {
         if (levels.size() == 0)
             levels.add(new MutableLevel<>(out));
 
@@ -353,11 +358,13 @@ public class OnDiskSABuilder
         private final MutableBlock inProcessBlock = new MutableBlock();
         private InMemoryPointerSuffix lastSuffix;
 
-        public MutableLevel(RandomAccessFile out) {
+        public MutableLevel(RandomAccessFile out)
+        {
             this.out = out;
         }
 
-        public InMemoryPointerSuffix add(T suffix) throws IOException {
+        public InMemoryPointerSuffix add(T suffix) throws IOException
+        {
             InMemoryPointerSuffix toPromote = null;
 
             if (!inProcessBlock.hasSpaceFor(suffix))
@@ -372,12 +379,14 @@ public class OnDiskSABuilder
             return toPromote;
         }
 
-        public void flush() throws IOException {
+        public void flush() throws IOException
+        {
             blockOffsets.add(out.getFilePointer());
             inProcessBlock.flushAndClear(out);
         }
 
-        public void flushMetadata() throws IOException {
+        public void flushMetadata() throws IOException
+        {
             out.writeInt(blockOffsets.size());
             for (int i = 0; i < blockOffsets.size(); i++)
                 out.writeLong(blockOffsets.get(i));
