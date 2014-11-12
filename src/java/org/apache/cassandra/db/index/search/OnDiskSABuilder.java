@@ -2,16 +2,20 @@ package org.apache.cassandra.db.index.search;
 
 import java.io.DataOutput;
 import java.io.IOException;
+import java.io.RandomAccessFile;
 import java.nio.ByteBuffer;
 import java.util.*;
 
+import com.carrotsearch.hppc.IntArrayList;
+import com.carrotsearch.hppc.LongArrayList;
 import com.google.common.collect.AbstractIterator;
+
 import org.apache.cassandra.db.marshal.AbstractType;
 import org.apache.cassandra.utils.ByteBufferDataOutput;
 import org.apache.cassandra.utils.ByteBufferUtil;
-
 import org.apache.cassandra.utils.Pair;
 import org.apache.cassandra.utils.PrimitiveIntSort;
+
 import org.roaringbitmap.RoaringBitmap;
 
 import com.google.common.annotations.VisibleForTesting;
@@ -28,12 +32,11 @@ public class OnDiskSABuilder
         SUFFIX, ORIGINAL
     }
 
-    public static final int CHUNK_SIZE = 128;
+    public static final int CHUNK_SIZE = 4096;
 
     private final AbstractType<?> comparator;
 
-    private final List<MutableLevel<InMemoryPointerSuffix>> levels = new ArrayList<>();
-    private final MutableLevel<InMemoryDataSuffix> dataLevel = new MutableLevel<>();
+    private final List<MutableLevel<InMemorySuffix>> levels = new ArrayList<>();
     private InMemoryDataSuffix lastProcessed;
 
     private final SA sa;
@@ -50,12 +53,11 @@ public class OnDiskSABuilder
         return this;
     }
 
-    private void addSuffix(ByteBuffer suffix, RoaringBitmap keys) throws IOException
+    private void addSuffix(ByteBuffer suffix, RoaringBitmap keys, RandomAccessFile out) throws IOException
     {
         InMemoryDataSuffix current = new InMemoryDataSuffix(suffix, keys);
 
-        if (lastProcessed == null)
-        {
+        if (lastProcessed == null) {
             lastProcessed = current;
             return;
         }
@@ -66,169 +68,78 @@ public class OnDiskSABuilder
         }
         else
         {
-            addSuffix(lastProcessed);
+            addSuffix(lastProcessed, out);
             lastProcessed = current;
         }
     }
 
-    private void addSuffix(InMemoryDataSuffix suffix) throws IOException
+    private void addSuffix(InMemoryDataSuffix suffix, RandomAccessFile out) throws IOException
     {
-        InMemoryPointerSuffix ptr = dataLevel.add(suffix);
+        InMemorySuffix ptr = getLevel(0, out).add(suffix);
         if (ptr == null)
             return;
 
-        int levelIdx = 0;
+        int levelIdx = 1;
         for (;;)
         {
-            MutableLevel<InMemoryPointerSuffix> mutableLevel = getLevel(levelIdx++);
-            if ((ptr = mutableLevel.add(ptr)) == null)
+            MutableLevel<InMemorySuffix> level = getLevel(levelIdx++, out);
+            if ((ptr = level.add(ptr)) == null)
                 break;
         }
     }
 
-    public void finish(DataOutput out) throws IOException
+    public void finish(RandomAccessFile out) throws IOException
     {
         Iterator<Pair<ByteBuffer, RoaringBitmap>> suffixes = sa.finish();
         while (suffixes.hasNext())
         {
             Pair<ByteBuffer, RoaringBitmap> suffix = suffixes.next();
-            addSuffix(suffix.left, suffix.right);
+            addSuffix(suffix.left, suffix.right, out);
         }
 
         // add the very last processed suffix
-        addSuffix(lastProcessed);
+        addSuffix(lastProcessed, out);
 
-        serialize(out);
+        for (MutableLevel l : levels)
+            l.flush(); // flush all of the buffers
+
+        // and finally write levels index
+
+        final long levelIndexPosition = out.getFilePointer();
+
+        out.writeInt(levels.size() - 1);
+        for (int i = levels.size() - 1; i >= 0; i--)
+            levels.get(i).flushMetadata();
+
+        out.writeLong(levelIndexPosition);
     }
 
-    private void serialize(DataOutput out) throws IOException
-    {
-        out.writeInt(levels.size());
-        for (int i = levels.size() - 1; i >= 0; i--)
-            out.writeInt(levels.get(i).serializedSize());
-
-        for (int i = levels.size() - 1; i >= 0; i--)
-            levels.get(i).serialize(out);
-
-        dataLevel.serialize(out);
-    }
 
     @VisibleForTesting
     protected int serializedSize()
     {
+        /*
         int indexSize = 4 + levels.size() * 4; // number of levels + level positions
         for (MutableLevel l : levels)
             indexSize += l.serializedSize();
 
         return indexSize + dataLevel.serializedSize();
+        */
+        throw new UnsupportedOperationException();
     }
 
-    private MutableLevel<InMemoryPointerSuffix> getLevel(int idx)
-    {
+    private MutableLevel<InMemorySuffix> getLevel(int idx, RandomAccessFile out) {
         if (levels.size() == 0)
-            levels.add(new MutableLevel<InMemoryPointerSuffix>());
+            levels.add(new MutableLevel<>(out));
 
         if (levels.size() - 1 < idx)
         {
             int toAdd = idx - (levels.size() - 1);
             for (int i = 0; i < toAdd; i++)
-                levels.add(new MutableLevel<InMemoryPointerSuffix>());
+                levels.add(new MutableLevel<>(out));
         }
 
         return levels.get(idx);
-    }
-
-    private static class MutableLevel<T extends InMemorySuffix>
-    {
-        protected final List<MutableBlock<T>> blocks = new ArrayList<>();
-
-        protected MutableBlock<T> inProgress = new MutableBlock<>();
-        protected T last;
-
-        public MutableLevel()
-        {
-            this.blocks.add(inProgress);
-        }
-
-        public InMemoryPointerSuffix add(T ptr) throws IOException
-        {
-            InMemoryPointerSuffix toPromote = null;
-
-            if (!inProgress.hasSpaceFor(ptr))
-            {
-                toPromote = new InMemoryPointerSuffix(last.suffix, blocks.size() - 1);
-                blocks.add((inProgress = new MutableBlock<>()));
-            }
-
-            inProgress.add(ptr);
-
-            last = ptr;
-            return toPromote;
-        }
-
-        public void serialize(DataOutput out) throws IOException
-        {
-            out.writeInt(blocks.size());
-
-            int position = 0;
-            for (MutableBlock b : blocks)
-            {
-                out.writeInt(position);
-                position += b.serializedSize();
-            }
-
-            for (MutableBlock b : blocks)
-                b.serialize(out);
-        }
-
-        public int serializedSize()
-        {
-            int size = 4;
-            for (MutableBlock b : blocks)
-                size += 4 + b.serializedSize(); // block position + block serialized size
-            return size;
-        }
-    }
-
-    private static class MutableBlock<T extends InMemorySuffix>
-    {
-        protected final ByteBufferDataOutput block;
-        protected final List<Integer> positions = new ArrayList<>(); // TODO: add HPPC to use primitive collections (or bitmap)
-
-        public MutableBlock()
-        {
-            block = new ByteBufferDataOutput(ByteBuffer.allocate(CHUNK_SIZE));
-        }
-
-        public boolean hasSpaceFor(T element)
-        {
-            return getWatermark() + element.serializedSize() < CHUNK_SIZE;
-        }
-
-        protected void add(T element) throws IOException
-        {
-            positions.add(block.position());
-            element.serialize(block);
-        }
-
-        public void serialize(DataOutput out) throws IOException
-        {
-            out.writeInt(positions.size());
-            for (int position : positions)
-                out.writeInt(position);
-
-            block.writeFullyTo(out);
-        }
-
-        public int serializedSize()
-        {
-            return 4 + positions.size() * 4 + block.capacity();
-        }
-
-        private int getWatermark()
-        {
-            return 4 + positions.size() * 4 + block.position();
-        }
     }
 
     private static class InMemorySuffix
@@ -253,7 +164,7 @@ public class OnDiskSABuilder
 
     private static class InMemoryPointerSuffix extends InMemorySuffix
     {
-        private final int blockIdx;
+        protected final int blockIdx;
 
         public InMemoryPointerSuffix(ByteBuffer suffix, int blockIdx)
         {
@@ -430,6 +341,86 @@ public class OnDiskSABuilder
             }
 
             return values.get(currentIndex);
+        }
+    }
+
+    private static class MutableLevel<T extends InMemorySuffix>
+    {
+        private final LongArrayList blockOffsets = new LongArrayList();
+
+        private final RandomAccessFile out;
+
+        private final MutableBlock inProcessBlock = new MutableBlock();
+        private InMemoryPointerSuffix lastSuffix;
+
+        public MutableLevel(RandomAccessFile out) {
+            this.out = out;
+        }
+
+        public InMemoryPointerSuffix add(T suffix) throws IOException {
+            InMemoryPointerSuffix toPromote = null;
+
+            if (!inProcessBlock.hasSpaceFor(suffix))
+            {
+                flush();
+                toPromote = lastSuffix;
+            }
+
+            inProcessBlock.add(suffix);
+
+            lastSuffix = new InMemoryPointerSuffix(suffix.suffix, blockOffsets.size());
+            return toPromote;
+        }
+
+        public void flush() throws IOException {
+            blockOffsets.add(out.getFilePointer());
+            inProcessBlock.flushAndClear(out);
+        }
+
+        public void flushMetadata() throws IOException {
+            out.writeInt(blockOffsets.size());
+            for (int i = 0; i < blockOffsets.size(); i++)
+                out.writeLong(blockOffsets.get(i));
+        }
+    }
+
+    private static class MutableBlock
+    {
+        private final ByteBufferDataOutput buffer = new ByteBufferDataOutput(ByteBuffer.allocate(CHUNK_SIZE));
+        private final IntArrayList offsets = new IntArrayList();
+
+        private void add(InMemorySuffix suffix) throws IOException
+        {
+            offsets.add(buffer.position());
+            suffix.serialize(buffer);
+        }
+
+        public boolean hasSpaceFor(InMemorySuffix element)
+        {
+            return getWatermark() + 4 + element.serializedSize() < CHUNK_SIZE;
+        }
+
+        private int getWatermark()
+        {
+            return 4 + offsets.size() * 4 + buffer.position();
+        }
+
+        public void flushAndClear(RandomAccessFile out) throws IOException
+        {
+            out.writeInt(offsets.size());
+            for (int i = 0; i < offsets.size(); i++)
+                out.writeInt(offsets.get(i));
+
+            buffer.writeFullyTo(out);
+
+            long endOfBlock = out.getFilePointer();
+            if ((endOfBlock & (CHUNK_SIZE - 1)) != 0) // align on the chunk boundary if needed
+                out.seek((endOfBlock + CHUNK_SIZE) & ~(CHUNK_SIZE - 1));
+
+            out.getFD().sync(); // now fsync whole block
+
+            offsets.clear();
+            buffer.clear();
         }
     }
 }
