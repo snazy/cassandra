@@ -122,4 +122,21 @@ public final class CreateFunctionStatement extends SchemaAlteringStatement
         MigrationManager.announceNewFunction(UDFunction.create(functionName, argNames, argTypes, returnType, language, body, deterministic), isLocalOnly);
         return true;
     }
+
+    public UDFunction functionForTest() throws InvalidRequestException
+    {
+        if (new HashSet<>(argNames).size() != argNames.size())
+            throw new InvalidRequestException(String.format("duplicate argument names for given function %s with argument names %s",
+                                                            functionName, argNames));
+
+        List<AbstractType<?>> argTypes = new ArrayList<>(argRawTypes.size());
+        for (CQL3Type.Raw rawType : argRawTypes)
+            // We have no proper keyspace to give, which means that this will break (NPE currently)
+            // for UDT: #7791 is open to fix this
+            argTypes.add(rawType.prepare(null).getType());
+
+        AbstractType<?> returnType = rawReturnType.prepare(null).getType();
+
+        return UDFunction.create(functionName, argNames, argTypes, returnType, language, body, deterministic);
+    }
 }
