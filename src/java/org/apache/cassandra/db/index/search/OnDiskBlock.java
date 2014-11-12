@@ -15,7 +15,7 @@ public abstract class OnDiskBlock<T extends Suffix>
         this.blockIndexSize = data.getInt() * 4;
     }
 
-    public IntPair<T> search(AbstractType<?> comparator, ByteBuffer query, boolean nullOnNotEquals)
+    public IntPair<T> search(AbstractType<?> comparator, ByteBuffer query)
     {
         int start = 0, end = getElementsSize() - 1, middle = 0;
 
@@ -35,7 +35,7 @@ public abstract class OnDiskBlock<T extends Suffix>
                 end = middle - 1;
         }
 
-        return nullOnNotEquals ? null : new IntPair<>(middle, element);
+        return new IntPair<>(middle, element);
     }
 
     protected T getElement(int index)

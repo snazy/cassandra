@@ -1,40 +1,45 @@
 package org.apache.cassandra.db.index.search;
 
+import java.io.Closeable;
+import java.io.File;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.Iterator;
 
 import org.apache.cassandra.db.marshal.AbstractType;
+import org.apache.cassandra.io.FSReadError;
+import org.apache.cassandra.io.util.RandomAccessReader;
 import org.apache.cassandra.utils.ByteBufferDataInput;
 
 import com.google.common.collect.AbstractIterator;
 import org.roaringbitmap.RoaringBitmap;
 
-import static org.apache.cassandra.db.index.search.OnDiskBlock.getElementPosition;
-
-public class OnDiskSA implements Iterable<OnDiskSA.DataSuffix>
+public class OnDiskSA implements Iterable<OnDiskSA.DataSuffix>, Closeable
 {
-    protected final ByteBuffer sa;
     protected final AbstractType<?> comparator;
+    protected final RandomAccessReader file;
 
     protected final PointerLevel[] levels;
     protected final DataLevel dataLevel;
 
-    public OnDiskSA(ByteBuffer file, AbstractType<?> cmp)
+    public OnDiskSA(File index, AbstractType<?> cmp) throws IOException
     {
-        sa = file;
         comparator = cmp;
 
-        levels = new PointerLevel[sa.getInt()];
-        int levelPosition = sa.position() + levels.length * 4;
-        for (int i = 0; i < levels.length; i++)
-        {
-            levels[i] = new PointerLevel((ByteBuffer) sa.duplicate().position(levelPosition));
-            levelPosition += sa.getInt(sa.position() + i * 4);
-        }
+        file = RandomAccessReader.open(index, OnDiskSABuilder.CHUNK_SIZE, null);
+        file.seek(file.length() - 8); // to figure out start of the level index as last 8 bytes (long) of the file
 
-        dataLevel = new DataLevel((ByteBuffer) sa.duplicate().position(levelPosition));
+        // start of the levels
+        file.seek(file.readLong());
+
+        int numLevels = file.readInt();
+        levels = new PointerLevel[numLevels];
+        for (int i = 0; i < levels.length; i++)
+            levels[i] = new PointerLevel(file);
+
+        dataLevel = new DataLevel(file);
     }
+
 
     public RoaringBitmap search(ByteBuffer query) throws IOException
     {
@@ -55,9 +60,16 @@ public class OnDiskSA implements Iterable<OnDiskSA.DataSuffix>
         return new DataIterator(dataLevel, dataBlockIdx, searchIndex(query, dataBlockIdx));
     }
 
+    @Override
     public Iterator<DataSuffix> iterator()
     {
         return new DataIterator(dataLevel);
+    }
+
+    @Override
+    public void close() throws IOException
+    {
+        file.close();
     }
 
     private PointerSuffix findPointer(ByteBuffer query)
@@ -74,13 +86,13 @@ public class OnDiskSA implements Iterable<OnDiskSA.DataSuffix>
 
     private RoaringBitmap searchDataBlock(ByteBuffer query, int blockIdx) throws IOException
     {
-        OnDiskBlock.IntPair<DataSuffix> suffix = dataLevel.getBlock(blockIdx).search(comparator, query, true);
+        OnDiskBlock.IntPair<DataSuffix> suffix = dataLevel.getBlock(blockIdx).search(comparator, query);
         return suffix == null || suffix.right == null ? null : suffix.right.getKeys();
     }
 
     private int searchIndex(ByteBuffer query, int blockIdx)
     {
-        return dataLevel.getBlock(blockIdx).search(comparator, query, false).left;
+        return dataLevel.getBlock(blockIdx).search(comparator, query).left;
     }
 
     private int getBlockIdx(PointerSuffix ptr, ByteBuffer query)
@@ -97,14 +109,14 @@ public class OnDiskSA implements Iterable<OnDiskSA.DataSuffix>
 
     protected class PointerLevel extends Level<PointerBlock>
     {
-        public PointerLevel(ByteBuffer level)
+        public PointerLevel(RandomAccessReader level) throws IOException
         {
             super(level);
         }
 
         public PointerSuffix getPointer(PointerSuffix parent, ByteBuffer query)
         {
-            return getBlock(getBlockIdx(parent, query)).search(comparator, query, false).right;
+            return getBlock(getBlockIdx(parent, query)).search(comparator, query).right;
         }
 
         @Override
@@ -116,7 +128,7 @@ public class OnDiskSA implements Iterable<OnDiskSA.DataSuffix>
 
     protected static class DataLevel extends Level<DataBlock>
     {
-        public DataLevel(ByteBuffer level)
+        public DataLevel(RandomAccessReader level) throws IOException
         {
             super(level);
         }
@@ -130,18 +142,25 @@ public class OnDiskSA implements Iterable<OnDiskSA.DataSuffix>
 
     protected static abstract class Level<T extends OnDiskBlock>
     {
-        protected final ByteBuffer level;
-        protected final int levelIndexSize;
+        protected final RandomAccessReader file;
+        protected final long[] blockOffsets;
 
-        public Level(ByteBuffer level)
+        public Level(RandomAccessReader level) throws IOException
         {
-            this.level = level;
-            this.levelIndexSize = level.getInt() * 4;
+            file = level;
+            blockOffsets = new long[level.readInt()];
+            for (int i = 0; i < blockOffsets.length; i++)
+                blockOffsets[i] = level.readLong();
         }
 
-        public T getBlock(int idx)
+        public T getBlock(int idx) throws FSReadError
         {
-            return cast((ByteBuffer) level.duplicate().position(getElementPosition(level, idx, levelIndexSize)));
+            byte[] block = new byte[OnDiskSABuilder.CHUNK_SIZE];
+
+            file.seek(blockOffsets[idx]);
+            file.read(block);
+
+            return cast(ByteBuffer.wrap(block));
         }
 
         protected abstract T cast(ByteBuffer block);
@@ -238,7 +257,7 @@ public class OnDiskSA implements Iterable<OnDiskSA.DataSuffix>
             if (index < current.getElementsSize())
                 return current.getElement(index++);
 
-            if (block < level.levelIndexSize / 4)
+            if (block < level.blockOffsets.length)
             {
                 current = level.getBlock(block++);
                 index = 0;

@@ -29,7 +29,7 @@ public class Suffix
     {
         ByteBuffer dup = content.duplicate();
         int len = dup.getInt();
-        dup.limit(dup.position() + Math.min(len, query.remaining()));
+        dup.limit(dup.position() + len);
         return comparator.compare(dup, query.duplicate());
     }
 }

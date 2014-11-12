@@ -1,13 +1,16 @@
 package org.apache.cassandra.db.index.search;
 
+import java.io.File;
 import java.io.IOException;
+import java.io.RandomAccessFile;
 import java.nio.ByteBuffer;
 import java.util.*;
 
 import junit.framework.Assert;
+
 import org.apache.cassandra.db.marshal.Int32Type;
 import org.apache.cassandra.db.marshal.UTF8Type;
-import org.apache.cassandra.utils.ByteBufferDataOutput;
+
 import org.junit.Test;
 import org.roaringbitmap.RoaringBitmap;
 
@@ -33,11 +36,12 @@ public class OnDiskSATest
         for (Map.Entry<ByteBuffer, RoaringBitmap> e : data.entrySet())
             builder.add(e.getKey(), e.getValue());
 
-        ByteBuffer out = ByteBuffer.allocate(8192);
-        builder.finish(new ByteBufferDataOutput(out));
-        out.flip();
+        File index = File.createTempFile("on-disk-sa-string", "db");
+        index.deleteOnExit();
 
-        OnDiskSA onDisk = new OnDiskSA(out, UTF8Type.instance);
+        builder.finish(new RandomAccessFile(index, "rw"));
+
+        OnDiskSA onDisk = new OnDiskSA(index, UTF8Type.instance);
 
         // first check if we can find exact matches
         for (Map.Entry<ByteBuffer, RoaringBitmap> e : data.entrySet())
@@ -61,6 +65,8 @@ public class OnDiskSATest
         Assert.assertEquals(RoaringBitmap.bitmapOf(7), onDisk.search(UTF8Type.instance.fromString("oo")));
         Assert.assertEquals(RoaringBitmap.bitmapOf(7), onDisk.search(UTF8Type.instance.fromString("o")));
         Assert.assertEquals(RoaringBitmap.bitmapOf(1, 2, 3, 4), onDisk.search(UTF8Type.instance.fromString("t")));
+
+        onDisk.close();
     }
 
     @Test
@@ -83,11 +89,12 @@ public class OnDiskSATest
         for (Map.Entry<ByteBuffer, RoaringBitmap> e : data.entrySet())
             builder.add(e.getKey(), e.getValue());
 
-        ByteBuffer out = ByteBuffer.allocate(8192);
-        builder.finish(new ByteBufferDataOutput(out));
-        out.flip();
+        File index = File.createTempFile("on-disk-sa-int", "db");
+        index.deleteOnExit();
 
-        OnDiskSA onDisk = new OnDiskSA(out, Int32Type.instance);
+        builder.finish(new RandomAccessFile(index, "rw"));
+
+        OnDiskSA onDisk = new OnDiskSA(index, Int32Type.instance);
 
         for (Map.Entry<ByteBuffer, RoaringBitmap> e : data.entrySet())
             Assert.assertEquals(e.getValue(), onDisk.search(e.getKey()));
@@ -128,6 +135,8 @@ public class OnDiskSATest
             Assert.assertEquals(number, suffix.getSuffix());
             Assert.assertEquals(data.get(number), suffix.getKeys());
         }
+
+        onDisk.close();
     }
 
     private static RoaringBitmap bitMapOf(int... values)
@@ -138,14 +147,14 @@ public class OnDiskSATest
         return map;
     }
 
-
+    @SuppressWarnings("unused")
     private static void printSA(OnDiskSA sa) throws IOException
     {
         int level = 0;
         for (OnDiskSA.PointerLevel l : sa.levels)
         {
-            System.out.println(" !!!! level " + (level++) + " !!!! ");
-            for (int i = 0; i < l.levelIndexSize / 4; i++)
+            System.out.println(" !!!! level " + (level++) + " !!!! (blocks: " + Arrays.toString(l.blockOffsets) + ")");
+            for (int i = 0; i < l.blockOffsets.length; i++)
             {
                 System.out.println(" --- block " + i + " ---- ");
                 OnDiskSA.PointerBlock block = l.getBlock(i);
@@ -158,7 +167,7 @@ public class OnDiskSATest
         }
 
         System.out.println(" !!!!! data blocks !!!!! ");
-        for (int i = 0; i < sa.dataLevel.levelIndexSize / 4; i++)
+        for (int i = 0; i < sa.dataLevel.blockOffsets.length; i++)
         {
             System.out.println(" --- block " + i + " ---- ");
             OnDiskSA.DataBlock block = sa.dataLevel.getBlock(i);
