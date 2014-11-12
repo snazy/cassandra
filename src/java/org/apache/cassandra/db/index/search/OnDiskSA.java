@@ -3,6 +3,7 @@ package org.apache.cassandra.db.index.search;
 import java.io.Closeable;
 import java.io.File;
 import java.io.IOException;
+import java.io.RandomAccessFile;
 import java.nio.ByteBuffer;
 import java.util.Iterator;
 
@@ -17,7 +18,8 @@ import org.roaringbitmap.RoaringBitmap;
 public class OnDiskSA implements Iterable<OnDiskSA.DataSuffix>, Closeable
 {
     protected final AbstractType<?> comparator;
-    protected final RandomAccessReader file;
+    protected final RandomAccessFile file;
+    protected final String indexPath;
 
     protected final PointerLevel[] levels;
     protected final DataLevel dataLevel;
@@ -25,6 +27,7 @@ public class OnDiskSA implements Iterable<OnDiskSA.DataSuffix>, Closeable
     public OnDiskSA(File index, AbstractType<?> cmp) throws IOException
     {
         comparator = cmp;
+        indexPath = index.getAbsolutePath();
 
         file = RandomAccessReader.open(index, OnDiskSABuilder.CHUNK_SIZE, null);
         file.seek(file.length() - 8); // to figure out start of the level index as last 8 bytes (long) of the file
@@ -35,9 +38,14 @@ public class OnDiskSA implements Iterable<OnDiskSA.DataSuffix>, Closeable
         int numLevels = file.readInt();
         levels = new PointerLevel[numLevels];
         for (int i = 0; i < levels.length; i++)
-            levels[i] = new PointerLevel(file);
+        {
+            int blockCount = file.readInt();
+            levels[i] = new PointerLevel(file.getFilePointer(), blockCount);
+            file.seek(blockCount * 8);
+        }
 
-        dataLevel = new DataLevel(file);
+        int blockCount = file.readInt();
+        dataLevel = new DataLevel(file.getFilePointer(), blockCount);
     }
 
 
@@ -109,9 +117,9 @@ public class OnDiskSA implements Iterable<OnDiskSA.DataSuffix>, Closeable
 
     protected class PointerLevel extends Level<PointerBlock>
     {
-        public PointerLevel(RandomAccessReader level) throws IOException
+        public PointerLevel(long offset, int count) throws IOException
         {
-            super(level);
+            super(offset, count);
         }
 
         public PointerSuffix getPointer(PointerSuffix parent, ByteBuffer query)
@@ -126,11 +134,11 @@ public class OnDiskSA implements Iterable<OnDiskSA.DataSuffix>, Closeable
         }
     }
 
-    protected static class DataLevel extends Level<DataBlock>
+    protected class DataLevel extends Level<DataBlock>
     {
-        public DataLevel(RandomAccessReader level) throws IOException
+        public DataLevel(long offset, int count) throws IOException
         {
-            super(level);
+            super(offset, count);
         }
 
         @Override
@@ -140,25 +148,41 @@ public class OnDiskSA implements Iterable<OnDiskSA.DataSuffix>, Closeable
         }
     }
 
-    protected static abstract class Level<T extends OnDiskBlock>
+    protected abstract class Level<T extends OnDiskBlock>
     {
-        protected final RandomAccessReader file;
-        protected final long[] blockOffsets;
+        protected final long blockOffsets;
+        protected final int blockCount;
 
-        public Level(RandomAccessReader level) throws IOException
+        public Level(long offset, int count) throws IOException
         {
-            file = level;
-            blockOffsets = new long[level.readInt()];
-            for (int i = 0; i < blockOffsets.length; i++)
-                blockOffsets[i] = level.readLong();
+            blockOffsets = offset;
+            blockCount = count;
         }
 
         public T getBlock(int idx) throws FSReadError
         {
+            assert idx >= 0 && idx < blockCount;
+
             byte[] block = new byte[OnDiskSABuilder.CHUNK_SIZE];
 
-            file.seek(blockOffsets[idx]);
-            file.read(block);
+            try
+            {
+                // seek to the block offset in the level index
+                // this is done to save memory for long[] because
+                // the number of blocks in the level is dependent on the
+                // block size (which, by default, is 4K), as we align all of the blocks
+                // and index is pre-faulted on construction this seek shouldn't be
+                // performance problem.
+                file.seek(blockOffsets + idx * 8);
+
+                // read block offset and move there
+                file.seek(file.readLong());
+                file.read(block);
+            }
+            catch (IOException e)
+            {
+                throw new FSReadError(e, indexPath);
+            }
 
             return cast(ByteBuffer.wrap(block));
         }
@@ -257,7 +281,7 @@ public class OnDiskSA implements Iterable<OnDiskSA.DataSuffix>, Closeable
             if (index < current.getElementsSize())
                 return current.getElement(index++);
 
-            if (block < level.blockOffsets.length)
+            if (block < level.blockCount)
             {
                 current = level.getBlock(block++);
                 index = 0;
