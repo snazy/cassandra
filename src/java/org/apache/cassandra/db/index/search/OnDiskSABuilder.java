@@ -21,8 +21,6 @@ import org.apache.cassandra.utils.PrimitiveIntSort;
 
 import org.roaringbitmap.RoaringBitmap;
 
-import com.google.common.annotations.VisibleForTesting;
-
 /**
  * TODO: when serializing PointerSuffix, maybe it makes sense to encode blockIdx into the size of the suffix string
  * which limits number of blocks to 64K (can address 4GB with 64KB size blocks) and size of the suffix to the 64K

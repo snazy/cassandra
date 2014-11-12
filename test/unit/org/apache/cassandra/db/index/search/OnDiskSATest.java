@@ -2,7 +2,6 @@ package org.apache.cassandra.db.index.search;
 
 import java.io.File;
 import java.io.IOException;
-import java.io.RandomAccessFile;
 import java.nio.ByteBuffer;
 import java.util.*;
 
@@ -153,8 +152,8 @@ public class OnDiskSATest
         int level = 0;
         for (OnDiskSA.PointerLevel l : sa.levels)
         {
-            System.out.println(" !!!! level " + (level++) + " !!!! (blocks: " + Arrays.toString(l.blockOffsets) + ")");
-            for (int i = 0; i < l.blockOffsets.length; i++)
+            System.out.println(" !!!! level " + (level++));
+            for (int i = 0; i < l.blockCount; i++)
             {
                 System.out.println(" --- block " + i + " ---- ");
                 OnDiskSA.PointerBlock block = l.getBlock(i);
@@ -167,7 +166,7 @@ public class OnDiskSATest
         }
 
         System.out.println(" !!!!! data blocks !!!!! ");
-        for (int i = 0; i < sa.dataLevel.blockOffsets.length; i++)
+        for (int i = 0; i < sa.dataLevel.blockCount; i++)
         {
             System.out.println(" --- block " + i + " ---- ");
             OnDiskSA.DataBlock block = sa.dataLevel.getBlock(i);
