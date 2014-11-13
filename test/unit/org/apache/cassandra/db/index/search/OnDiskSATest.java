@@ -18,6 +18,11 @@ public class OnDiskSATest
     @Test
     public void testStringSAConstruction() throws Exception
     {
+        /*final RoaringBitmap map = new RoaringBitmap();
+        Random random = new Random();
+        for (int i = 0; i < 1000000; i += 256)
+            map.add(random.nextInt(i + 1));*/
+
         Map<ByteBuffer, RoaringBitmap> data = new HashMap<ByteBuffer, RoaringBitmap>()
         {{
                 put(UTF8Type.instance.decompose("scat"), bitMapOf(1));
@@ -29,6 +34,7 @@ public class OnDiskSATest
                 put(UTF8Type.instance.decompose("foo"), bitMapOf(7));
                 put(UTF8Type.instance.decompose("bar"), bitMapOf(9, 10));
                 put(UTF8Type.instance.decompose("michael"), bitMapOf(11, 12, 1));
+                //put(UTF8Type.instance.decompose("jason"), map);
         }};
 
         OnDiskSABuilder builder = new OnDiskSABuilder(UTF8Type.instance, OnDiskSABuilder.Mode.SUFFIX);
@@ -48,7 +54,7 @@ public class OnDiskSATest
             if (UTF8Type.instance.getString(e.getKey()).equals("cat"))
                 continue; // cat is embedded into scat, we'll test it in next section
 
-            Assert.assertEquals(e.getValue(), onDisk.search(e.getKey()));
+            Assert.assertEquals("Key was: " + UTF8Type.instance.compose(e.getKey()), e.getValue(), onDisk.search(e.getKey()));
         }
 
         // check that cat returns positions for scat & cat

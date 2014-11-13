@@ -33,7 +33,7 @@ public class OnDiskSABuilder
         SUFFIX, ORIGINAL
     }
 
-    public static final int CHUNK_SIZE = 4096;
+    public static final int INDEX_BLOCK_SIZE = 4096;
 
     private final AbstractType<?> comparator;
 
@@ -54,11 +54,12 @@ public class OnDiskSABuilder
         return this;
     }
 
-    private void addSuffix(ByteBuffer suffix, RoaringBitmap keys, RandomAccessFile out) throws IOException
+    private void addSuffix(ByteBuffer suffix, RoaringBitmap keys, RandomAccessFile out, int blockSize) throws IOException
     {
         InMemoryDataSuffix current = new InMemoryDataSuffix(suffix, keys);
 
-        if (lastProcessed == null) {
+        if (lastProcessed == null)
+        {
             lastProcessed = current;
             return;
         }
@@ -69,21 +70,21 @@ public class OnDiskSABuilder
         }
         else
         {
-            addSuffix(lastProcessed, out);
+            addSuffix(lastProcessed, out, blockSize);
             lastProcessed = current;
         }
     }
 
-    private void addSuffix(InMemoryDataSuffix suffix, RandomAccessFile out) throws IOException
+    private void addSuffix(InMemoryDataSuffix suffix, RandomAccessFile out, int blockSize) throws IOException
     {
-        InMemorySuffix ptr = getLevel(0, out).add(suffix);
+        InMemorySuffix ptr = getLevel(0, out, blockSize).add(suffix);
         if (ptr == null)
             return;
 
         int levelIdx = 1;
         for (;;)
         {
-            MutableLevel<InMemorySuffix> level = getLevel(levelIdx++, out);
+            MutableLevel<InMemorySuffix> level = getLevel(levelIdx++, out, INDEX_BLOCK_SIZE);
             if ((ptr = level.add(ptr)) == null)
                 break;
         }
@@ -98,14 +99,17 @@ public class OnDiskSABuilder
             out = new RandomAccessFile(file, "rw");
 
             Iterator<Pair<ByteBuffer, RoaringBitmap>> suffixes = sa.finish();
+
+            // align biggest element size on the 2 default chunks size boundary
+            int dataBlockSize = (int) align(sa.maxElementSize, INDEX_BLOCK_SIZE) * 2;
             while (suffixes.hasNext())
             {
                 Pair<ByteBuffer, RoaringBitmap> suffix = suffixes.next();
-                addSuffix(suffix.left, suffix.right, out);
+                addSuffix(suffix.left, suffix.right, out, dataBlockSize);
             }
 
             // add the very last processed suffix
-            addSuffix(lastProcessed, out);
+            addSuffix(lastProcessed, out, dataBlockSize);
 
             for (MutableLevel l : levels)
                 l.flush(); // flush all of the buffers
@@ -119,6 +123,7 @@ public class OnDiskSABuilder
                 levels.get(i).flushMetadata();
 
             out.writeLong(levelIndexPosition);
+            out.writeInt(dataBlockSize);
         }
         catch (IOException e)
         {
@@ -130,16 +135,16 @@ public class OnDiskSABuilder
         }
     }
 
-    private MutableLevel<InMemorySuffix> getLevel(int idx, RandomAccessFile out)
+    private MutableLevel<InMemorySuffix> getLevel(int idx, RandomAccessFile out, int blockSize)
     {
         if (levels.size() == 0)
-            levels.add(new MutableLevel<>(out));
+            levels.add(new MutableLevel<>(out, blockSize));
 
         if (levels.size() - 1 < idx)
         {
             int toAdd = idx - (levels.size() - 1);
             for (int i = 0; i < toAdd; i++)
-                levels.add(new MutableLevel<>(out));
+                levels.add(new MutableLevel<>(out, blockSize));
         }
 
         return levels.get(idx);
@@ -225,6 +230,7 @@ public class OnDiskSABuilder
         private final Mode mode;
 
         private int charCount = 0;
+        private int maxElementSize = 0;
 
         public SA(AbstractType<?> comparator, Mode mode)
         {
@@ -235,10 +241,13 @@ public class OnDiskSABuilder
         public void add(ByteBuffer term, RoaringBitmap keys) throws IOException
         {
             terms.add(new Term(charCount, term, keys));
+
+            // to figure out how big chunk should be
+            maxElementSize = Math.max(maxElementSize, 4 + term.remaining() + keys.serializedSizeInBytes());
             charCount += term.remaining();
         }
 
-        protected Iterator<Pair<ByteBuffer, RoaringBitmap>> finish()
+        public Iterator<Pair<ByteBuffer, RoaringBitmap>> finish()
         {
             switch (mode)
             {
@@ -353,12 +362,13 @@ public class OnDiskSABuilder
 
         private final RandomAccessFile out;
 
-        private final MutableBlock inProcessBlock = new MutableBlock();
+        private final MutableBlock inProcessBlock;
         private InMemoryPointerSuffix lastSuffix;
 
-        public MutableLevel(RandomAccessFile out)
+        public MutableLevel(RandomAccessFile out, int blockSize)
         {
             this.out = out;
+            this.inProcessBlock = new MutableBlock(blockSize);
         }
 
         public InMemoryPointerSuffix add(T suffix) throws IOException
@@ -393,8 +403,13 @@ public class OnDiskSABuilder
 
     private static class MutableBlock
     {
-        private final ByteBufferDataOutput buffer = new ByteBufferDataOutput(ByteBuffer.allocate(CHUNK_SIZE));
+        private final ByteBufferDataOutput buffer;
         private final IntArrayList offsets = new IntArrayList();
+
+        protected MutableBlock(int blockSize)
+        {
+            buffer = new ByteBufferDataOutput(ByteBuffer.allocate(blockSize));
+        }
 
         private void add(InMemorySuffix suffix) throws IOException
         {
@@ -404,7 +419,7 @@ public class OnDiskSABuilder
 
         public boolean hasSpaceFor(InMemorySuffix element)
         {
-            return getWatermark() + 4 + element.serializedSize() < CHUNK_SIZE;
+            return getWatermark() + 4 + element.serializedSize() < buffer.capacity();
         }
 
         private int getWatermark()
@@ -421,13 +436,18 @@ public class OnDiskSABuilder
             buffer.writeFullyTo(out);
 
             long endOfBlock = out.getFilePointer();
-            if ((endOfBlock & (CHUNK_SIZE - 1)) != 0) // align on the chunk boundary if needed
-                out.seek((endOfBlock + CHUNK_SIZE) & ~(CHUNK_SIZE - 1));
+            if ((endOfBlock & (buffer.capacity() - 1)) != 0) // align on the block boundary if needed
+                out.seek(align(endOfBlock, buffer.capacity()));
 
             out.getFD().sync(); // now fsync whole block
 
             offsets.clear();
             buffer.clear();
         }
+    }
+
+    private static long align(long val, int boundary)
+    {
+        return (val + boundary) & ~(boundary - 1);
     }
 }
