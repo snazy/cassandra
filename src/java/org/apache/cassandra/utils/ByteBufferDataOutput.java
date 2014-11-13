@@ -39,8 +39,8 @@ public class ByteBufferDataOutput extends AbstractDataOutput
 
     public void writeFullyTo(DataOutput out) throws IOException
     {
-        for (int i = 0; i < buffer.position(); i++)
-            out.writeByte(buffer.get(i));
+        buffer.flip();
+        ByteBufferUtil.write(buffer, out);
     }
 
     public void clear()
