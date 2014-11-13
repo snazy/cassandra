@@ -9,7 +9,6 @@ import java.util.Iterator;
 
 import org.apache.cassandra.db.marshal.AbstractType;
 import org.apache.cassandra.io.FSReadError;
-import org.apache.cassandra.io.util.RandomAccessReader;
 import org.apache.cassandra.utils.ByteBufferDataInput;
 
 import com.google.common.collect.AbstractIterator;
@@ -29,8 +28,12 @@ public class OnDiskSA implements Iterable<OnDiskSA.DataSuffix>, Closeable
         comparator = cmp;
         indexPath = index.getAbsolutePath();
 
-        file = RandomAccessReader.open(index, OnDiskSABuilder.CHUNK_SIZE, null);
-        file.seek(file.length() - 8); // to figure out start of the level index as last 8 bytes (long) of the file
+        file = new RandomAccessFile(index, "r");
+        file.seek(file.length() - 4); // to figure out start of the level index as last 8 bytes (long) of the file
+
+        int dataBlockSize = file.readInt();
+
+        file.seek(file.getFilePointer() - 12);
 
         // start of the levels
         file.seek(file.readLong());
@@ -41,11 +44,11 @@ public class OnDiskSA implements Iterable<OnDiskSA.DataSuffix>, Closeable
         {
             int blockCount = file.readInt();
             levels[i] = new PointerLevel(file.getFilePointer(), blockCount);
-            file.seek(blockCount * 8);
+            file.skipBytes(blockCount * 8);
         }
 
         int blockCount = file.readInt();
-        dataLevel = new DataLevel(file.getFilePointer(), blockCount);
+        dataLevel = new DataLevel(file.getFilePointer(), blockCount, dataBlockSize);
     }
 
 
@@ -119,7 +122,7 @@ public class OnDiskSA implements Iterable<OnDiskSA.DataSuffix>, Closeable
     {
         public PointerLevel(long offset, int count) throws IOException
         {
-            super(offset, count);
+            super(offset, count, OnDiskSABuilder.INDEX_BLOCK_SIZE);
         }
 
         public PointerSuffix getPointer(PointerSuffix parent, ByteBuffer query)
@@ -136,9 +139,9 @@ public class OnDiskSA implements Iterable<OnDiskSA.DataSuffix>, Closeable
 
     protected class DataLevel extends Level<DataBlock>
     {
-        public DataLevel(long offset, int count) throws IOException
+        public DataLevel(long offset, int count, int blockSize) throws IOException
         {
-            super(offset, count);
+            super(offset, count, blockSize);
         }
 
         @Override
@@ -151,19 +154,20 @@ public class OnDiskSA implements Iterable<OnDiskSA.DataSuffix>, Closeable
     protected abstract class Level<T extends OnDiskBlock>
     {
         protected final long blockOffsets;
-        protected final int blockCount;
+        protected final int blockCount, blockSize;
 
-        public Level(long offset, int count) throws IOException
+        public Level(long offsets, int count, int blockSize) throws IOException
         {
-            blockOffsets = offset;
-            blockCount = count;
+            this.blockOffsets = offsets;
+            this.blockCount = count;
+            this.blockSize = blockSize;
         }
 
         public T getBlock(int idx) throws FSReadError
         {
             assert idx >= 0 && idx < blockCount;
 
-            byte[] block = new byte[OnDiskSABuilder.CHUNK_SIZE];
+            byte[] block = new byte[blockSize];
 
             try
             {
