@@ -27,9 +27,28 @@ import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.Callable;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
+import com.codahale.metrics.Timer;
+import org.antlr.runtime.ANTLRStringStream;
+import org.antlr.runtime.CharStream;
+import org.antlr.runtime.CommonTokenStream;
+import org.antlr.runtime.RecognitionException;
+import org.antlr.runtime.TokenStream;
+import org.apache.cassandra.cql3.CqlLexer;
+import org.apache.cassandra.cql3.CqlParser;
+import org.apache.cassandra.cql3.ErrorCollector;
+import org.apache.cassandra.cql3.ErrorListener;
 import org.apache.cassandra.cql3.functions.UDFunction;
 import org.apache.cassandra.cql3.statements.CreateFunctionStatement;
+import org.apache.cassandra.cql3.statements.ParsedStatement;
 import org.apache.cassandra.db.marshal.AbstractType;
 import org.apache.cassandra.db.marshal.AsciiType;
 import org.apache.cassandra.db.marshal.BooleanType;
@@ -48,14 +67,68 @@ import org.apache.cassandra.db.marshal.TimestampType;
 import org.apache.cassandra.db.marshal.UTF8Type;
 import org.apache.cassandra.db.marshal.UUIDType;
 import org.apache.cassandra.exceptions.InvalidRequestException;
+import org.apache.cassandra.exceptions.SyntaxException;
+import org.apache.cassandra.utils.UUIDGen;
 
-public final class UDF
+/**
+ * Wrapper around a user defined function used to test, penetrate and stress UDFs.
+ * <p/>
+ * Provides simple methods to simply call a UDF implementation,
+ * to execute a UDF concurrently and in a loop,
+ * to penetrate a UDF with a huge number of parameter value combinations.
+ * <p/>
+ * All you need is to write a unit test like the following:
+ * {@code
+ *     @Test
+ *     public void basicTest() throws Throwable
+ *     {
+ *         UDF udf = new UDF("CREATE FUNCTION foo(inp int, d double) RETURNS text LANGUAGE javascript AS '\"x\" + inp + \"x\" + d + \"x\";'");
+ *
+ *         udf.penetrate();
+ *
+ *         UDFResult result = udf.execute(5, 2d);
+ *
+ *         Assert.assertEquals("x5x2x", result.getResult());
+ *     }
+ * }
+ */
+public class UDF
 {
     private final UDFunction udf;
 
-    UDF(CreateFunctionStatement statement) throws InvalidRequestException
+    private long timeout = 100;
+    private TimeUnit timeoutUnit = TimeUnit.MILLISECONDS;
+
+    public UDF(String cql) throws InvalidRequestException, SyntaxException
     {
-        this.udf = statement.functionForTest();
+        CharStream stream = new ANTLRStringStream(cql);
+        CqlLexer lexer = new CqlLexer(stream);
+
+        TokenStream tokenStream = new CommonTokenStream(lexer);
+        CqlParser parser = new CqlParser(tokenStream);
+        ErrorListener errorListener = new ErrorCollector(cql);
+        parser.addErrorListener(errorListener);
+
+        ParsedStatement statement;
+        try
+        {
+            statement = parser.query();
+        }
+        catch (RuntimeException re)
+        {
+            throw new SyntaxException(String.format("Failed parsing statement: [%s] reason: %s %s",
+                                                    cql,
+                                                    re.getClass().getSimpleName(),
+                                                    re.getMessage()));
+        }
+        catch (RecognitionException e)
+        {
+            throw new SyntaxException("Invalid or malformed CQL query string: " + e.getMessage());
+        }
+        if (!(statement instanceof CreateFunctionStatement))
+            throw new IllegalArgumentException("Must pass a CREATE FUNCTION statement (was " + statement.getClass().getSimpleName() + ")");
+
+        this.udf = ((CreateFunctionStatement) statement).functionForTest();
     }
 
     /**
@@ -118,15 +191,10 @@ public final class UDF
         return new ByteBuffer[]{ null };
     }
 
-    private ByteBuffer[] variationsForAsciiType(AsciiType abstractType)
-    {
-        return new ByteBuffer[]{
-                               null,
-                               abstractType.fromString("foo")
-        };
-    }
-
-    private ByteBuffer[] variationsForBooleanType(BooleanType abstractType)
+    /**
+     * Override this method if you want to provide different values.
+     */
+    protected ByteBuffer[] variationsForBooleanType(BooleanType abstractType)
     {
         return new ByteBuffer[]{
                                null,
@@ -135,7 +203,10 @@ public final class UDF
         };
     }
 
-    private ByteBuffer[] variationsForBytesType(BytesType abstractType)
+    /**
+     * Override this method if you want to provide different values.
+     */
+    protected ByteBuffer[] variationsForBytesType(BytesType abstractType)
     {
         return new ByteBuffer[]{
                                null,
@@ -145,7 +216,10 @@ public final class UDF
         };
     }
 
-    private ByteBuffer[] variationsForDateType(DateType abstractType)
+    /**
+     * Override this method if you want to provide different values.
+     */
+    protected ByteBuffer[] variationsForDateType(DateType abstractType)
     {
         return new ByteBuffer[]{
                                null,
@@ -154,7 +228,10 @@ public final class UDF
         };
     }
 
-    private ByteBuffer[] variationsForDecimalType(DecimalType abstractType)
+    /**
+     * Override this method if you want to provide different values.
+     */
+    protected ByteBuffer[] variationsForDecimalType(DecimalType abstractType)
     {
         return new ByteBuffer[]{
                                null,
@@ -168,7 +245,10 @@ public final class UDF
         };
     }
 
-    private ByteBuffer[] variationsForDoubleType(DoubleType abstractType)
+    /**
+     * Override this method if you want to provide different values.
+     */
+    protected ByteBuffer[] variationsForDoubleType(DoubleType abstractType)
     {
         return new ByteBuffer[]{
                                null,
@@ -184,7 +264,10 @@ public final class UDF
         };
     }
 
-    private ByteBuffer[] variationsForFloatType(FloatType abstractType)
+    /**
+     * Override this method if you want to provide different values.
+     */
+    protected ByteBuffer[] variationsForFloatType(FloatType abstractType)
     {
         return new ByteBuffer[]{
                                null,
@@ -200,7 +283,10 @@ public final class UDF
         };
     }
 
-    private ByteBuffer[] variationsForInetAddressType(InetAddressType abstractType)
+    /**
+     * Override this method if you want to provide different values.
+     */
+    protected ByteBuffer[] variationsForInetAddressType(InetAddressType abstractType)
     {
         try
         {
@@ -217,7 +303,10 @@ public final class UDF
         }
     }
 
-    private ByteBuffer[] variationsForInt32Type(Int32Type abstractType)
+    /**
+     * Override this method if you want to provide different values.
+     */
+    protected ByteBuffer[] variationsForInt32Type(Int32Type abstractType)
     {
         return new ByteBuffer[]{
                                null,
@@ -229,7 +318,10 @@ public final class UDF
         };
     }
 
-    private ByteBuffer[] variationsForIntegerType(IntegerType abstractType)
+    /**
+     * Override this method if you want to provide different values.
+     */
+    protected ByteBuffer[] variationsForIntegerType(IntegerType abstractType)
     {
         return new ByteBuffer[]{
                                null,
@@ -240,15 +332,10 @@ public final class UDF
         };
     }
 
-    private ByteBuffer[] variationsForLexicalUUIDType(LexicalUUIDType abstractType)
-    {
-        return new ByteBuffer[]{
-                               null,
-                               abstractType.decompose(UUID.fromString("foo bar baz"))
-        };
-    }
-
-    private ByteBuffer[] variationsForLongType(LongType abstractType)
+    /**
+     * Override this method if you want to provide different values.
+     */
+    protected ByteBuffer[] variationsForLongType(LongType abstractType)
     {
         return new ByteBuffer[]{
                                null,
@@ -260,14 +347,10 @@ public final class UDF
         };
     }
 
-    private ByteBuffer[] variationsForTimeUUIDType(TimeUUIDType abstractType)
-    {
-        return new ByteBuffer[]{
-                               null
-        };
-    }
-
-    private ByteBuffer[] variationsForTimestampType(TimestampType abstractType)
+    /**
+     * Override this method if you want to provide different values.
+     */
+    protected ByteBuffer[] variationsForTimestampType(TimestampType abstractType)
     {
         return new ByteBuffer[]{
                                null,
@@ -276,7 +359,21 @@ public final class UDF
         };
     }
 
-    private ByteBuffer[] variationsForUTF8Type(UTF8Type abstractType)
+    /**
+     * Override this method if you want to provide different values.
+     */
+    protected ByteBuffer[] variationsForAsciiType(AsciiType abstractType)
+    {
+        return new ByteBuffer[]{
+                               null,
+                               abstractType.fromString("foo")
+        };
+    }
+
+    /**
+     * Override this method if you want to provide different values.
+     */
+    protected ByteBuffer[] variationsForUTF8Type(UTF8Type abstractType)
     {
         return new ByteBuffer[]{
                                null,
@@ -285,11 +382,40 @@ public final class UDF
         };
     }
 
-    private ByteBuffer[] variationsForUUIDType(UUIDType abstractType)
+    /**
+     * Override this method if you want to provide different values.
+     */
+    protected ByteBuffer[] variationsForUUIDType(UUIDType abstractType)
     {
         return new ByteBuffer[]{
                                null,
-                               abstractType.decompose(UUID.randomUUID())
+                               abstractType.decompose(UUID.randomUUID()),
+                               abstractType.decompose(UUID.fromString("foo bar baz")),
+                               abstractType.decompose(UUIDGen.getTimeUUID()),
+                               abstractType.decompose(UUIDGen.getTimeUUID(0))
+        };
+    }
+
+    /**
+     * Override this method if you want to provide different values.
+     */
+    protected ByteBuffer[] variationsForLexicalUUIDType(LexicalUUIDType abstractType)
+    {
+        return new ByteBuffer[]{
+                               null,
+                               abstractType.decompose(UUID.fromString("foo bar baz"))
+        };
+    }
+
+    /**
+     * Override this method if you want to provide different values.
+     */
+    protected ByteBuffer[] variationsForTimeUUIDType(TimeUUIDType abstractType)
+    {
+        return new ByteBuffer[]{
+                               null,
+                               abstractType.decompose(UUIDGen.getTimeUUID()),
+                               abstractType.decompose(UUIDGen.getTimeUUID(0))
         };
     }
 
@@ -313,15 +439,209 @@ public final class UDF
     }
 
     /**
-     * Calls the UDF with the given arguments.
+     * Get the current timeout value in {@link #getTimeoutUnit()}.
+     * Default value is 100 ms.
      */
-    public Object execute(Object... arguments) throws InvalidRequestException
+    public long getTimeout()
     {
-        List<AbstractType<?>> argTypes = udf.argTypes();
+        return timeout;
+    }
 
-        if (arguments.length != argTypes.size())
-            throw new IllegalArgumentException("UDF '" + udf + "' expects " + argTypes.size() + " arguments, but " + arguments.length + " given");
+    /**
+     * Set the current timeout value in {@link #getTimeoutUnit()}.
+     * Default value is 100 ms.
+     */
+    public void setTimeout(long timeout)
+    {
+        if (timeout <= 0)
+            throw new IllegalArgumentException("timeout must be positive");
+        this.timeout = timeout;
+    }
 
+    /**
+     * Get the timeout unit for {@link #getTimeout()}.
+     * Default value is 100 ms.
+     */
+    public TimeUnit getTimeoutUnit()
+    {
+        return timeoutUnit;
+    }
+
+    /**
+     * Set the timeout unit for {@link #getTimeout()}.
+     * Default value is 100 ms.
+     */
+    public void setTimeoutUnit(TimeUnit timeoutUnit)
+    {
+        if (timeoutUnit == null)
+            throw new NullPointerException();
+        this.timeoutUnit = timeoutUnit;
+    }
+
+    /**
+     * Calls the UDF with the given arguments.
+     * Just calls {@link #executeConcurrentLoops(int, int, Object...)} with one thread and one loop.
+     */
+    public UDFResult execute(Object... arguments) throws InvalidRequestException, TimeoutException
+    {
+        return executeConcurrentInt(1, 1, null, 0, arguments);
+    }
+
+    /**
+     * Executes the UDF using multiple concurrent threads and multiple iterations inside one thread to detect
+     * whether a UDF is non-deterministic and whether it has unwanted concurrency issues.
+     *
+     * @param concurrency number of concurrent threads
+     * @param loops       number of loops
+     * @param arguments   UDF arguments
+     * @return return value
+     * @throws InvalidRequestException               if an execution failure occured
+     * @throws java.util.concurrent.TimeoutException if UDF execution took too long
+     * @throws java.lang.RuntimeException            if an unexpected exception occured
+     * @see #getTimeout()
+     * @see #getTimeoutUnit()
+     */
+    public UDFResult executeConcurrentLoops(int concurrency, int loops, Object... arguments) throws InvalidRequestException, TimeoutException
+    {
+        if (loops < 1)
+            throw new IllegalArgumentException("Loops must be 1 or higher");
+
+        return executeConcurrentInt(concurrency, loops, null, 0, arguments);
+    }
+
+    /**
+     * Executes the UDF using multiple concurrent threads and multiple iterations inside one thread to detect
+     * whether a UDF is non-deterministic and whether it has unwanted concurrency issues.
+     *
+     * @param concurrency  number of concurrent threads
+     * @param endAfter     end concurrent execution test after this time
+     * @param endAfterUnit end concurrent execution test after this time
+     * @param arguments    UDF arguments
+     * @return return value
+     * @throws InvalidRequestException               if an execution failure occured
+     * @throws java.util.concurrent.TimeoutException if UDF execution took too long
+     * @throws java.lang.RuntimeException            if an unexpected exception occured
+     * @see #getTimeout()
+     * @see #getTimeoutUnit()
+     */
+    public UDFResult executeConcurrentTimed(int concurrency, TimeUnit endAfterUnit, long endAfter, Object... arguments) throws InvalidRequestException, TimeoutException
+    {
+        if (endAfter < 1)
+            throw new IllegalArgumentException("endAfter must be 1 or higher");
+        if (endAfterUnit == null)
+            throw new NullPointerException("endAfterUnit is null");
+
+        return executeConcurrentInt(concurrency, 0, endAfterUnit, endAfter, arguments);
+    }
+
+    private UDFResult executeConcurrentInt(int concurrency, final int loops, final TimeUnit endAfterUnit, final long endAfter, final Object... arguments) throws InvalidRequestException, TimeoutException
+    {
+        if (concurrency < 1)
+            throw new IllegalArgumentException("Concurrency must be 1 or higher");
+
+        checkArguments(arguments);
+
+        final Timer timer = new Timer();
+
+        ExecutorService executorService = Executors.newFixedThreadPool(concurrency);
+        try
+        {
+            List<Future<ByteBuffer>> futures = new ArrayList<>(concurrency);
+            final CountDownLatch latch = new CountDownLatch(concurrency);
+            for (int i = 0; i < concurrency; i++)
+                futures.add(executorService.submit(new Callable<ByteBuffer>()
+                {
+                    private long endAt;
+
+                    public ByteBuffer call() throws Exception
+                    {
+                        // start when all threads are ready to go
+                        latch.countDown();
+
+                        endAt = endAfterUnit != null ? System.currentTimeMillis() + endAfterUnit.toMillis(endAfter) : 0L;
+
+                        List<ByteBuffer> params = buildArguments(arguments);
+
+                        // execute the UDF the first time
+                        long t0 = System.nanoTime();
+                        ByteBuffer ref = udf.execute(params);
+                        timer.update(System.nanoTime() - t0, TimeUnit.NANOSECONDS);
+
+                        for (int i = 1; endReached(i); i++)
+                        {
+                            // reset the input parameters so we can reuse the ByteBuffer instances
+                            for (ByteBuffer param : params)
+                                if (param != null)
+                                    param.rewind();
+
+                            // execute the UDF (again and again
+                            t0 = System.nanoTime();
+                            ByteBuffer cmp = udf.execute(params);
+                            timer.update(System.nanoTime() - t0, TimeUnit.NANOSECONDS);
+
+                            // compare the result, if the UDF is deterministic (pure)
+                            if (udf.isPure() && !bbEqual(ref, cmp))
+                                throw new AssertionError("UDF result is not deterministic");
+                        }
+                        return ref;
+                    }
+
+                    private boolean endReached(int i)
+                    {
+                        return loops > 0
+                               ? i < loops
+                               : System.currentTimeMillis() < endAt;
+                    }
+                }));
+
+            // collect UDF return values by querying the futures
+            List<ByteBuffer> results = new ArrayList<>(concurrency);
+            long timeoutAtNanos = System.nanoTime() + (loops >= 1
+                                                       ? timeoutUnit.toNanos(timeout) * loops
+                                                       : (endAfterUnit.toNanos(endAfter) + 250L * 1000L * 1000L));
+            for (Future<ByteBuffer> future : futures)
+                try
+                {
+                    results.add(future.get(timeoutAtNanos - System.nanoTime(), TimeUnit.NANOSECONDS));
+                }
+                catch (InterruptedException | ExecutionException e)
+                {
+                    if (e.getCause() instanceof InvalidRequestException)
+                        throw (InvalidRequestException) e.getCause();
+                    throw new RuntimeException(e);
+                }
+
+            // use the first result as the return value
+            ByteBuffer ref = results.get(0);
+
+            // compare the result, if the UDF is deterministic (pure)
+            if (udf.isPure())
+                for (int i = 1; i < concurrency; i++)
+                    if (!bbEqual(ref, results.get(i)))
+                        throw new AssertionError("UDF result is not deterministic");
+
+            return new UDFResult(ref != null ? udf.returnType().compose(ref) : null,
+                                 timer);
+        }
+        finally
+        {
+            executorService.shutdown();
+        }
+    }
+
+    private boolean bbEqual(ByteBuffer ref, ByteBuffer cmp)
+    {
+        return ref == null && cmp == null || !(ref == null || cmp == null) && ref.equals(cmp);
+    }
+
+    private void checkArguments(Object[] arguments)
+    {
+        if (arguments.length != udf.argTypes().size())
+            throw new IllegalArgumentException("UDF '" + udf + "' expects " + udf.argTypes().size() + " arguments, but " + arguments.length + " given");
+    }
+
+    private List<ByteBuffer> buildArguments(Object[] arguments)
+    {
         List<ByteBuffer> params = new ArrayList<>();
         for (int i = 0; i < arguments.length; i++)
         {
@@ -330,11 +650,9 @@ public final class UDF
                 params.add(null);
                 continue;
             }
-            AbstractType type = argTypes.get(i);
+            AbstractType type = udf.argTypes().get(i);
             params.add(type.decompose(arguments[i]));
         }
-        ByteBuffer result = udf.execute(params);
-
-        return result != null ? udf.returnType().compose(result) : null;
+        return params;
     }
 }
