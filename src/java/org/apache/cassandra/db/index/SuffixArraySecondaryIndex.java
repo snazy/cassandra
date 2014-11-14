@@ -3,7 +3,6 @@ package org.apache.cassandra.db.index;
 import java.io.File;
 import java.io.IOError;
 import java.io.IOException;
-import java.io.RandomAccessFile;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -55,9 +54,9 @@ import org.apache.cassandra.utils.ByteBufferUtil;
 import org.apache.cassandra.utils.Pair;
 import org.roaringbitmap.RoaringBitmap;
 
-public class PositionedPerRowSecondaryIndex extends PerRowSecondaryIndex implements SSTableWriterListenable
+public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements SSTableWriterListenable
 {
-    protected static final Logger logger = LoggerFactory.getLogger(PositionedPerRowSecondaryIndex.class);
+    protected static final Logger logger = LoggerFactory.getLogger(SuffixArraySecondaryIndex.class);
 
     //not sure i really need this, tbh
     private final Map<Integer, SSTableWriterListener> openListeners;
@@ -67,7 +66,7 @@ public class PositionedPerRowSecondaryIndex extends PerRowSecondaryIndex impleme
 
     private final Set<ByteBuffer> columnDefNames;
 
-    public PositionedPerRowSecondaryIndex()
+    public SuffixArraySecondaryIndex()
     {
         openListeners = new ConcurrentHashMap<>();
         components = new ArrayList<>();
