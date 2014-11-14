@@ -185,9 +185,6 @@ public class SSTableWriter extends SSTable
         RowIndexEntry entry;
         try
         {
-            for (SSTableWriterListener listener : listeners)
-                listener.startRow(row.key, currentPosition);
-
             entry = row.write(currentPosition, dataFile.stream, listeners);
             if (entry == null)
                 return null;

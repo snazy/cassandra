@@ -54,6 +54,9 @@ import org.apache.cassandra.utils.ByteBufferUtil;
 import org.apache.cassandra.utils.Pair;
 import org.roaringbitmap.RoaringBitmap;
 
+/**
+ * Note: currently does not work with cql3 tables (unless 'WITH COMPACT STORAGE' is declared when creating the table).
+ */
 public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements SSTableWriterListenable
 {
     protected static final Logger logger = LoggerFactory.getLogger(SuffixArraySecondaryIndex.class);
@@ -61,42 +64,43 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
     //not sure i really need this, tbh
     private final Map<Integer, SSTableWriterListener> openListeners;
 
-    private String indexName;
-    private final List<Component> components;
-
-    private final Set<ByteBuffer> columnDefNames;
+    private final Map<ByteBuffer, Component> columnDefComponents;
 
     public SuffixArraySecondaryIndex()
     {
         openListeners = new ConcurrentHashMap<>();
-        components = new ArrayList<>();
-        columnDefNames = new HashSet<>();
+        columnDefComponents = new ConcurrentHashMap<>();
     }
 
     public void init()
     {
-        logger.info("init'ing a PositionedPerRowSecondaryIndex");
-        indexName = "RowLevel_idx.db";
-        components.add(new Component(Component.Type.SECONDARY_INDEX, indexName));
+        logger.info("init'ing a SuffixArraySecondaryIndex");
 
         // while init() is called form SIM when the class is first created, and only one columnDef has been set,
         //  we'll loop here just for sanity sake ...
         for (ColumnDefinition col : columnDefs)
-            columnDefNames.add(col.name);
+            addComponent(col);
     }
 
-    private AbstractType<?> getComparator()
+    private void addComponent(ColumnDefinition def)
     {
-        return baseCfs != null ? baseCfs.getComparator() : null;
+        if (getComparator() == null)
+            return;
+
+        String indexName = String.format("SecondaryIndex_%s.db", def.getIndexName());
+        logger.info("adding a columnDef: {}, baseCfs = {}, component index name = {}", def, baseCfs, indexName);
+        columnDefComponents.put(def.name, new Component(Component.Type.SECONDARY_INDEX, indexName));
     }
 
     void addColumnDef(ColumnDefinition columnDef)
     {
         super.addColumnDef(columnDef);
-        AbstractType<?> type = getComparator();
-        logger.info("adding a columnDef: {}, baseCfs = {}", columnDef, baseCfs);
-        if (type != null)
-            columnDefNames.add(columnDef.name);
+        addComponent(columnDef);
+    }
+
+    private AbstractType<?> getComparator()
+    {
+        return baseCfs != null ? baseCfs.getComparator() : null;
     }
 
     public void validateOptions() throws ConfigurationException
@@ -106,7 +110,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
 
     public String getIndexName()
     {
-        return indexName;
+        return "RowLevel_SuffixArrayIndex_" + baseCfs.getColumnFamilyName();
     }
 
     public ColumnFamilyStore getIndexCfs()
@@ -135,7 +139,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
         // better yet, the index rebuild path can be bypassed by overriding buildIndexAsync(), and just return
         // some empty Future - all current callers of buildIndexAsync() ignore the returned Future.
         // seems a little dangerous (not future proof) but good enough for a v1
-        logger.info("received an index() call");
+        logger.debug("received an index() call");
     }
 
     /**
@@ -182,7 +186,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
 
     public Collection<Component> getIndexComponents()
     {
-        return ImmutableList.<Component>builder().addAll(components).build();
+        return ImmutableList.<Component>builder().addAll(columnDefComponents.values()).build();
     }
 
     public SSTableWriterListener getListener(Descriptor descriptor)
@@ -210,9 +214,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
 
         public void begin()
         {
-            logger.info("received listener.begin() call");
-            for (ByteBuffer name : columnDefNames)
-                builders.put(name, null);
+            //nop
         }
 
         public void startRow(DecoratedKey key, long curPosition)
@@ -223,21 +225,20 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
 
         public void nextColumn(Column column)
         {
-            if (!builders.containsKey(column.name()))
+            if (!columnDefComponents.keySet().contains(column.name()))
                 return;
 
             Pair<OnDiskSABuilder, RoaringBitmap> pair = builders.get(column.name());
             if (pair == null)
             {
-                pair = Pair.create(new OnDiskSABuilder(getComparator(), OnDiskSABuilder.Mode.SUFFIX),
-                                   new RoaringBitmap());
+                pair = Pair.create(new OnDiskSABuilder(getComparator(), OnDiskSABuilder.Mode.SUFFIX), new RoaringBitmap());
                 builders.put(column.name(), pair);
             }
 
             try
             {
+                pair.left.add(column.value().slice(), pair.right);
                 pair.right.add((int)curFilePosition);
-                pair.left.add(column.value(), pair.right);
             }
             catch (IOException e)
             {
@@ -247,16 +248,16 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
 
         public void complete()
         {
-            logger.info("received listener.complete() call");
             try
             {
                 for (Map.Entry<ByteBuffer, Pair<OnDiskSABuilder, RoaringBitmap>> entry : builders.entrySet())
                 {
+                    assert columnDefComponents.containsKey(entry.getKey()) : "indexed columns do not contain " + getComparator().getString(entry.getKey());
                     String fileName = null;
 
                     try
                     {
-                        fileName = descriptor.filenameFor(ByteBufferUtil.string(entry.getKey()));
+                        fileName = descriptor.filenameFor(columnDefComponents.get(entry.getKey()));
                         entry.getValue().left.finish(new File(fileName));
                     }
                     catch (Exception e)
@@ -269,6 +270,8 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
             finally
             {
                 openListeners.remove(descriptor.generation);
+                // drop this data asap
+                builders.clear();
             }
         }
 
@@ -435,7 +438,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
         {
             for (IndexExpression expression : clause)
             {
-                if (columnDefNames.contains(expression.column_name))
+                if (columnDefComponents.keySet().contains(expression.column_name))
                     return true;
             }
             return false;
