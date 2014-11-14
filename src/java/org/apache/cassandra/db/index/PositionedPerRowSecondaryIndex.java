@@ -258,8 +258,7 @@ public class PositionedPerRowSecondaryIndex extends PerRowSecondaryIndex impleme
                     try
                     {
                         fileName = descriptor.filenameFor(ByteBufferUtil.string(entry.getKey()));
-                        RandomAccessFile raf = new RandomAccessFile(new File(fileName), "rw");
-                        entry.getValue().left.finish(raf);
+                        entry.getValue().left.finish(new File(fileName));
                     }
                     catch (Exception e)
                     {
