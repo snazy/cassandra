@@ -13,8 +13,15 @@ public interface SSTableWriterListener extends Comparable<String> //?????? with 
      */
     void begin();
 
+    /**
+     * called when a new row in being written to the sstable, but before any columns are processed (see {@code nextColumn(Column)}).
+     */
     void startRow(DecoratedKey key, long curPosition);
 
+    /**
+     * called after the column is written to the sstable. will be preceded by a call to {@code startRow(DecoratedKey, long)}, and the column should be assumed
+     * to belong to that row.w
+     */
     void nextColumn(Column column);
 
     /**

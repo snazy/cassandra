@@ -186,6 +186,100 @@ public class PositionedPerRowSecondaryIndex extends PerRowSecondaryIndex impleme
         return ImmutableList.<Component>builder().addAll(components).build();
     }
 
+    public SSTableWriterListener getListener(Descriptor descriptor)
+    {
+        LocalSSTableWriterListener listener = new LocalSSTableWriterListener(descriptor);
+        openListeners.put(descriptor.generation, listener);
+        return listener;
+    }
+
+    protected class LocalSSTableWriterListener implements SSTableWriterListener
+    {
+        private final Descriptor descriptor;
+
+        // need one builders for each column (that is, column name) we index
+        private final Map<ByteBuffer, Pair<OnDiskSABuilder, RoaringBitmap>> builders;
+
+        private DecoratedKey curKey;
+        private long curFilePosition;
+
+        public LocalSSTableWriterListener(Descriptor descriptor)
+        {
+            this.descriptor = descriptor;
+            builders = new ConcurrentHashMap<>();
+        }
+
+        public void begin()
+        {
+            logger.info("received listener.begin() call");
+            for (ByteBuffer name : columnDefNames)
+                builders.put(name, null);
+        }
+
+        public void startRow(DecoratedKey key, long curPosition)
+        {
+            this.curKey = key;
+            this.curFilePosition = curPosition;
+        }
+
+        public void nextColumn(Column column)
+        {
+            if (!builders.containsKey(column.name()))
+                return;
+
+            Pair<OnDiskSABuilder, RoaringBitmap> pair = builders.get(column.name());
+            if (pair == null)
+            {
+                pair = Pair.create(new OnDiskSABuilder(getComparator(), OnDiskSABuilder.Mode.SUFFIX),
+                                   new RoaringBitmap());
+                builders.put(column.name(), pair);
+            }
+
+            try
+            {
+                pair.right.add((int)curFilePosition);
+                pair.left.add(column.value(), pair.right);
+            }
+            catch (IOException e)
+            {
+                logger.error("failed to add add column to secondary index: {}", column, e);
+            }
+        }
+
+        public void complete()
+        {
+            logger.info("received listener.complete() call");
+            try
+            {
+                for (Map.Entry<ByteBuffer, Pair<OnDiskSABuilder, RoaringBitmap>> entry : builders.entrySet())
+                {
+                    String fileName = null;
+
+                    try
+                    {
+                        fileName = descriptor.filenameFor(ByteBufferUtil.string(entry.getKey()));
+                        RandomAccessFile raf = new RandomAccessFile(new File(fileName), "rw");
+                        entry.getValue().left.finish(raf);
+                    }
+                    catch (Exception e)
+                    {
+                        logger.error("failed to write output file {}", fileName);
+                        throw new IOError(e);
+                    }
+                }
+            }
+            finally
+            {
+                openListeners.remove(descriptor.generation);
+            }
+        }
+
+        public int compareTo(String o)
+        {
+            return descriptor.generation;
+        }
+    }
+
     protected SecondaryIndexSearcher createSecondaryIndexSearcher(Set<ByteBuffer> columns)
     {
         return new LocalSecondaryIndexSearcher(baseCfs.indexManager, columns);
@@ -349,99 +443,5 @@ public class PositionedPerRowSecondaryIndex extends PerRowSecondaryIndex impleme
             return false;
         }
 
-    }
-
-    public SSTableWriterListener getListener(Descriptor descriptor)
-    {
-        LocalSSTableWriterListener listener = new LocalSSTableWriterListener(descriptor);
-        openListeners.put(descriptor.generation, listener);
-        return listener;
-    }
-
-    protected class LocalSSTableWriterListener implements SSTableWriterListener
-    {
-        private final Descriptor descriptor;
-
-        // need one builders for each column (that is, column name) we index
-        private final Map<ByteBuffer, Pair<OnDiskSABuilder, RoaringBitmap>> builders;
-
-        private DecoratedKey curKey;
-        private long curFilePosition;
-
-        public LocalSSTableWriterListener(Descriptor descriptor)
-        {
-            this.descriptor = descriptor;
-            builders = new ConcurrentHashMap<>();
-        }
-
-        public void begin()
-        {
-            logger.info("received listener.begin() call");
-            for (ByteBuffer name : columnDefNames)
-                builders.put(name, null);
-        }
-
-        public void startRow(DecoratedKey key, long curPosition)
-        {
-            this.curKey = key;
-            this.curFilePosition = curPosition;
-        }
-
-        public void nextColumn(Column column)
-        {
-            if (!builders.containsKey(column.name()))
-                return;
-
-            Pair<OnDiskSABuilder, RoaringBitmap> pair = builders.get(column.name());
-            if (pair == null)
-            {
-                pair = Pair.create(new OnDiskSABuilder(getComparator(), OnDiskSABuilder.Mode.SUFFIX),
-                                   new RoaringBitmap());
-                builders.put(column.name(), pair);
-            }
-
-            try
-            {
-                pair.right.add((int)curFilePosition);
-                pair.left.add(column.value(), pair.right);
-            }
-            catch (IOException e)
-            {
-                logger.error("failed to add add column to secondary index: {}", column, e);
-            }
-        }
-
-        public void complete()
-        {
-            logger.info("received listener.complete() call");
-            try
-            {
-                for (Map.Entry<ByteBuffer, Pair<OnDiskSABuilder, RoaringBitmap>> entry : builders.entrySet())
-                {
-                    String fileName = null;
-
-                    try
-                    {
-                        fileName = descriptor.filenameFor(ByteBufferUtil.string(entry.getKey()));
-                        RandomAccessFile raf = new RandomAccessFile(new File(fileName), "rw");
-                        entry.getValue().left.finish(raf);
-                    }
-                    catch (Exception e)
-                    {
-                        logger.error("failed to write output file {}", fileName);
-                        throw new IOError(e);
-                    }
-                }
-            }
-            finally
-            {
-                openListeners.remove(descriptor.generation);
-            }
-        }
-
-        public int compareTo(String o)
-        {
-            return descriptor.generation;
-        }
     }
 }
