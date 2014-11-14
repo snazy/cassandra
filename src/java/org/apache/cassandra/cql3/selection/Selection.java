@@ -82,6 +82,11 @@ public abstract class Selection
         return columns.size() - 1;
     }
 
+    public boolean usesFunction(String ksName, String functionName)
+    {
+        return false;
+    }
+
     private static boolean isUsingFunction(List<RawSelector> rawSelectors)
     {
         for (RawSelector rawSelector : rawSelectors)
@@ -237,6 +242,11 @@ public abstract class Selection
                 selectors.reset();
                 current = null;
             }
+
+            if (resultSet.isEmpty() && selectors.isAggregate())
+            {
+                resultSet.addRow(selectors.getOutputRow());
+            }
             return resultSet;
         }
 
@@ -339,6 +349,11 @@ public abstract class Selection
 
             if (factories.doesAggregation() && !factories.containsOnlyAggregateFunctions())
                 throw new InvalidRequestException("the select clause must either contains only aggregates or none");
+        }
+
+        public boolean usesFunction(String ksName, String functionName)
+        {
+            return factories.usesFunction(ksName, functionName);
         }
 
         public boolean isAggregate()

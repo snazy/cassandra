@@ -24,6 +24,7 @@ import java.lang.management.MemoryPoolMXBean;
 import java.net.InetAddress;
 import java.net.UnknownHostException;
 import java.util.Arrays;
+import java.util.Date;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
@@ -74,6 +75,13 @@ public class CassandraDaemon
 
     private static final CassandraDaemon instance = new CassandraDaemon();
 
+    /**
+     * The earliest legit timestamp a casandra instance could have ever launched.
+     * Date roughly taken from http://perspectives.mvdirona.com/2008/07/12/FacebookReleasesCassandraAsOpenSource.aspx
+     * We use this to ensure the system clock is at least somewhat correct at startup.
+     */
+    private static final long EARLIEST_LAUNCH_DATE = 1215820800000L;
+
     public Server thriftServer;
     public Server nativeServer;
 
@@ -102,6 +110,15 @@ public class CassandraDaemon
         {
             logger.info("Could not resolve local host");
         }
+
+        long now = System.currentTimeMillis();
+        if (now < EARLIEST_LAUNCH_DATE)
+        {
+            String msg = String.format("current machine time is %s, but that is seemingly incorrect. exiting now.", new Date(now).toString());
+            logger.error(msg);
+            throw new IllegalStateException(msg);
+        }
+
         // log warnings for different kinds of sub-optimal JVMs.  tldr use 64-bit Oracle >= 1.6u32
         if (!DatabaseDescriptor.hasLargeAddressSpace())
             logger.info("32bit JVM detected.  It is recommended to run Cassandra on a 64bit JVM for better performance.");
@@ -224,7 +241,7 @@ public class CassandraDaemon
         // check the system keyspace to keep user from shooting self in foot by changing partitioner, cluster name, etc.
         // we do a one-off scrub of the system keyspace first; we can't load the list of the rest of the keyspaces,
         // until system keyspace is opened.
-        for (CFMetaData cfm : Schema.instance.getKeyspaceMetaData(Keyspace.SYSTEM_KS).values())
+        for (CFMetaData cfm : Schema.instance.getKeyspaceMetaData(SystemKeyspace.NAME).values())
             ColumnFamilyStore.scrubDataDirectories(cfm);
         try
         {
@@ -255,7 +272,7 @@ public class CassandraDaemon
         for (String keyspaceName : Schema.instance.getKeyspaces())
         {
             // Skip system as we've already cleaned it
-            if (keyspaceName.equals(Keyspace.SYSTEM_KS))
+            if (keyspaceName.equals(SystemKeyspace.NAME))
                 continue;
 
             for (CFMetaData cfm : Schema.instance.getKeyspaceMetaData(keyspaceName).values())

@@ -56,8 +56,6 @@ import org.apache.cassandra.thrift.ThriftValidation;
 import org.apache.cassandra.serializers.MarshalException;
 import org.apache.cassandra.utils.ByteBufferUtil;
 import org.apache.cassandra.utils.FBUtilities;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * Encapsulates a completely parsed SELECT query, including the target
@@ -66,8 +64,6 @@ import org.slf4j.LoggerFactory;
  */
 public class SelectStatement implements CQLStatement, MeasurableForPreparedCache
 {
-    private static final Logger logger = LoggerFactory.getLogger(SelectStatement.class);
-
     private static final int DEFAULT_COUNT_PAGE_SIZE = 10000;
 
     private final int boundTerms;
@@ -123,6 +119,24 @@ public class SelectStatement implements CQLStatement, MeasurableForPreparedCache
 
         // Now gather a few info on whether we should bother with static columns or not for this statement
         initStaticColumnsInfo();
+    }
+
+    public boolean usesFunction(String ksName, String functionName)
+    {
+        if (selection.usesFunction(ksName, functionName))
+            return true;
+        if (limit != null && limit.usesFunction(ksName, functionName))
+            return true;
+        for (Restriction restriction : metadataRestrictions.values())
+            if (restriction != null && restriction.usesFunction(ksName, functionName))
+                return true;
+        for (Restriction restriction : keyRestrictions)
+            if (restriction != null && restriction.usesFunction(ksName, functionName))
+                return true;
+        for (Restriction restriction : columnRestrictions)
+            if (restriction != null && restriction.usesFunction(ksName, functionName))
+                return true;
+        return false;
     }
 
     private void initStaticColumnsInfo()
@@ -700,25 +714,40 @@ public class SelectStatement implements CQLStatement, MeasurableForPreparedCache
 
         CompositesBuilder builder = new CompositesBuilder(cfm.comparator.prefixBuilder(), cfm.comparator);
         Iterator<ColumnDefinition> idIter = cfm.clusteringColumns().iterator();
-        for (Restriction r : columnRestrictions)
+        for (int i = 0; i < columnRestrictions.length; i++)
         {
+            Restriction r = columnRestrictions[i];
             ColumnDefinition def = idIter.next();
             assert r != null && !r.isSlice();
 
-            List<ByteBuffer> values = r.values(options);
+            if (r.isEQ() || !r.isMultiColumn())
+            {
+                List<ByteBuffer> values = r.values(options);
+                if (values.isEmpty())
+                    return null;
+                builder.addEachElementToAll(values);
+            }
+            else
+            {
+                // we have a multi-column IN restriction
+                List<List<ByteBuffer>> splitValues = ((MultiColumnRestriction.IN) r).splitValues(options);
+                if (splitValues.isEmpty())
+                    return null;
 
-            if (values.isEmpty())
-                return null;
+                builder.addAllElementsToAll(splitValues);
 
-            builder.addEachElementToAll(values);
+                // increment i to skip the remainder of the multicolumn restriction
+                i += splitValues.get(0).size() - 1;
+            }
+
             if (builder.containsNull())
                 throw new InvalidRequestException(String.format("Invalid null value for clustering key part %s",
-                                                                def.name));
+                        def.name));
         }
-        SortedSet<CellName> columns = new TreeSet<CellName>(cfm.comparator);
+
+        SortedSet<CellName> columns = new TreeSet<>(cfm.comparator);
         for (Composite composite : builder.build())
             columns.addAll(addSelectedColumns(composite));
-
         return columns;
     }
 
@@ -760,6 +789,7 @@ public class SelectStatement implements CQLStatement, MeasurableForPreparedCache
         }
     }
 
+    /** Returns true if a non-frozen collection is selected, false otherwise. */
     private boolean selectACollection()
     {
         if (!cfm.comparator.hasCollections())
@@ -767,7 +797,7 @@ public class SelectStatement implements CQLStatement, MeasurableForPreparedCache
 
         for (ColumnDefinition def : selection.getColumns())
         {
-            if (def.type instanceof CollectionType)
+            if (def.type.isCollection() && def.type.isMultiCell())
                 return true;
         }
 
@@ -813,7 +843,7 @@ public class SelectStatement implements CQLStatement, MeasurableForPreparedCache
             // But if the actual comparator itself is reversed, we must inversed the bounds too.
             Bound b = isReversed == isReversedType(def) ? bound : Bound.reverse(bound);
             Restriction r = restrictions[def.position()];
-            if (isNullRestriction(r, b))
+            if (isNullRestriction(r, b) || !r.canEvaluateWithSlices())
             {
                 // There wasn't any non EQ relation on that key, we select all records having the preceding component as prefix.
                 // For composites, if there was preceding component and we're computing the end, we must change the last component
@@ -1051,7 +1081,7 @@ public class SelectStatement implements CQLStatement, MeasurableForPreparedCache
                 expressions.add(new IndexExpression(def.name.bytes, Operator.EQ, value));
             }
         }
-        
+
         if (usesSecondaryIndexing)
         {
             ColumnFamilyStore cfs = Keyspace.open(keyspace()).getColumnFamilyStore(columnFamily());
@@ -1221,13 +1251,13 @@ public class SelectStatement implements CQLStatement, MeasurableForPreparedCache
             return;
         }
 
-        if (def.type.isCollection())
+        if (def.type.isMultiCell())
         {
-            List<Cell> collection = row.getCollection(def.name);
-            ByteBuffer value = collection == null
+            List<Cell> cells = row.getMultiCellColumn(def.name);
+            ByteBuffer buffer = cells == null
                              ? null
-                             : ((CollectionType)def.type).serializeForNativeProtocol(collection, options.getProtocolVersion());
-            result.add(value);
+                             : ((CollectionType)def.type).serializeForNativeProtocol(cells, options.getProtocolVersion());
+            result.add(buffer);
             return;
         }
 
@@ -1429,16 +1459,26 @@ public class SelectStatement implements CQLStatement, MeasurableForPreparedCache
                 stmt.usesSecondaryIndexing = true;
 
             if (!stmt.usesSecondaryIndexing)
-                stmt.restrictedColumns.removeAll(cfm.clusteringColumns());
+            {
+                for (ColumnDefinition def : cfm.clusteringColumns())
+                {
+                    // Remove clustering column restrictions that can be handled by slices; the remainder will be
+                    // handled by filters (which may require a secondary index).
+                    Restriction restriction = stmt.columnRestrictions[def.position()];
+                    if (restriction != null)
+                    {
+                        if (restriction.canEvaluateWithSlices())
+                            stmt.restrictedColumns.remove(def);
+                        else
+                            stmt.usesSecondaryIndexing = true;
+                    }
+                }
+            }
 
             // Even if usesSecondaryIndexing is false at this point, we'll still have to use one if
-            // there is restrictions not covered by the PK.
+            // there are restrictions not covered by the PK.
             if (!stmt.metadataRestrictions.isEmpty())
-            {
-                if (!hasQueriableIndex)
-                    throw new InvalidRequestException("No indexed columns present in by-columns clause with Equal operator");
                 stmt.usesSecondaryIndexing = true;
-            }
 
             if (stmt.usesSecondaryIndexing)
                 validateSecondaryIndexSelections(stmt);
@@ -1469,6 +1509,7 @@ public class SelectStatement implements CQLStatement, MeasurableForPreparedCache
             SecondaryIndex index = indexManager.getIndexForColumn(def.name.bytes);
             if (index != null && index.supportsOperator(relation.operator()))
                 return new boolean[]{true, def.kind == ColumnDefinition.Kind.CLUSTERING_COLUMN};
+
             return new boolean[]{false, false};
         }
 
@@ -1495,7 +1536,7 @@ public class SelectStatement implements CQLStatement, MeasurableForPreparedCache
         private void updateRestrictionsForRelation(SelectStatement stmt, List<ColumnDefinition> defs, MultiColumnRelation relation, VariableSpecifications boundNames) throws InvalidRequestException
         {
             List<ColumnDefinition> restrictedColumns = new ArrayList<>();
-            Set<ColumnDefinition> seen = new HashSet<>();
+            Set<ColumnDefinition> seen = new HashSet<>(defs.size());
 
             int previousPosition = -1;
             for (ColumnDefinition def : defs)
@@ -1651,8 +1692,8 @@ public class SelectStatement implements CQLStatement, MeasurableForPreparedCache
                                                    StorageService.getPartitioner().getTokenValidator());
             }
 
-            // We don't support relations against entire collections, like "numbers = {1, 2, 3}"
-            if (receiver.type.isCollection() && !(newRel.operator().equals(Operator.CONTAINS_KEY) || newRel.operator() == Operator.CONTAINS))
+            // We don't support relations against entire collections (unless they're frozen), like "numbers = {1, 2, 3}"
+            if (receiver.type.isCollection() && receiver.type.isMultiCell() && !(newRel.operator() == Operator.CONTAINS_KEY || newRel.operator() == Operator.CONTAINS))
             {
                 throw new InvalidRequestException(String.format("Collection column '%s' (%s) cannot be restricted by a '%s' relation",
                                                                 def.name, receiver.type.asCQL3Type(), newRel.operator()));
@@ -1719,7 +1760,7 @@ public class SelectStatement implements CQLStatement, MeasurableForPreparedCache
                     break;
                 case CONTAINS_KEY:
                     if (!(receiver.type instanceof MapType))
-                        throw new InvalidRequestException(String.format("Cannot use CONTAINS_KEY on non-map column %s", def.name));
+                        throw new InvalidRequestException(String.format("Cannot use CONTAINS KEY on non-map column %s", def.name));
                     // Fallthrough on purpose
                 case CONTAINS:
                 {
@@ -1730,6 +1771,7 @@ public class SelectStatement implements CQLStatement, MeasurableForPreparedCache
                         existingRestriction = new SingleColumnRestriction.Contains();
                     else if (!existingRestriction.isContains())
                         throw new InvalidRequestException(String.format("Collection column %s can only be restricted by CONTAINS or CONTAINS KEY", def.name));
+
                     boolean isKey = newRel.operator() == Operator.CONTAINS_KEY;
                     receiver = makeCollectionReceiver(receiver, isKey);
                     Term t = newRel.getValue().prepare(keyspace(), receiver);
@@ -1894,6 +1936,12 @@ public class SelectStatement implements CQLStatement, MeasurableForPreparedCache
                     if (stmt.selectACollection())
                         throw new InvalidRequestException(String.format("Cannot restrict column \"%s\" by IN relation as a collection is selected by the query", cdef.name));
                 }
+                /*
+                else if (restriction.isContains() && !hasQueriableIndex)
+                {
+                    throw new InvalidRequestException(String.format("Cannot restrict column \"%s\" by a CONTAINS relation without a secondary index", cdef.name));
+                }
+                */
 
                 previous = cdef;
             }
