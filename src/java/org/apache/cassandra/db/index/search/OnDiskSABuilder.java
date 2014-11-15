@@ -339,7 +339,7 @@ public class OnDiskSABuilder
             int currentIndex = 0;
             while (start <= end)
             {
-                int mid = start + (end - start) / 2;
+                int mid = start + ((end - start) >> 1);
                 int stopIndex = values.get(mid).position;
                 if (stopIndex <= idx)
                 {

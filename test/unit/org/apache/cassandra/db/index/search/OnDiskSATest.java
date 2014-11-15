@@ -18,11 +18,6 @@ public class OnDiskSATest
     @Test
     public void testStringSAConstruction() throws Exception
     {
-        /*final RoaringBitmap map = new RoaringBitmap();
-        Random random = new Random();
-        for (int i = 0; i < 1000000; i += 256)
-            map.add(random.nextInt(i + 1));*/
-
         Map<ByteBuffer, RoaringBitmap> data = new HashMap<ByteBuffer, RoaringBitmap>()
         {{
                 put(UTF8Type.instance.decompose("scat"), bitMapOf(1));
@@ -34,7 +29,6 @@ public class OnDiskSATest
                 put(UTF8Type.instance.decompose("foo"), bitMapOf(7));
                 put(UTF8Type.instance.decompose("bar"), bitMapOf(9, 10));
                 put(UTF8Type.instance.decompose("michael"), bitMapOf(11, 12, 1));
-                //put(UTF8Type.instance.decompose("jason"), map);
         }};
 
         OnDiskSABuilder builder = new OnDiskSABuilder(UTF8Type.instance, OnDiskSABuilder.Mode.SUFFIX);
@@ -70,6 +64,8 @@ public class OnDiskSATest
         Assert.assertEquals(RoaringBitmap.bitmapOf(7), onDisk.search(UTF8Type.instance.fromString("oo")));
         Assert.assertEquals(RoaringBitmap.bitmapOf(7), onDisk.search(UTF8Type.instance.fromString("o")));
         Assert.assertEquals(RoaringBitmap.bitmapOf(1, 2, 3, 4), onDisk.search(UTF8Type.instance.fromString("t")));
+
+        Assert.assertEquals(null, onDisk.search(UTF8Type.instance.decompose("hello")));
 
         onDisk.close();
     }
@@ -129,9 +125,9 @@ public class OnDiskSATest
             Assert.assertEquals(data.get(number), suffix.getKeys());
         }
 
-        // test partial iteration
+        // test partial iteration (descending)
         idx = 3; // start from the 3rd element
-        Iterator<OnDiskSA.DataSuffix> partialIter = onDisk.iteratorAt(sortedNumbers.get(idx));
+        Iterator<OnDiskSA.DataSuffix> partialIter = onDisk.iteratorAt(sortedNumbers.get(idx), OnDiskSA.IteratorOrder.DESC);
         while (partialIter.hasNext())
         {
             OnDiskSA.DataSuffix suffix = partialIter.next();
@@ -141,8 +137,68 @@ public class OnDiskSATest
             Assert.assertEquals(data.get(number), suffix.getKeys());
         }
 
+
+        // test partial iteration (ascending)
+        idx = 6; // start from the 6rd element
+        partialIter = onDisk.iteratorAt(sortedNumbers.get(idx), OnDiskSA.IteratorOrder.ASC);
+        while (partialIter.hasNext())
+        {
+            OnDiskSA.DataSuffix suffix = partialIter.next();
+            ByteBuffer number = sortedNumbers.get(idx--);
+
+            Assert.assertEquals(number, suffix.getSuffix());
+            Assert.assertEquals(data.get(number), suffix.getKeys());
+        }
+
         onDisk.close();
     }
+
+    /*
+    @Test
+    public void testRandomLookupPerformance() throws Exception
+    {
+        final int NUM_ELEMENTS = 1000000;
+        final Random random = new Random();
+        final long testStartMs = System.currentTimeMillis();
+
+        long start = System.nanoTime();
+        OnDiskSABuilder builder = new OnDiskSABuilder(Int32Type.instance, OnDiskSABuilder.Mode.ORIGINAL);
+        for (int i = 0; i < NUM_ELEMENTS; i++)
+            builder.add(LongType.instance.decompose(testStartMs + i), bitMapOf(i));
+
+        File index = File.createTempFile("on-disk-sa-lookup", "db");
+        index.deleteOnExit();
+
+        System.out.println("building of the SA took: " + (System.nanoTime() - start) + " ns.");
+
+        start = System.nanoTime();
+        builder.finish(index);
+        System.out.println("finish of the SA took: " + (System.nanoTime() - start) + " ns.");
+
+        System.out.println("File size => " + index.length());
+
+        OnDiskSA onDisk = new OnDiskSA(index, Int32Type.instance);
+
+        Histogram h = Metrics.newHistogram(OnDiskSATest.class, "x");
+        for (int i = 0; i < NUM_ELEMENTS; i++)
+        {
+            int idx = random.nextInt(NUM_ELEMENTS);
+            ByteBuffer key = LongType.instance.decompose(testStartMs + idx);
+
+            start = System.nanoTime();
+            RoaringBitmap result = onDisk.search(key.duplicate());
+            h.update(System.nanoTime() - start);
+
+            Assert.assertTrue(result.equals(bitMapOf(idx)));
+        }
+
+        Snapshot s = h.getSnapshot();
+        System.out.printf("performance (random lookup): median: %f, p75: %f, p95: %f, p98: %f, p99: %f, p999: %f %n",
+                s.getMedian(), s.get75thPercentile(), s.get95thPercentile(), s.get98thPercentile(), s.get99thPercentile(), s.get999thPercentile());
+
+        onDisk.close();
+    }
+    */
 
     private static RoaringBitmap bitMapOf(int... values)
     {

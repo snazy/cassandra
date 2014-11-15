@@ -15,19 +15,20 @@ public abstract class OnDiskBlock<T extends Suffix>
         this.blockIndexSize = data.getInt() * 4;
     }
 
-    public IntPair<T> search(AbstractType<?> comparator, ByteBuffer query)
+    public SearchResult<T> search(AbstractType<?> comparator, ByteBuffer query)
     {
-        int start = 0, end = getElementsSize() - 1, middle = 0;
+        int cmp = -1, start = 0, end = getElementsSize() - 1, middle = 0;
 
         T element = null;
         while (start <= end)
         {
-            middle = start + (end - start) / 2;
+            middle = start + ((end - start) >> 1);
             element = getElement(middle);
 
-            int cmp = element.compareTo(comparator, query);
-            if (cmp == 0)
-                return new IntPair<>(middle, element);
+            cmp = element.compareTo(comparator, query);
+            if (cmp == 0) {
+                return new SearchResult<>(element, cmp, middle);
+            }
 
             if (cmp < 0)
                 start = middle + 1;
@@ -35,7 +36,7 @@ public abstract class OnDiskBlock<T extends Suffix>
                 end = middle - 1;
         }
 
-        return new IntPair<>(middle, element);
+        return new SearchResult<>(element, cmp, middle);
     }
 
     protected T getElement(int index)
@@ -69,15 +70,16 @@ public abstract class OnDiskBlock<T extends Suffix>
         return data.position() + indexSize + data.getInt(data.position() + idx);
     }
 
-    public static class IntPair<T>
+    public static class SearchResult<T>
     {
-        public final int left;
-        public final T right;
+        public final T result;
+        public final int index, cmp;
 
-        public IntPair(int left, T right)
+        public SearchResult(T result, int cmp, int index)
         {
-            this.left = left;
-            this.right = right;
+            this.result = result;
+            this.index = index;
+            this.cmp = cmp;
         }
     }
 }

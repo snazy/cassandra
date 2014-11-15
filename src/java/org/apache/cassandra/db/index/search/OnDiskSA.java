@@ -14,8 +14,15 @@ import org.apache.cassandra.utils.ByteBufferDataInput;
 import com.google.common.collect.AbstractIterator;
 import org.roaringbitmap.RoaringBitmap;
 
+import static org.apache.cassandra.db.index.search.OnDiskBlock.SearchResult;
+
 public class OnDiskSA implements Iterable<OnDiskSA.DataSuffix>, Closeable
 {
+    public static enum IteratorOrder
+    {
+        DESC, ASC
+    }
+
     protected final AbstractType<?> comparator;
     protected final RandomAccessFile file;
     protected final String indexPath;
@@ -55,26 +62,36 @@ public class OnDiskSA implements Iterable<OnDiskSA.DataSuffix>, Closeable
     public RoaringBitmap search(ByteBuffer query) throws IOException
     {
         if (levels.length == 0) // not enough data to even feel a single block
+        {
             return searchDataBlock(query, 0);
+        }
 
         PointerSuffix ptr = findPointer(query);
         return ptr == null ? null : searchDataBlock(query, getBlockIdx(ptr, query));
     }
 
-    public Iterator<DataSuffix> iteratorAt(ByteBuffer query)
+    public Iterator<DataSuffix> iteratorAt(ByteBuffer query, IteratorOrder order)
     {
-        if (levels.length == 0) // not enough data to even feel a single block
-            return new DataIterator(dataLevel, 0, searchIndex(query, 0));
+        int dataBlockIdx = levels.length == 0 ? 0 : getBlockIdx(findPointer(query), query);
+        SearchResult<DataSuffix> start = searchIndex(query, dataBlockIdx);
 
-        PointerSuffix ptr = findPointer(query);
-        int dataBlockIdx = getBlockIdx(ptr, query);
-        return new DataIterator(dataLevel, dataBlockIdx, searchIndex(query, dataBlockIdx));
+        switch (order)
+        {
+            case DESC:
+                return new DescDataIterator(dataLevel, dataBlockIdx, start.index);
+
+            case ASC:
+                return new AscDataIterator(dataLevel, dataBlockIdx, start.index);
+
+            default:
+                throw new IllegalArgumentException("Unknown order: " + order);
+        }
     }
 
     @Override
     public Iterator<DataSuffix> iterator()
     {
-        return new DataIterator(dataLevel);
+        return new DescDataIterator(dataLevel, 0, 0);
     }
 
     @Override
@@ -97,13 +114,17 @@ public class OnDiskSA implements Iterable<OnDiskSA.DataSuffix>, Closeable
 
     private RoaringBitmap searchDataBlock(ByteBuffer query, int blockIdx) throws IOException
     {
-        OnDiskBlock.IntPair<DataSuffix> suffix = dataLevel.getBlock(blockIdx).search(comparator, query);
-        return suffix == null || suffix.right == null ? null : suffix.right.getKeys();
+        SearchResult<DataSuffix> suffix = dataLevel.getBlock(blockIdx).search(comparator, query);
+        if (suffix == null || suffix.result == null)
+            return null;
+
+        int cmp = suffix.result.compareTo(comparator, query, false);
+        return cmp != 0 ? null : suffix.result.getKeys();
     }
 
-    private int searchIndex(ByteBuffer query, int blockIdx)
+    private SearchResult<DataSuffix> searchIndex(ByteBuffer query, int blockIdx)
     {
-        return dataLevel.getBlock(blockIdx).search(comparator, query).left;
+        return dataLevel.getBlock(blockIdx).search(comparator, query);
     }
 
     private int getBlockIdx(PointerSuffix ptr, ByteBuffer query)
@@ -127,7 +148,7 @@ public class OnDiskSA implements Iterable<OnDiskSA.DataSuffix>, Closeable
 
         public PointerSuffix getPointer(PointerSuffix parent, ByteBuffer query)
         {
-            return getBlock(getBlockIdx(parent, query)).search(comparator, query).right;
+            return getBlock(getBlockIdx(parent, query)).search(comparator, query).result;
         }
 
         @Override
@@ -257,23 +278,71 @@ public class OnDiskSA implements Iterable<OnDiskSA.DataSuffix>, Closeable
         }
     }
 
-    private static class DataIterator extends AbstractIterator<DataSuffix>
+    private static class DescDataIterator extends DataIterator
     {
-        private final DataLevel level;
-        private DataBlock current;
-        private int block = 0, index = 0;
-
-        protected DataIterator(DataLevel level)
+        protected DescDataIterator(DataLevel level, int block, int index)
         {
-            this(level, 0, 0);
+            super(level, block, index);
         }
+
+        @Override
+        protected int nextBlock()
+        {
+            return block++;
+        }
+
+        @Override
+        protected int nextIndex()
+        {
+            return index++;
+        }
+
+        @Override
+        protected int startIndex()
+        {
+            return 0;
+        }
+    }
+
+    private static class AscDataIterator extends DataIterator
+    {
+        protected AscDataIterator(DataLevel level, int block, int index)
+        {
+            super(level, block, index);
+        }
+
+        @Override
+        protected int nextBlock()
+        {
+            return block--;
+        }
+
+        @Override
+        protected int nextIndex()
+        {
+            return index--;
+        }
+
+        @Override
+        protected int startIndex()
+        {
+            return current.getElementsSize() - 1;
+        }
+    }
+
+    private abstract static class DataIterator extends AbstractIterator<DataSuffix>
+    {
+        protected final DataLevel level;
+
+        protected DataBlock current;
+        protected int block = 0, index = 0;
 
         protected DataIterator(DataLevel level, int block, int index)
         {
             this.level = level;
             this.block = block;
             this.index = index;
-            this.current = level.getBlock(this.block++);
+            this.current = level.getBlock(nextBlock());
         }
 
         @Override
@@ -282,18 +351,22 @@ public class OnDiskSA implements Iterable<OnDiskSA.DataSuffix>, Closeable
             if (current == null)
                 return endOfData();
 
-            if (index < current.getElementsSize())
-                return current.getElement(index++);
+            if (index >= 0 && index < current.getElementsSize())
+                return current.getElement(nextIndex());
 
-            if (block < level.blockCount)
+            if (block >= 0 && block < level.blockCount)
             {
-                current = level.getBlock(block++);
-                index = 0;
+                current = level.getBlock(nextBlock());
+                index = startIndex();
                 return computeNext();
             }
 
             current = null;
             return endOfData();
         }
+
+        protected abstract int nextBlock();
+        protected abstract int nextIndex();
+        protected abstract int startIndex();
     }
 }
