@@ -27,9 +27,14 @@ public class Suffix
 
     public int compareTo(AbstractType<?> comparator, ByteBuffer query)
     {
+        return compareTo(comparator, query, true);
+    }
+
+    public int compareTo(AbstractType<?> comparator, ByteBuffer query, boolean checkFully)
+    {
         ByteBuffer dup = content.duplicate();
         int len = dup.getInt();
-        dup.limit(dup.position() + len);
+        dup.limit(dup.position() + (checkFully ? len : Math.min(len, query.remaining())));
         return comparator.compare(dup, query.duplicate());
     }
 }
