@@ -48,7 +48,7 @@ public class OnDiskSABuilder
         this.sa = new SA(comparator, mode);
     }
 
-    public OnDiskSABuilder add(ByteBuffer term, RoaringBitmap keys) throws IOException
+    public OnDiskSABuilder add(ByteBuffer term, RoaringBitmap keys)
     {
         sa.add(term, keys);
         return this;
@@ -238,7 +238,7 @@ public class OnDiskSABuilder
             this.mode = mode;
         }
 
-        public void add(ByteBuffer term, RoaringBitmap keys) throws IOException
+        public void add(ByteBuffer term, RoaringBitmap keys)
         {
             terms.add(new Term(charCount, term, keys));
 

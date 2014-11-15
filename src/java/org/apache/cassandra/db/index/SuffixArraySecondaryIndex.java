@@ -200,8 +200,8 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
     {
         private final Descriptor descriptor;
 
-        // need one builders for each column (that is, column name) we index
-        private final Map<ByteBuffer, Pair<OnDiskSABuilder, RoaringBitmap>> builders;
+        // need one entry for each term we index
+        private final Map<ByteBuffer, Pair<Component, RoaringBitmap>> termBitmaps;
 
         private DecoratedKey curKey;
         private long curFilePosition;
@@ -209,7 +209,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
         public LocalSSTableWriterListener(Descriptor descriptor)
         {
             this.descriptor = descriptor;
-            builders = new ConcurrentHashMap<>();
+            termBitmaps = new ConcurrentHashMap<>();
         }
 
         public void begin()
@@ -225,40 +225,50 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
 
         public void nextColumn(Column column)
         {
-            if (!columnDefComponents.keySet().contains(column.name()))
+            ByteBuffer indexedCol = column.name();
+            if (!columnDefComponents.keySet().contains(indexedCol))
                 return;
 
-            Pair<OnDiskSABuilder, RoaringBitmap> pair = builders.get(column.name());
+            ByteBuffer term = column.value().slice();
+            Pair<Component, RoaringBitmap> pair = termBitmaps.get(term);
             if (pair == null)
             {
-                pair = Pair.create(new OnDiskSABuilder(getComparator(), OnDiskSABuilder.Mode.SUFFIX), new RoaringBitmap());
-                builders.put(column.name(), pair);
+                pair = Pair.create(columnDefComponents.get(indexedCol), new RoaringBitmap());
+                termBitmaps.put(term, pair);
             }
 
-            try
-            {
-                pair.left.add(column.value().slice(), pair.right);
-                pair.right.add((int)curFilePosition);
-            }
-            catch (IOException e)
-            {
-                logger.error("failed to add add column to secondary index: {}", column, e);
-            }
+            pair.right.add((int)curFilePosition);
         }
 
         public void complete()
         {
             try
             {
-                for (Map.Entry<ByteBuffer, Pair<OnDiskSABuilder, RoaringBitmap>> entry : builders.entrySet())
+                // first, build up a listing per-component (per-index)
+                Map<Component, OnDiskSABuilder> componentBuilders = new HashMap<>(columnDefComponents.size());
+                for (Map.Entry<ByteBuffer, Pair<Component, RoaringBitmap>> entry : termBitmaps.entrySet())
                 {
-                    assert columnDefComponents.containsKey(entry.getKey()) : "indexed columns do not contain " + getComparator().getString(entry.getKey());
-                    String fileName = null;
+                    Component component = entry.getValue().left;
+                    assert columnDefComponents.values().contains(component);
 
+                    OnDiskSABuilder builder = componentBuilders.get(component);
+                    if (builder == null)
+                    {
+                        builder = new OnDiskSABuilder(getComparator(), OnDiskSABuilder.Mode.SUFFIX);
+                        componentBuilders.put(component, builder);
+                    }
+
+                    builder.add(entry.getKey(), entry.getValue().right);
+                }
+
+                // now do the writing
+                for (Map.Entry<Component, OnDiskSABuilder> entry : componentBuilders.entrySet())
+                {
+                    String fileName = null;
                     try
                     {
-                        fileName = descriptor.filenameFor(columnDefComponents.get(entry.getKey()));
-                        entry.getValue().left.finish(new File(fileName));
+                        fileName = descriptor.filenameFor(entry.getKey());
+                        entry.getValue().finish(new File(fileName));
                     }
                     catch (Exception e)
                     {
@@ -271,7 +281,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
             {
                 openListeners.remove(descriptor.generation);
                 // drop this data asap
-                builders.clear();
+                termBitmaps.clear();
             }
         }
 
@@ -322,7 +332,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
                 candidates.add(expression);
             }
 
-            //TODO:JEB need better selection process here rather than just the first entry...
+            //TODO:JEB need better selection algo, rather than just taking the first entry...
             return candidates.isEmpty() ? null : candidates.get(0);
         }
 
@@ -443,6 +453,5 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
             }
             return false;
         }
-
     }
 }
