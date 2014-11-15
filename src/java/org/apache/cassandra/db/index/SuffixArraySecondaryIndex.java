@@ -61,6 +61,11 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
 {
     protected static final Logger logger = LoggerFactory.getLogger(SuffixArraySecondaryIndex.class);
 
+    /**
+     * A sanity ceiling on the number of max rows we'll ever return for a query.
+     */
+    private static final int MAX_ROWS = 100000;
+
     //not sure i really need this, tbh
     private final Map<Integer, SSTableWriterListener> openListeners;
 
@@ -307,17 +312,20 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
         {
             logger.info("received a search() call");
             IndexExpression indexExpression = highestSelectivityPredicate(filter.getClause());
+            final int maxRows = (Math.min(filter.maxRows(), MAX_ROWS));
 
             Map<SSTableReader, Set<OnDiskSA>> candidates = secondaryIndexHolder.getIndexes();
             logger.info("found {} candidate sstables with indices", candidates.keySet().size());
-            Map<SSTableReader, Set<RoaringBitmap>> targets = getTargets(candidates, indexExpression.bufferForValue(), filter.maxRows());
+            Map<SSTableReader, Set<RoaringBitmap>> targets = getTargets(candidates, indexExpression.bufferForValue(), maxRows);
             logger.info("found {} target sstables with indices", candidates.keySet().size());
 
-            return loadRows(targets, filter.maxRows());
+            return loadRows(targets, maxRows);
         }
 
         protected IndexExpression highestSelectivityPredicate(List<IndexExpression> clause)
         {
+            //TODO: allow for the inequality operators, but give precedence to equality
+
             List<IndexExpression> candidates = new ArrayList<>(clause.size());
             for (IndexExpression expression : clause)
             {
