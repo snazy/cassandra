@@ -70,7 +70,7 @@ public class OnDiskSA implements Iterable<OnDiskSA.DataSuffix>, Closeable
         return ptr == null ? null : searchDataBlock(query, getBlockIdx(ptr, query));
     }
 
-    public Iterator<DataSuffix> iteratorAt(ByteBuffer query, IteratorOrder order)
+    public Iterator<DataSuffix> iteratorAt(ByteBuffer query, IteratorOrder order, boolean inclusive)
     {
         int dataBlockIdx = levels.length == 0 ? 0 : getBlockIdx(findPointer(query), query);
         SearchResult<DataSuffix> start = searchIndex(query, dataBlockIdx);
@@ -78,10 +78,10 @@ public class OnDiskSA implements Iterable<OnDiskSA.DataSuffix>, Closeable
         switch (order)
         {
             case DESC:
-                return new DescDataIterator(dataLevel, dataBlockIdx, start.index);
+                return new DescDataIterator(dataLevel, dataBlockIdx, inclusive ? start.index : start.index + 1);
 
             case ASC:
-                return new AscDataIterator(dataLevel, dataBlockIdx, start.index);
+                return new AscDataIterator(dataLevel, dataBlockIdx, inclusive ? start.index : start.index - 1);
 
             default:
                 throw new IllegalArgumentException("Unknown order: " + order);
