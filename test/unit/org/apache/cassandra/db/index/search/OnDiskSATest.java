@@ -115,7 +115,6 @@ public class OnDiskSATest
             }
         });
 
-
         // test full iteration
         int idx = 0;
         for (OnDiskSA.DataSuffix suffix : onDisk)
@@ -127,7 +126,7 @@ public class OnDiskSATest
 
         // test partial iteration (descending)
         idx = 3; // start from the 3rd element
-        Iterator<OnDiskSA.DataSuffix> partialIter = onDisk.iteratorAt(sortedNumbers.get(idx), OnDiskSA.IteratorOrder.DESC);
+        Iterator<OnDiskSA.DataSuffix> partialIter = onDisk.iteratorAt(sortedNumbers.get(idx), OnDiskSA.IteratorOrder.DESC, true);
         while (partialIter.hasNext())
         {
             OnDiskSA.DataSuffix suffix = partialIter.next();
@@ -137,10 +136,31 @@ public class OnDiskSATest
             Assert.assertEquals(data.get(number), suffix.getKeys());
         }
 
+        idx = 3; // start from the 3rd element exclusive
+        partialIter = onDisk.iteratorAt(sortedNumbers.get(idx++), OnDiskSA.IteratorOrder.DESC, false);
+        while (partialIter.hasNext())
+        {
+            OnDiskSA.DataSuffix suffix = partialIter.next();
+            ByteBuffer number = sortedNumbers.get(idx++);
+
+            Assert.assertEquals(number, suffix.getSuffix());
+            Assert.assertEquals(data.get(number), suffix.getKeys());
+        }
 
         // test partial iteration (ascending)
         idx = 6; // start from the 6rd element
-        partialIter = onDisk.iteratorAt(sortedNumbers.get(idx), OnDiskSA.IteratorOrder.ASC);
+        partialIter = onDisk.iteratorAt(sortedNumbers.get(idx), OnDiskSA.IteratorOrder.ASC, true);
+        while (partialIter.hasNext())
+        {
+            OnDiskSA.DataSuffix suffix = partialIter.next();
+            ByteBuffer number = sortedNumbers.get(idx--);
+
+            Assert.assertEquals(number, suffix.getSuffix());
+            Assert.assertEquals(data.get(number), suffix.getKeys());
+        }
+
+        idx = 6; // start from the 6rd element exclusive
+        partialIter = onDisk.iteratorAt(sortedNumbers.get(idx--), OnDiskSA.IteratorOrder.ASC, false);
         while (partialIter.hasNext())
         {
             OnDiskSA.DataSuffix suffix = partialIter.next();
