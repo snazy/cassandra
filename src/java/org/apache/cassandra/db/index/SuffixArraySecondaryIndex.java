@@ -20,9 +20,11 @@ import java.util.concurrent.FutureTask;
 import java.util.concurrent.TimeUnit;
 
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.Iterables;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import io.netty.buffer.ByteBuf;
 import org.apache.cassandra.concurrent.Stage;
 import org.apache.cassandra.concurrent.StageManager;
 import org.apache.cassandra.config.ColumnDefinition;
@@ -32,10 +34,13 @@ import org.apache.cassandra.db.Column;
 import org.apache.cassandra.db.ColumnFamily;
 import org.apache.cassandra.db.ColumnFamilyStore;
 import org.apache.cassandra.db.ColumnSerializer;
+import org.apache.cassandra.db.DataTracker;
 import org.apache.cassandra.db.DecoratedKey;
 import org.apache.cassandra.db.DeletionTime;
 import org.apache.cassandra.db.EmptyColumns;
+import org.apache.cassandra.db.Keyspace;
 import org.apache.cassandra.db.OnDiskAtom;
+import org.apache.cassandra.db.ReadCommand;
 import org.apache.cassandra.db.Row;
 import org.apache.cassandra.db.filter.ExtendedFilter;
 import org.apache.cassandra.db.index.search.OnDiskSA;
@@ -44,6 +49,7 @@ import org.apache.cassandra.db.marshal.AbstractType;
 import org.apache.cassandra.exceptions.ConfigurationException;
 import org.apache.cassandra.io.sstable.Component;
 import org.apache.cassandra.io.sstable.Descriptor;
+import org.apache.cassandra.io.sstable.SSTable;
 import org.apache.cassandra.io.sstable.SSTableReader;
 import org.apache.cassandra.io.sstable.SSTableWriterListenable;
 import org.apache.cassandra.io.sstable.SSTableWriterListener;
@@ -313,149 +319,147 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
 
         public List<Row> search(ExtendedFilter filter)
         {
-            Map<SSTableReader, Set<Pair<ByteBuffer, OnDiskSA>>> candidates = secondaryIndexHolder.getIndexes();
+            DataTracker tracker = baseCfs.getDataTracker();
 
-            Map<SSTableReader, Set<RoaringBitmap>> targets = new HashMap<>(candidates.size());
-            for (IndexExpression exp : filter.getClause())
+            //TODO punt on memtables for now....
+
+            int maxKeys = Math.max(MAX_ROWS, filter.maxRows());
+            Set<ByteBuffer> keys = new HashSet<>();
+            for (SSTableReader reader : tracker.getSSTables())
             {
-                for (Map.Entry<SSTableReader, Set<Pair<ByteBuffer, OnDiskSA>>> entry : candidates.entrySet())
-                {
-                    // test if any entries for current index expression
-                    for (Pair<ByteBuffer, OnDiskSA> pair : entry.getValue())
-                    {
-                        if (pair.left.equals(exp.bufferForColumn_name()))
-                        {
-                            Set<RoaringBitmap> bitmaps = getBitmaps(pair.right, exp);
-                            if (bitmaps != null && !bitmaps.isEmpty())
-                                targets.put(entry.getKey(), bitmaps);
-                        }
-                    }
-                }
-            }
-            logger.info("found {} target sstables with indices", candidates.keySet().size());
+                if (keys.size() >= maxKeys)
+                    break;
 
-            final int maxRows = (Math.min(filter.maxRows(), MAX_ROWS));
-            return loadRows(targets, maxRows);
+                Set<Pair<ByteBuffer, OnDiskSA>> indices = secondaryIndexHolder.getIndexes(reader);
+                RoaringBitmap bitmap = new RoaringBitmap();
+                for (IndexExpression exp : filter.getClause())
+                {
+                    ByteBuffer indexedCol = exp.bufferForColumn_name();
+                    OnDiskSA sa = getSuffixArray(indices, indexedCol);
+                    if (sa == null)
+                        continue;
+
+                    RoaringBitmap matches = search(sa, exp, maxKeys);
+                    if (matches == null || matches.isEmpty())
+                        continue;
+
+                    bitmap.and(matches);
+                }
+
+                keys.addAll(readKeys(reader, bitmap));
+            }
+
+            return loadRows(keys, maxKeys);
         }
 
-        private Set<RoaringBitmap> getBitmaps(OnDiskSA sa, IndexExpression exp)
+        private OnDiskSA getSuffixArray(Set<Pair<ByteBuffer, OnDiskSA>> indices, ByteBuffer indexedCol)
         {
-            Set<RoaringBitmap> bitmaps = null;
+            for (Pair<ByteBuffer, OnDiskSA> pair : indices)
+            {
+                if (pair.left.equals(indexedCol))
+                    return pair.right;
+            }
+            return null;
+        }
+
+        private RoaringBitmap search(OnDiskSA sa, IndexExpression exp, int maxRows)
+        {
             try
             {
                 final IndexOperator op = exp.getOp();
                 if (op == IndexOperator.EQ)
                 {
-                    RoaringBitmap bitmap = sa.search(exp.bufferForValue());
-                    if (bitmap != null || !bitmap.isEmpty())
-                    {
-                        if (bitmaps == null)
-                            bitmaps = new HashSet<>();
-                        bitmaps.add(bitmap);
-                    }
+                    return sa.search(exp.bufferForValue());
                 }
                 else
                 {
+                    RoaringBitmap bitmap = new RoaringBitmap();
                     OnDiskSA.IteratorOrder order = op == IndexOperator.GTE || op == IndexOperator.GT
                         ? OnDiskSA.IteratorOrder.ASC : OnDiskSA.IteratorOrder.DESC;
-                    for (Iterator<OnDiskSA.DataSuffix> iter = sa.iteratorAt(exp.bufferForValue(), order); iter.hasNext(); )
+                    boolean includeKey = op == IndexOperator.GTE || op == IndexOperator.LTE;
+                    int curCnt = 0;
+                    for (Iterator<OnDiskSA.DataSuffix> iter = sa.iteratorAt(exp.bufferForValue(), order, includeKey); iter.hasNext(); )
                     {
-                        if (bitmaps == null)
-                            bitmaps = new HashSet<>();
-                        bitmaps.add(iter.next().getKeys());
-                        // TODO:JEB add some upper bound to the number of entries (via the bitmap) we add
+                        RoaringBitmap bm = iter.next().getKeys();
+                        bitmap.and(bm);
+
+                        curCnt += Iterables.size(bm);
+                        if (curCnt >= maxRows)
+                            break;
                     }
+                    return bitmap;
                 }
             }
             catch (IOException e)
             {
                 logger.warn("failed to read index for bitmap");
+                return null;
             }
-            return bitmaps;
         }
 
-        private List<Row> loadRows(Map<SSTableReader, Set<RoaringBitmap>> targets, int maxRows)
+        private Set<ByteBuffer> readKeys(SSTableReader reader, RoaringBitmap bitmap)
+        {
+            Set<ByteBuffer> keys = new HashSet<>();
+            for (Integer i : bitmap)
+            {
+                try
+                {
+                    DecoratedKey key = reader.keyAt(i);
+                    if (key != null)
+                        keys.add(key.key);
+                }
+                catch (IOException ioe)
+                {
+                    logger.warn("failed to read key at position {} from sstable {}; ignoring.", i, reader, ioe);
+                }
+            }
+            return keys;
+        }
+
+        private List<Row> loadRows(Set<ByteBuffer> keys, int maxRows)
         {
             ExecutorService readStage = StageManager.getStage(Stage.READ);
-            int rowsSubmitted = 0;
+            final long timestamp = System.currentTimeMillis();
 
-            //TODO: what would be nice here is to know if we're loading the same row key
-            // across sstables, that way we could use merge iterator of some sort instead of
-            // reassembling by hand after we've read the rows from the individual sstbles.
-
-            List<Future<Row>> futures = new ArrayList<>(targets.size());
-            for (Map.Entry<SSTableReader, Set<RoaringBitmap>> entry : targets.entrySet())
+            List<Future<Row>> futures = new ArrayList<>(keys.size());
+            int cur = 0;
+            for (ByteBuffer key : keys)
             {
-                // remove any possible row dupes from the multiple bitmaps
-                Set<Integer> ints = new HashSet<>();
-                outer: for (RoaringBitmap bitmap : entry.getValue())
-                {
-                    for (Integer i : bitmap)
-                    {
-                        ints.add(i);
-                        if (rowsSubmitted + ints.size() >= maxRows)
-                            break outer;
-                    }
-                }
-
-                for (Integer i : ints)
-                    futures.add(readStage.submit(new RowReader(entry.getKey(), i.longValue())));
-                rowsSubmitted += ints.size();
-                if (rowsSubmitted >= maxRows)
+                ReadCommand cmd = ReadCommand.create(baseCfs.keyspace.getName(), key, baseCfs.getColumnFamilyName(), timestamp, null);
+                futures.add(readStage.submit(new RowReader(cmd)));
+                cur++;
+                if (cur == maxRows)
                     break;
             }
 
-            // merge the resultant rows to together (if they cam from different sstables)
-            Map<DecoratedKey, Row> rows = new HashMap<>();
+            List<Row> rows = new ArrayList<>(cur);
             for (Future<Row> future : futures)
             {
                 try
                 {
-                    Row result = future.get(DatabaseDescriptor.getRangeRpcTimeout(), TimeUnit.MILLISECONDS);
-                    Row row = rows.get(result.key);
-                    if (row == null)
-                        rows.put(result.key, result);
-                    else
-                        row.cf.delete(result.cf);
+                    rows.add(future.get(DatabaseDescriptor.getRangeRpcTimeout(), TimeUnit.MILLISECONDS));
+
                 }
                 catch (Exception e)
                 {
                     logger.error("problem reading row", e);
                 }
             }
-
-            //this is lame, java, very lame
-            return new ArrayList<>(rows.values());
+            return rows;
         }
 
         private class RowReader implements Callable<Row>
         {
-            private final SSTableReader sstable;
-            private final long position;
+            private final ReadCommand command;
 
-            public RowReader(SSTableReader sstable, long position)
+            public RowReader(ReadCommand command)
             {
-                this.sstable = sstable;
-                this.position = position;
+                this.command = command;
             }
 
             public Row call() throws Exception
             {
-                RandomAccessReader in = sstable.openDataReader();
-                in.seek(position);
-                DecoratedKey key = sstable.partitioner.decorateKey(ByteBufferUtil.readWithShortLength(in));
-
-                ColumnFamily columnFamily = EmptyColumns.factory.create(sstable.metadata);
-                columnFamily.delete(DeletionTime.serializer.deserialize(in));
-                int columnCount = sstable.descriptor.version.hasRowSizeAndColumnCount ? in.readInt() : Integer.MAX_VALUE;
-                Iterator<OnDiskAtom> atomIterator = columnFamily.metadata().getOnDiskIterator(in, columnCount, ColumnSerializer.Flag.LOCAL,
-                                                                                              (int)(System.currentTimeMillis() / 1000),
-                                                                                              sstable.descriptor.version);
-
-                ColumnFamily cf = columnFamily.cloneMeShallow(ArrayBackedSortedColumns.factory, false);
-                while (atomIterator.hasNext())
-                    cf.addAtom(atomIterator.next());
-                return new Row(key, cf);
+                return command.getRow(Keyspace.open(command.ksName));
             }
         }
 
