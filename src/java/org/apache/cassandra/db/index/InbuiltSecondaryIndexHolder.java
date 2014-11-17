@@ -2,6 +2,7 @@ package org.apache.cassandra.db.index;
 
 import java.io.File;
 import java.io.IOException;
+import java.nio.ByteBuffer;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
@@ -11,19 +12,18 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import org.apache.cassandra.db.index.search.OnDiskSA;
-import org.apache.cassandra.db.marshal.AbstractType;
 import org.apache.cassandra.io.sstable.Component;
 import org.apache.cassandra.io.sstable.Descriptor;
 import org.apache.cassandra.io.sstable.SSTableReader;
 import org.apache.cassandra.io.util.FileUtils;
-import org.apache.cassandra.io.util.RandomAccessReader;
+import org.apache.cassandra.utils.Pair;
 
 public class InbuiltSecondaryIndexHolder
 {
     private static final Logger logger = LoggerFactory.getLogger(InbuiltSecondaryIndexHolder.class);
 
     // TODO:JEB can I get a COW map??
-    private Map<SSTableReader, Set<OnDiskSA>> inbuiltSecondaryIndexes = new ConcurrentHashMap<>();
+    private Map<SSTableReader, Set<Pair<ByteBuffer, OnDiskSA>>> inbuiltSecondaryIndexes = new ConcurrentHashMap<>();
 
     public void add(SSTableReader sstable)
     {
@@ -32,10 +32,10 @@ public class InbuiltSecondaryIndexHolder
         if (components.isEmpty())
             return;
 
-        Set<OnDiskSA> readers = new HashSet<>();
+        Descriptor desc = sstable.descriptor;
+        Set<Pair<ByteBuffer, OnDiskSA>> readers = new HashSet<>();
         for (Component component : components)
         {
-            Descriptor desc = sstable.descriptor;
             String fileName = desc.filenameFor(component);
             OnDiskSA onDiskSA = null;
             try
@@ -46,23 +46,35 @@ public class InbuiltSecondaryIndexHolder
             {
                 logger.error("problem opening index {} for sstable {}", fileName, sstable, e);
             }
-            readers.add(onDiskSA);
+            readers.add(Pair.create(parseName(component.name), onDiskSA));
         }
         inbuiltSecondaryIndexes.put(sstable, readers);
 
     }
 
-    public void remove(SSTableReader sstable)
+    //TODO: this is a horrible hack, but no other way to associate
+    private ByteBuffer parseName(String name)
     {
-        Set<OnDiskSA> readers = inbuiltSecondaryIndexes.get(sstable);
-        if (readers == null || readers.isEmpty())
-            return;
-        for (OnDiskSA sa : readers)
-            FileUtils.closeQuietly(sa);
+
+        return null;
     }
 
-    public Map<SSTableReader, Set<OnDiskSA>> getIndexes()
+    public void remove(SSTableReader sstable)
+    {
+        Set<Pair<ByteBuffer, OnDiskSA>> readers = inbuiltSecondaryIndexes.get(sstable);
+        if (readers == null || readers.isEmpty())
+            return;
+        for (Pair<ByteBuffer, OnDiskSA> pair : readers)
+            FileUtils.closeQuietly(pair.right);
+    }
+
+    public Map<SSTableReader, Set<Pair<ByteBuffer, OnDiskSA>>> getIndexes()
     {
         return inbuiltSecondaryIndexes;
+    }
+
+    public Set<Pair<ByteBuffer, OnDiskSA>> getIndexes(SSTableReader reader)
+    {
+        return inbuiltSecondaryIndexes.get(reader);
     }
 }
