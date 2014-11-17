@@ -11,6 +11,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import org.apache.cassandra.db.ColumnFamilyStore;
 import org.apache.cassandra.db.index.search.OnDiskSA;
 import org.apache.cassandra.io.sstable.Component;
 import org.apache.cassandra.io.sstable.Descriptor;
@@ -21,9 +22,15 @@ import org.apache.cassandra.utils.Pair;
 public class InbuiltSecondaryIndexHolder
 {
     private static final Logger logger = LoggerFactory.getLogger(InbuiltSecondaryIndexHolder.class);
+    private final ColumnFamilyStore baseCfs;
 
     // TODO:JEB can I get a COW map??
     private Map<SSTableReader, Set<Pair<ByteBuffer, OnDiskSA>>> inbuiltSecondaryIndexes = new ConcurrentHashMap<>();
+
+    public InbuiltSecondaryIndexHolder(ColumnFamilyStore baseCfs)
+    {
+        this.baseCfs = baseCfs;
+    }
 
     public void add(SSTableReader sstable)
     {
@@ -49,14 +56,14 @@ public class InbuiltSecondaryIndexHolder
             readers.add(Pair.create(parseName(component.name), onDiskSA));
         }
         inbuiltSecondaryIndexes.put(sstable, readers);
-
     }
 
-    //TODO: this is a horrible hack, but no other way to associate
+    //TODO: this is kinda lame, but no other way to associate index to column name
     private ByteBuffer parseName(String name)
     {
-
-        return null;
+        int start = name.indexOf("_") + 1;
+        int end = name.lastIndexOf(".");
+        return baseCfs.getComparator().fromString(name.substring(start, end));
     }
 
     public void remove(SSTableReader sstable)
