@@ -324,15 +324,14 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
                 if (keys.size() >= maxKeys)
                     break;
 
-                Set<Pair<ByteBuffer, OnDiskSA>> indices = secondaryIndexHolder.getIndexes(reader);
+                Map<ByteBuffer, OnDiskSA> indices = reader.getSuffixArrays();
                 if (indices.isEmpty())
                     continue;
 
                 RoaringBitmap bitmap = new RoaringBitmap();
                 for (IndexExpression exp : filter.getClause())
                 {
-                    ByteBuffer indexedCol = exp.bufferForColumn_name();
-                    OnDiskSA sa = getSuffixArray(indices, indexedCol);
+                    OnDiskSA sa = indices.get(exp.bufferForColumn_name());
                     if (sa == null)
                         continue;
 
@@ -347,16 +346,6 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
             }
 
             return loadRows(keys, maxKeys);
-        }
-
-        private OnDiskSA getSuffixArray(Set<Pair<ByteBuffer, OnDiskSA>> indices, ByteBuffer indexedCol)
-        {
-            for (Pair<ByteBuffer, OnDiskSA> pair : indices)
-            {
-                if (pair.left.equals(indexedCol))
-                    return pair.right;
-            }
-            return null;
         }
 
         private RoaringBitmap search(OnDiskSA sa, IndexExpression exp, int maxRows)
