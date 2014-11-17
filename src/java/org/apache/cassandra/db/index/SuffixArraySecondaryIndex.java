@@ -7,11 +7,11 @@ import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.TreeSet;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
@@ -24,24 +24,19 @@ import com.google.common.collect.Iterables;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import io.netty.buffer.ByteBuf;
 import org.apache.cassandra.concurrent.Stage;
 import org.apache.cassandra.concurrent.StageManager;
 import org.apache.cassandra.config.ColumnDefinition;
 import org.apache.cassandra.config.DatabaseDescriptor;
-import org.apache.cassandra.db.ArrayBackedSortedColumns;
 import org.apache.cassandra.db.Column;
 import org.apache.cassandra.db.ColumnFamily;
 import org.apache.cassandra.db.ColumnFamilyStore;
-import org.apache.cassandra.db.ColumnSerializer;
 import org.apache.cassandra.db.DataTracker;
 import org.apache.cassandra.db.DecoratedKey;
-import org.apache.cassandra.db.DeletionTime;
-import org.apache.cassandra.db.EmptyColumns;
 import org.apache.cassandra.db.Keyspace;
-import org.apache.cassandra.db.OnDiskAtom;
 import org.apache.cassandra.db.ReadCommand;
 import org.apache.cassandra.db.Row;
+import org.apache.cassandra.db.columniterator.IdentityQueryFilter;
 import org.apache.cassandra.db.filter.ExtendedFilter;
 import org.apache.cassandra.db.index.search.OnDiskSA;
 import org.apache.cassandra.db.index.search.OnDiskSABuilder;
@@ -49,14 +44,11 @@ import org.apache.cassandra.db.marshal.AbstractType;
 import org.apache.cassandra.exceptions.ConfigurationException;
 import org.apache.cassandra.io.sstable.Component;
 import org.apache.cassandra.io.sstable.Descriptor;
-import org.apache.cassandra.io.sstable.SSTable;
 import org.apache.cassandra.io.sstable.SSTableReader;
 import org.apache.cassandra.io.sstable.SSTableWriterListenable;
 import org.apache.cassandra.io.sstable.SSTableWriterListener;
-import org.apache.cassandra.io.util.RandomAccessReader;
 import org.apache.cassandra.thrift.IndexExpression;
 import org.apache.cassandra.thrift.IndexOperator;
-import org.apache.cassandra.utils.ByteBufferUtil;
 import org.apache.cassandra.utils.Pair;
 import org.roaringbitmap.RoaringBitmap;
 
@@ -69,6 +61,7 @@ import org.roaringbitmap.RoaringBitmap;
 public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements SSTableWriterListenable
 {
     protected static final Logger logger = LoggerFactory.getLogger(SuffixArraySecondaryIndex.class);
+    public static final String FILE_NAME_FORMAT = "SecondaryIndex_%s.db";
 
     /**
      * A sanity ceiling on the number of max rows we'll ever return for a query.
@@ -98,10 +91,11 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
 
     private void addComponent(ColumnDefinition def)
     {
-        if (getComparator() == null)
+        AbstractType<?> type = getComparator();
+        if (type == null)
             return;
 
-        String indexName = String.format("SecondaryIndex_%s.db", def.getIndexName());
+        String indexName = String.format(FILE_NAME_FORMAT, type.getString(def.name));
         logger.info("adding a columnDef: {}, baseCfs = {}, component index name = {}", def, baseCfs, indexName);
         columnDefComponents.put(def.name, new Component(Component.Type.SECONDARY_INDEX, indexName));
     }
@@ -323,14 +317,17 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
 
             //TODO punt on memtables for now....
 
-            int maxKeys = Math.max(MAX_ROWS, filter.maxRows());
-            Set<ByteBuffer> keys = new HashSet<>();
+            int maxKeys = Math.min(MAX_ROWS, filter.maxRows());
+            Set<ByteBuffer> keys = new TreeSet<>();
             for (SSTableReader reader : tracker.getSSTables())
             {
                 if (keys.size() >= maxKeys)
                     break;
 
                 Set<Pair<ByteBuffer, OnDiskSA>> indices = secondaryIndexHolder.getIndexes(reader);
+                if (indices.isEmpty())
+                    continue;
+
                 RoaringBitmap bitmap = new RoaringBitmap();
                 for (IndexExpression exp : filter.getClause())
                 {
@@ -343,7 +340,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
                     if (matches == null || matches.isEmpty())
                         continue;
 
-                    bitmap.and(matches);
+                    bitmap.or(matches);
                 }
 
                 keys.addAll(readKeys(reader, bitmap));
@@ -399,7 +396,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
 
         private Set<ByteBuffer> readKeys(SSTableReader reader, RoaringBitmap bitmap)
         {
-            Set<ByteBuffer> keys = new HashSet<>();
+            Set<ByteBuffer> keys = new TreeSet<>();
             for (Integer i : bitmap)
             {
                 try
@@ -425,7 +422,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
             int cur = 0;
             for (ByteBuffer key : keys)
             {
-                ReadCommand cmd = ReadCommand.create(baseCfs.keyspace.getName(), key, baseCfs.getColumnFamilyName(), timestamp, null);
+                ReadCommand cmd = ReadCommand.create(baseCfs.keyspace.getName(), key, baseCfs.getColumnFamilyName(), timestamp, new IdentityQueryFilter());
                 futures.add(readStage.submit(new RowReader(cmd)));
                 cur++;
                 if (cur == maxRows)
@@ -438,7 +435,6 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
                 try
                 {
                     rows.add(future.get(DatabaseDescriptor.getRangeRpcTimeout(), TimeUnit.MILLISECONDS));
-
                 }
                 catch (Exception e)
                 {

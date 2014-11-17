@@ -111,7 +111,7 @@ public class SecondaryIndexManager
         rowLevelIndexMap = new ConcurrentHashMap<>();
         allIndexes = Collections.newSetFromMap(new ConcurrentHashMap<SecondaryIndex, Boolean>());
         writerListenables = new HashSet<>();
-        secondaryIndexHolder = new InbuiltSecondaryIndexHolder();
+        secondaryIndexHolder = new InbuiltSecondaryIndexHolder(baseCfs);
 
         this.baseCfs = baseCfs;
     }
