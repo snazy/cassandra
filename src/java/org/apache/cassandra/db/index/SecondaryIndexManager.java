@@ -98,7 +98,6 @@ public class SecondaryIndexManager
     private final Set<SecondaryIndex> allIndexes;
 
     private final Set<SSTableWriterListenable> writerListenables;
-    private final InbuiltSecondaryIndexHolder secondaryIndexHolder;
 
     /**
      * The underlying column family containing the source data for these indexes
@@ -111,7 +110,6 @@ public class SecondaryIndexManager
         rowLevelIndexMap = new ConcurrentHashMap<>();
         allIndexes = Collections.newSetFromMap(new ConcurrentHashMap<SecondaryIndex, Boolean>());
         writerListenables = new HashSet<>();
-        secondaryIndexHolder = new InbuiltSecondaryIndexHolder(baseCfs);
 
         this.baseCfs = baseCfs;
     }
@@ -330,7 +328,6 @@ public class SecondaryIndexManager
 
         // Add to all indexes set:
         allIndexes.add(index);
-        index.setInbuiltIndexHolder(secondaryIndexHolder);
 
         if (index instanceof SSTableWriterListenable)
             writerListenables.add((SSTableWriterListenable)index);
@@ -625,16 +622,6 @@ public class SecondaryIndexManager
         for (SSTableWriterListenable listenable : writerListenables)
             set.add(listenable.getListener(descriptor));
         return set.build();
-    }
-
-    public void registerSecondaryIndexes(SSTableReader ssTableReader)
-    {
-        secondaryIndexHolder.add(ssTableReader);
-    }
-
-    public void closeSecondaryIndexes(SSTableReader ssTableReader)
-    {
-        secondaryIndexHolder.remove(ssTableReader);
     }
 
     public static interface Updater

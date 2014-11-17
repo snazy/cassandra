@@ -44,6 +44,7 @@ import org.apache.cassandra.db.columniterator.OnDiskAtomIterator;
 import org.apache.cassandra.db.commitlog.ReplayPosition;
 import org.apache.cassandra.db.compaction.ICompactionScanner;
 import org.apache.cassandra.db.index.SecondaryIndex;
+import org.apache.cassandra.db.index.search.OnDiskSA;
 import org.apache.cassandra.dht.*;
 import org.apache.cassandra.io.compress.CompressedRandomAccessReader;
 import org.apache.cassandra.io.compress.CompressedThrottledReader;
@@ -108,6 +109,9 @@ public class SSTableReader extends SSTable implements Closeable
     @VisibleForTesting
     public RestorableMeter readMeter;
     private ScheduledFuture readMeterSyncFuture;
+
+    //TODO:JEB move this somewhere else fo sstable does not directly rely on OnDiskSA
+    private final Map<ByteBuffer, OnDiskSA> suffixArrays;
 
     public static long getApproximateKeyCount(Iterable<SSTableReader> sstables, CFMetaData metadata)
     {
@@ -329,6 +333,7 @@ public class SSTableReader extends SSTable implements Closeable
         this.maxDataAge = maxDataAge;
 
         deletingTask = new SSTableDeletingTask(this);
+        suffixArrays = new HashMap<>();
 
         // Don't track read rates for tables in the system keyspace and don't bother trying to load or persist
         // the read meter when in client mode
@@ -389,8 +394,7 @@ public class SSTableReader extends SSTable implements Closeable
         // close the BF so it can be opened later.
         bf.close();
         indexSummary.close();
-        ColumnFamilyStore cfs = Keyspace.open(metadata.ksName).getColumnFamilyStore(metadata.cfName);
-        cfs.indexManager.closeSecondaryIndexes(this);
+        closeSecondaryIndexes();
     }
 
     public void setTrackedBy(DataTracker tracker)
@@ -467,11 +471,40 @@ public class SSTableReader extends SSTable implements Closeable
 
     private void loadSecondaryIndexes()
     {
-        ColumnFamilyStore cfs = Keyspace.open(metadata.ksName).getColumnFamilyStore(metadata.cfName);
-        cfs.indexManager.registerSecondaryIndexes(this);
+        Descriptor desc = descriptor;
+        for (Component component : getComponents(Component.Type.SECONDARY_INDEX))
+        {
+            String fileName = desc.filenameFor(component);
+            OnDiskSA onDiskSA = null;
+            try
+            {
+                onDiskSA = new OnDiskSA(new File(fileName), metadata.comparator);
+            }
+            catch (IOException e)
+            {
+                logger.error("problem opening index {} for sstable {}", fileName, this, e);
+            }
+
+            int start = fileName.indexOf("_") + 1;
+            int end = fileName.lastIndexOf(".");
+            ByteBuffer name = ByteBufferUtil.bytes(fileName.substring(start, end));
+            suffixArrays.put(name, onDiskSA);
+        }
     }
 
-     private void buildSummary(boolean recreateBloomFilter, SegmentedFile.Builder ibuilder, SegmentedFile.Builder dbuilder, boolean summaryLoaded) throws IOException
+    private void closeSecondaryIndexes()
+    {
+        for (OnDiskSA sa : suffixArrays.values())
+            FileUtils.closeQuietly(sa);
+        suffixArrays.clear();
+    }
+
+    public Map<ByteBuffer, OnDiskSA> getSuffixArrays()
+    {
+        return suffixArrays;
+    }
+
+    private void buildSummary(boolean recreateBloomFilter, SegmentedFile.Builder ibuilder, SegmentedFile.Builder dbuilder, boolean summaryLoaded) throws IOException
      {
         // we read the positions in a BRAF so we don't have to worry about an entry spanning a mmap boundary.
         RandomAccessReader primaryIndex = RandomAccessReader.open(new File(descriptor.filenameFor(Component.PRIMARY_INDEX)));

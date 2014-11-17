@@ -18,8 +18,13 @@
 package org.apache.cassandra.db.index;
 
 import java.nio.ByteBuffer;
-import java.util.*;
-import java.util.concurrent.*;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.Iterator;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Future;
+import java.util.concurrent.FutureTask;
 
 import com.google.common.base.Objects;
 import org.apache.commons.lang3.StringUtils;
@@ -28,18 +33,18 @@ import org.slf4j.LoggerFactory;
 
 import org.apache.cassandra.config.CFMetaData;
 import org.apache.cassandra.config.ColumnDefinition;
-import org.apache.cassandra.exceptions.ConfigurationException;
 import org.apache.cassandra.db.Column;
 import org.apache.cassandra.db.ColumnFamilyStore;
 import org.apache.cassandra.db.DecoratedKey;
 import org.apache.cassandra.db.SystemKeyspace;
 import org.apache.cassandra.db.compaction.CompactionManager;
-import org.apache.cassandra.db.index.keys.KeysIndex;
 import org.apache.cassandra.db.index.composites.CompositesIndex;
+import org.apache.cassandra.db.index.keys.KeysIndex;
 import org.apache.cassandra.db.marshal.AbstractType;
 import org.apache.cassandra.db.marshal.BytesType;
 import org.apache.cassandra.db.marshal.LocalByPartionerType;
-import org.apache.cassandra.dht.*;
+import org.apache.cassandra.dht.LocalToken;
+import org.apache.cassandra.exceptions.ConfigurationException;
 import org.apache.cassandra.io.sstable.Component;
 import org.apache.cassandra.io.sstable.ReducingKeyIterator;
 import org.apache.cassandra.io.sstable.SSTableReader;
@@ -71,8 +76,6 @@ public abstract class SecondaryIndex
      * The column definitions which this index is responsible for
      */
     protected final Set<ColumnDefinition> columnDefs = Collections.newSetFromMap(new ConcurrentHashMap<ColumnDefinition,Boolean>());
-
-    protected InbuiltSecondaryIndexHolder secondaryIndexHolder;
 
     /**
      * Perform any initialization work
@@ -385,10 +388,5 @@ public abstract class SecondaryIndex
     public Collection<Component> getIndexComponents()
     {
         return Collections.EMPTY_LIST;
-    }
-
-    public void setInbuiltIndexHolder(InbuiltSecondaryIndexHolder secondaryIndexHolder)
-    {
-        this.secondaryIndexHolder = secondaryIndexHolder;
     }
 }
