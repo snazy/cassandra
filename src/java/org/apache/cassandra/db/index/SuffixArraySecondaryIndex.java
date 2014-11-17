@@ -20,13 +20,13 @@ import java.util.concurrent.FutureTask;
 import java.util.concurrent.TimeUnit;
 
 import com.google.common.collect.ImmutableList;
-import com.google.common.collect.Iterables;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import org.apache.cassandra.concurrent.Stage;
 import org.apache.cassandra.concurrent.StageManager;
 import org.apache.cassandra.config.ColumnDefinition;
+import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.db.ArrayBackedSortedColumns;
 import org.apache.cassandra.db.Column;
 import org.apache.cassandra.db.ColumnFamily;
@@ -56,6 +56,9 @@ import org.roaringbitmap.RoaringBitmap;
 
 /**
  * Note: currently does not work with cql3 tables (unless 'WITH COMPACT STORAGE' is declared when creating the table).
+ *
+ * ALos, makes the assumption this will be the only index running on the table as part of the query.
+ * SIM tends to shoves all indexed columns into one PerRowSecondaryIndex
  */
 public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements SSTableWriterListenable
 {
@@ -310,107 +313,110 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
 
         public List<Row> search(ExtendedFilter filter)
         {
-            logger.info("received a search() call");
-            IndexExpression indexExpression = highestSelectivityPredicate(filter.getClause());
-            final int maxRows = (Math.min(filter.maxRows(), MAX_ROWS));
+            Map<SSTableReader, Set<Pair<ByteBuffer, OnDiskSA>>> candidates = secondaryIndexHolder.getIndexes();
 
-            Map<SSTableReader, Set<OnDiskSA>> candidates = secondaryIndexHolder.getIndexes();
-            logger.info("found {} candidate sstables with indices", candidates.keySet().size());
-            Map<SSTableReader, Set<RoaringBitmap>> targets = getTargets(candidates, indexExpression.bufferForValue(), maxRows);
-            logger.info("found {} target sstables with indices", candidates.keySet().size());
-
-            return loadRows(targets, maxRows);
-        }
-
-        protected IndexExpression highestSelectivityPredicate(List<IndexExpression> clause)
-        {
-            //TODO: allow for the inequality operators, but give precedence to equality
-
-            List<IndexExpression> candidates = new ArrayList<>(clause.size());
-            for (IndexExpression expression : clause)
+            Map<SSTableReader, Set<RoaringBitmap>> targets = new HashMap<>(candidates.size());
+            for (IndexExpression exp : filter.getClause())
             {
-                //skip columns belonging to a different index type
-                if(expression.op != IndexOperator.EQ || !columns.contains(expression.column_name))
-                    continue;
-
-                SecondaryIndex index = indexManager.getIndexForColumn(expression.column_name);
-                if (index == null)
-                    continue;
-
-                candidates.add(expression);
-            }
-
-            //TODO:JEB need better selection algo, rather than just taking the first entry...
-            return candidates.isEmpty() ? null : candidates.get(0);
-        }
-
-        private Map<SSTableReader, Set<RoaringBitmap>> getTargets(Map<SSTableReader, Set<OnDiskSA>> candidates, ByteBuffer val, int maxRows)
-        {
-            int curRows = 0;
-            Map<SSTableReader, Set<RoaringBitmap>> targets = new HashMap<>();
-            for (Map.Entry<SSTableReader, Set<OnDiskSA>> entry : candidates.entrySet())
-            {
-                boolean inTargets = false;
-                for (OnDiskSA sa : entry.getValue())
+                for (Map.Entry<SSTableReader, Set<Pair<ByteBuffer, OnDiskSA>>> entry : candidates.entrySet())
                 {
-                    try
+                    // test if any entries for current index expression
+                    for (Pair<ByteBuffer, OnDiskSA> pair : entry.getValue())
                     {
-                        RoaringBitmap bitmap = sa.search(val);
-                        if (bitmap == null || bitmap.isEmpty())
-                            continue;
-
-                        if (!inTargets)
+                        if (pair.left.equals(exp.bufferForColumn_name()))
                         {
-                            Set<RoaringBitmap> s = new HashSet<>();
-                            s.add(bitmap);
-                            targets.put(entry.getKey(), s);
-                            inTargets = true;
+                            Set<RoaringBitmap> bitmaps = getBitmaps(pair.right, exp);
+                            if (bitmaps != null && !bitmaps.isEmpty())
+                                targets.put(entry.getKey(), bitmaps);
                         }
-                        else
-                        {
-                            targets.get(entry.getKey()).add(bitmap);
-                        }
-
-                        // TODO:JEB this is a bit unfortunate, that we have to iterate through the bitmap just to get it's size
-                        curRows += Iterables.size(bitmap);
-                        if (curRows > maxRows)
-                            break;
-                    }
-                    catch (IOException e)
-                    {
-                        logger.warn("failed to read index for bitmap {}", entry.getKey());
                     }
                 }
             }
-            return targets;
+            logger.info("found {} target sstables with indices", candidates.keySet().size());
+
+            final int maxRows = (Math.min(filter.maxRows(), MAX_ROWS));
+            return loadRows(targets, maxRows);
+        }
+
+        private Set<RoaringBitmap> getBitmaps(OnDiskSA sa, IndexExpression exp)
+        {
+            Set<RoaringBitmap> bitmaps = null;
+            try
+            {
+                final IndexOperator op = exp.getOp();
+                if (op == IndexOperator.EQ)
+                {
+                    RoaringBitmap bitmap = sa.search(exp.bufferForValue());
+                    if (bitmap != null || !bitmap.isEmpty())
+                    {
+                        if (bitmaps == null)
+                            bitmaps = new HashSet<>();
+                        bitmaps.add(bitmap);
+                    }
+                }
+                else
+                {
+                    OnDiskSA.IteratorOrder order = op == IndexOperator.GTE || op == IndexOperator.GT
+                        ? OnDiskSA.IteratorOrder.ASC : OnDiskSA.IteratorOrder.DESC;
+                    for (Iterator<OnDiskSA.DataSuffix> iter = sa.iteratorAt(exp.bufferForValue(), order); iter.hasNext(); )
+                    {
+                        if (bitmaps == null)
+                            bitmaps = new HashSet<>();
+                        bitmaps.add(iter.next().getKeys());
+                        // TODO:JEB add some upper bound to the number of entries (via the bitmap) we add
+                    }
+                }
+            }
+            catch (IOException e)
+            {
+                logger.warn("failed to read index for bitmap");
+            }
+            return bitmaps;
         }
 
         private List<Row> loadRows(Map<SSTableReader, Set<RoaringBitmap>> targets, int maxRows)
         {
             ExecutorService readStage = StageManager.getStage(Stage.READ);
-            int cur = 0;
+            int rowsSubmitted = 0;
+
+            //TODO: what would be nice here is to know if we're loading the same row key
+            // across sstables, that way we could use merge iterator of some sort instead of
+            // reassembling by hand after we've read the rows from the individual sstbles.
 
             List<Future<Row>> futures = new ArrayList<>(targets.size());
-            outer: for (Map.Entry<SSTableReader, Set<RoaringBitmap>> entry : targets.entrySet())
+            for (Map.Entry<SSTableReader, Set<RoaringBitmap>> entry : targets.entrySet())
             {
-                for (RoaringBitmap bitmap : entry.getValue())
+                // remove any possible row dupes from the multiple bitmaps
+                Set<Integer> ints = new HashSet<>();
+                outer: for (RoaringBitmap bitmap : entry.getValue())
                 {
                     for (Integer i : bitmap)
                     {
-                        futures.add(readStage.submit(new RowReader(entry.getKey(), i.longValue())));
-                        cur++;
-                        if (cur >= maxRows)
+                        ints.add(i);
+                        if (rowsSubmitted + ints.size() >= maxRows)
                             break outer;
                     }
                 }
+
+                for (Integer i : ints)
+                    futures.add(readStage.submit(new RowReader(entry.getKey(), i.longValue())));
+                rowsSubmitted += ints.size();
+                if (rowsSubmitted >= maxRows)
+                    break;
             }
 
-            List<Row> rows = new ArrayList<>();
+            // merge the resultant rows to together (if they cam from different sstables)
+            Map<DecoratedKey, Row> rows = new HashMap<>();
             for (Future<Row> future : futures)
             {
                 try
                 {
-                    rows.add(future.get(10, TimeUnit.SECONDS));
+                    Row result = future.get(DatabaseDescriptor.getRangeRpcTimeout(), TimeUnit.MILLISECONDS);
+                    Row row = rows.get(result.key);
+                    if (row == null)
+                        rows.put(result.key, result);
+                    else
+                        row.cf.delete(result.cf);
                 }
                 catch (Exception e)
                 {
@@ -418,7 +424,8 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
                 }
             }
 
-            return rows;
+            //this is lame, java, very lame
+            return new ArrayList<>(rows.values());
         }
 
         private class RowReader implements Callable<Row>
@@ -454,6 +461,8 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
 
         public boolean isIndexing(List<IndexExpression> clause)
         {
+            //TODO:JEB this is a bit weak, currently just checks for the success of one column, not all
+            // however, parent SIS.isIndexing only cares if one predicate is covered ... grrrr!!
             for (IndexExpression expression : clause)
             {
                 if (columnDefComponents.keySet().contains(expression.column_name))
