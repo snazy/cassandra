@@ -25,9 +25,14 @@ public class OnDiskSA implements Iterable<OnDiskSA.DataSuffix>, Closeable
     {
         DESC, ASC;
 
-        public int startAt(SearchResult<DataSuffix> found, boolean inclusive) {
-            switch (this) {
+        public int startAt(SearchResult<DataSuffix> found, boolean inclusive)
+        {
+            switch (this)
+            {
                 case DESC:
+                    if (found.cmp < 0)
+                        return found.index + 1;
+
                     return inclusive || found.cmp != 0 ? found.index : found.index + 1;
 
                 case ASC:
@@ -96,9 +101,7 @@ public class OnDiskSA implements Iterable<OnDiskSA.DataSuffix>, Closeable
         switch (order)
         {
             case DESC:
-                return (start.cmp < 0)
-                        ? Iterators.<DataSuffix>emptyIterator()
-                        : new DescDataIterator(dataLevel, dataBlockIdx, order.startAt(start, inclusive));
+                return new DescDataIterator(dataLevel, dataBlockIdx, order.startAt(start, inclusive));
 
             case ASC:
                 return new AscDataIterator(dataLevel, dataBlockIdx, order.startAt(start, inclusive));

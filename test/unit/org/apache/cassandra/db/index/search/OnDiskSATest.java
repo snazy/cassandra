@@ -209,6 +209,18 @@ public class OnDiskSATest
         Assert.assertEquals(1, Iterators.size(onDisk.iteratorAt(number, OnDiskSA.IteratorOrder.DESC, false)));
         Assert.assertEquals(1, Iterators.size(onDisk.iteratorAt(number, OnDiskSA.IteratorOrder.DESC, true)));
 
+        number = Int32Type.instance.decompose(5);
+        Assert.assertEquals(1, Iterators.size(onDisk.iteratorAt(number, OnDiskSA.IteratorOrder.ASC, false)));
+        Assert.assertEquals(1, Iterators.size(onDisk.iteratorAt(number, OnDiskSA.IteratorOrder.ASC, true)));
+        Assert.assertEquals(3, Iterators.size(onDisk.iteratorAt(number, OnDiskSA.IteratorOrder.DESC, false)));
+        Assert.assertEquals(3, Iterators.size(onDisk.iteratorAt(number, OnDiskSA.IteratorOrder.DESC, true)));
+
+        number = Int32Type.instance.decompose(10);
+        Assert.assertEquals(2, Iterators.size(onDisk.iteratorAt(number, OnDiskSA.IteratorOrder.ASC, false)));
+        Assert.assertEquals(2, Iterators.size(onDisk.iteratorAt(number, OnDiskSA.IteratorOrder.ASC, true)));
+        Assert.assertEquals(2, Iterators.size(onDisk.iteratorAt(number, OnDiskSA.IteratorOrder.DESC, false)));
+        Assert.assertEquals(2, Iterators.size(onDisk.iteratorAt(number, OnDiskSA.IteratorOrder.DESC, true)));
+
         onDisk.close();
     }
 
