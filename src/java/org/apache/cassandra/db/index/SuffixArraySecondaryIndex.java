@@ -6,6 +6,7 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
@@ -65,7 +66,7 @@ import org.roaringbitmap.RoaringBitmap;
 public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements SSTableWriterListenable
 {
     protected static final Logger logger = LoggerFactory.getLogger(SuffixArraySecondaryIndex.class);
-    public static final String FILE_NAME_FORMAT = "SecondaryIndex_%s.db";
+    public static final String FILE_NAME_FORMAT = "SI_%s.db";
 
     /**
      * A sanity ceiling on the number of max rows we'll ever return for a query.
@@ -96,8 +97,8 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
         for (ColumnDefinition col : columnDefs)
             addComponent(col);
 
-
-        //TODO:JEB get all existing sstable's suffix arrays loaded up here
+        for (SSTableReader reader : baseCfs.getDataTracker().getSSTables())
+            add(reader, columnDefs);
     }
 
     private void addComponent(ColumnDefinition def)
@@ -109,6 +110,9 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
         String indexName = String.format(FILE_NAME_FORMAT, type.getString(def.name));
         logger.info("adding a columnDef: {}, baseCfs = {}, component index name = {}", def, baseCfs, indexName);
         columnDefComponents.put(def.name, new Component(Component.Type.SECONDARY_INDEX, indexName));
+
+        for (SSTableReader reader : baseCfs.getDataTracker().getSSTables())
+            add(reader, Collections.singletonList(def));
     }
 
     void addColumnDef(ColumnDefinition columnDef)
@@ -119,6 +123,11 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
 
     public void add(SSTableReader reader)
     {
+        add(reader, columnDefs);
+    }
+
+    public void add(SSTableReader reader, Collection<ColumnDefinition> toAdd)
+    {
         Descriptor desc = reader.descriptor;
         Set<Component> components = reader.getComponents(Component.Type.SECONDARY_INDEX);
         List<Pair<ByteBuffer, OnDiskSA>> pairs = new ArrayList<>(components.size());
@@ -128,18 +137,23 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
             OnDiskSA onDiskSA = null;
             try
             {
-                //TODO:JEB ugle hack to get validator via the columnDefs
+                //TODO:JEB ugly hack to get validator via the columnDefs
                 ColumnDefinition cDef = null;
                 for (Map.Entry<ByteBuffer, Component> e : columnDefComponents.entrySet())
                 {
-                    if (e.getValue() == component)
+                    if (e.getValue().equals(component))
                     {
                         cDef = getColumnDefinition(e.getKey());
                         break;
                     }
                 }
-                assert cDef != null;
 
+                if (cDef == null || !toAdd.contains(cDef))
+                    continue;
+                //because of the truly whacked out way in which 2I instances get the column defs passed in vs. init,
+                // we have this insane check so we don't open the file numerous times .. <sigh>
+
+                logger.info("opening sa {}", fileName);
                 onDiskSA = new OnDiskSA(new File(fileName), cDef.getValidator());
             }
             catch (IOException e)
@@ -152,7 +166,8 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
             ByteBuffer name = ByteBufferUtil.bytes(fileName.substring(start, end));
             pairs.add(Pair.create(name, onDiskSA));
         }
-        suffixArrays.put(reader, pairs);
+        if (!pairs.isEmpty())
+            suffixArrays.put(reader, pairs);
     }
 
     public void remove(SSTableReader reader)
@@ -403,26 +418,25 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
                 if (indices.isEmpty())
                     continue;
 
-                RoaringBitmap bitmap = null;
-                for (IndexExpression exp : filter.getClause())
+                RoaringBitmap bitmap = new RoaringBitmap();
+                List<IndexExpression> l = filter.getClause();
+                for (int i = 0; i < l.size(); i++)
                 {
+                    IndexExpression exp = l.get(i);
                     OnDiskSA sa = getIndex(indices, exp.bufferForColumn_name());
                     if (sa == null)
                         continue;
 
                     RoaringBitmap matches = search(sa, exp, maxKeys);
+                    // this is intended ONLY while we do not support OR between predicates
                     if (matches == null || matches.isEmpty())
                     {
                         bitmap = null;
-                        continue;
+                        break;
                     }
 
-                    if (bitmap == null)
-                    {
-                        bitmap = new RoaringBitmap();
+                    if (i == 0)
                         bitmap.or(matches);
-                        continue;
-                    }
 
                     bitmap.and(matches);
                 }

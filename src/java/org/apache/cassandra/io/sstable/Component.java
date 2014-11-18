@@ -19,6 +19,7 @@ package org.apache.cassandra.io.sstable;
 
 import java.io.File;
 import java.util.EnumSet;
+import java.util.regex.Pattern;
 
 import com.google.common.base.Objects;
 
@@ -60,7 +61,7 @@ public class Component
         // table of contents, stores the list of all components for the sstable
         TOC("TOC.txt"),
         // in-built secondary index (may be multiple per sstable)
-        SECONDARY_INDEX("sidx.db"),
+        SECONDARY_INDEX("SI_.*.db"),
         // custom component, used by e.g. custom compaction strategy
         CUSTOM(null);
 
@@ -73,8 +74,12 @@ public class Component
         static Type fromRepresentation(String repr)
         {
             for (Type type : TYPES)
-                if (repr.equals(type.repr))
+            {
+                if (type.repr == null)
+                    continue;
+                if (Pattern.matches(type.repr, repr))
                     return type;
+            }
             return CUSTOM;
         }
     }
