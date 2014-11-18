@@ -7,11 +7,14 @@ import java.io.RandomAccessFile;
 import java.nio.ByteBuffer;
 import java.util.Iterator;
 
+import com.google.common.collect.Iterators;
 import org.apache.cassandra.db.marshal.AbstractType;
+import org.apache.cassandra.db.marshal.Int32Type;
 import org.apache.cassandra.io.FSReadError;
 import org.apache.cassandra.utils.ByteBufferDataInput;
 
 import com.google.common.collect.AbstractIterator;
+import org.apache.commons.collections.iterators.EmptyIterator;
 import org.roaringbitmap.RoaringBitmap;
 
 import static org.apache.cassandra.db.index.search.OnDiskBlock.SearchResult;
@@ -20,7 +23,22 @@ public class OnDiskSA implements Iterable<OnDiskSA.DataSuffix>, Closeable
 {
     public static enum IteratorOrder
     {
-        DESC, ASC
+        DESC, ASC;
+
+        public int startAt(SearchResult<DataSuffix> found, boolean inclusive) {
+            switch (this) {
+                case DESC:
+                    return inclusive || found.cmp != 0 ? found.index : found.index + 1;
+
+                case ASC:
+                    if (found.cmp < 0) // search term was bigger then whole data set
+                        return found.index;
+                    return inclusive && (found.cmp == 0 || found.cmp < 0) ? found.index : found.index - 1;
+
+                default:
+                    throw new IllegalArgumentException("Unknown order: " + this);
+            }
+        }
     }
 
     protected final AbstractType<?> comparator;
@@ -78,10 +96,12 @@ public class OnDiskSA implements Iterable<OnDiskSA.DataSuffix>, Closeable
         switch (order)
         {
             case DESC:
-                return new DescDataIterator(dataLevel, dataBlockIdx, inclusive ? start.index : start.index + 1);
+                return (start.cmp < 0)
+                        ? Iterators.<DataSuffix>emptyIterator()
+                        : new DescDataIterator(dataLevel, dataBlockIdx, order.startAt(start, inclusive));
 
             case ASC:
-                return new AscDataIterator(dataLevel, dataBlockIdx, inclusive ? start.index : start.index - 1);
+                return new AscDataIterator(dataLevel, dataBlockIdx, order.startAt(start, inclusive));
 
             default:
                 throw new IllegalArgumentException("Unknown order: " + order);

@@ -5,6 +5,7 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.*;
 
+import com.google.common.collect.Iterators;
 import junit.framework.Assert;
 
 import org.apache.cassandra.db.marshal.Int32Type;
@@ -75,15 +76,15 @@ public class OnDiskSATest
     {
         final Map<ByteBuffer, RoaringBitmap> data = new HashMap<ByteBuffer, RoaringBitmap>()
         {{
-                put(Int32Type.instance.decompose(5), bitMapOf(1));
-                put(Int32Type.instance.decompose(7), bitMapOf(2));
-                put(Int32Type.instance.decompose(1), bitMapOf(3));
-                put(Int32Type.instance.decompose(3), bitMapOf(1, 4));
-                put(Int32Type.instance.decompose(8), bitMapOf(2, 6));
+                put(Int32Type.instance.decompose(5),  bitMapOf(1));
+                put(Int32Type.instance.decompose(7),  bitMapOf(2));
+                put(Int32Type.instance.decompose(1),  bitMapOf(3));
+                put(Int32Type.instance.decompose(3),  bitMapOf(1, 4));
+                put(Int32Type.instance.decompose(8),  bitMapOf(2, 6));
                 put(Int32Type.instance.decompose(10), bitMapOf(5));
-                put(Int32Type.instance.decompose(6), bitMapOf(7));
-                put(Int32Type.instance.decompose(4), bitMapOf(9, 10));
-                put(Int32Type.instance.decompose(0), bitMapOf(11, 12, 1));
+                put(Int32Type.instance.decompose(6),  bitMapOf(7));
+                put(Int32Type.instance.decompose(4),  bitMapOf(9, 10));
+                put(Int32Type.instance.decompose(0),  bitMapOf(11, 12, 1));
         }};
 
         OnDiskSABuilder builder = new OnDiskSABuilder(Int32Type.instance, OnDiskSABuilder.Mode.ORIGINAL);
@@ -169,6 +170,44 @@ public class OnDiskSATest
             Assert.assertEquals(number, suffix.getSuffix());
             Assert.assertEquals(data.get(number), suffix.getKeys());
         }
+
+        onDisk.close();
+
+        List<ByteBuffer> iterCheckNums = new ArrayList<ByteBuffer>() {{
+            add(Int32Type.instance.decompose(3));
+            add(Int32Type.instance.decompose(9));
+            add(Int32Type.instance.decompose(14));
+            add(Int32Type.instance.decompose(42));
+        }};
+
+        OnDiskSABuilder iterTest = new OnDiskSABuilder(Int32Type.instance, OnDiskSABuilder.Mode.ORIGINAL);
+        for (int i = 0; i < iterCheckNums.size(); i++)
+            iterTest.add(iterCheckNums.get(i), bitMapOf(i));
+
+        File iterIndex = File.createTempFile("sa-iter", ".db");
+        iterIndex.deleteOnExit();
+
+        iterTest.finish(iterIndex);
+
+        onDisk = new OnDiskSA(iterIndex, Int32Type.instance);
+
+        ByteBuffer number = Int32Type.instance.decompose(1);
+        Assert.assertEquals(0, Iterators.size(onDisk.iteratorAt(number, OnDiskSA.IteratorOrder.ASC, false)));
+        Assert.assertEquals(0, Iterators.size(onDisk.iteratorAt(number, OnDiskSA.IteratorOrder.ASC, true)));
+        Assert.assertEquals(4, Iterators.size(onDisk.iteratorAt(number, OnDiskSA.IteratorOrder.DESC, false)));
+        Assert.assertEquals(4, Iterators.size(onDisk.iteratorAt(number, OnDiskSA.IteratorOrder.DESC, true)));
+
+        number = Int32Type.instance.decompose(44);
+        Assert.assertEquals(4, Iterators.size(onDisk.iteratorAt(number, OnDiskSA.IteratorOrder.ASC, false)));
+        Assert.assertEquals(4, Iterators.size(onDisk.iteratorAt(number, OnDiskSA.IteratorOrder.ASC, true)));
+        Assert.assertEquals(0, Iterators.size(onDisk.iteratorAt(number, OnDiskSA.IteratorOrder.DESC, false)));
+        Assert.assertEquals(0, Iterators.size(onDisk.iteratorAt(number, OnDiskSA.IteratorOrder.DESC, true)));
+
+        number = Int32Type.instance.decompose(20);
+        Assert.assertEquals(3, Iterators.size(onDisk.iteratorAt(number, OnDiskSA.IteratorOrder.ASC, false)));
+        Assert.assertEquals(3, Iterators.size(onDisk.iteratorAt(number, OnDiskSA.IteratorOrder.ASC, true)));
+        Assert.assertEquals(1, Iterators.size(onDisk.iteratorAt(number, OnDiskSA.IteratorOrder.DESC, false)));
+        Assert.assertEquals(1, Iterators.size(onDisk.iteratorAt(number, OnDiskSA.IteratorOrder.DESC, true)));
 
         onDisk.close();
     }
