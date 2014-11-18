@@ -41,6 +41,8 @@ import org.apache.cassandra.db.filter.ExtendedFilter;
 import org.apache.cassandra.db.index.search.OnDiskSA;
 import org.apache.cassandra.db.index.search.OnDiskSABuilder;
 import org.apache.cassandra.db.marshal.AbstractType;
+import org.apache.cassandra.db.marshal.AsciiType;
+import org.apache.cassandra.db.marshal.UTF8Type;
 import org.apache.cassandra.exceptions.ConfigurationException;
 import org.apache.cassandra.io.sstable.Component;
 import org.apache.cassandra.io.sstable.Descriptor;
@@ -332,7 +334,10 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
                     OnDiskSABuilder builder = componentBuilders.get(component);
                     if (builder == null)
                     {
-                        builder = new OnDiskSABuilder(cDef.getValidator(), OnDiskSABuilder.Mode.SUFFIX);
+                        AbstractType<?> validator = cDef.getValidator();
+                        OnDiskSABuilder.Mode mode = (validator instanceof AsciiType || validator instanceof UTF8Type) ?
+                               OnDiskSABuilder.Mode.SUFFIX : OnDiskSABuilder.Mode.ORIGINAL;
+                        builder = new OnDiskSABuilder(validator, mode);
                         componentBuilders.put(component, builder);
                     }
 
@@ -453,14 +458,12 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
                 {
                     RoaringBitmap bitmap = new RoaringBitmap();
                     OnDiskSA.IteratorOrder order = op == IndexOperator.GTE || op == IndexOperator.GT
-                        ? OnDiskSA.IteratorOrder.ASC : OnDiskSA.IteratorOrder.DESC;
+                        ? OnDiskSA.IteratorOrder.DESC : OnDiskSA.IteratorOrder.ASC;
                     boolean includeKey = op == IndexOperator.GTE || op == IndexOperator.LTE;
-                    int cnt = 0;
                     for (Iterator<OnDiskSA.DataSuffix> iter = sa.iteratorAt(exp.bufferForValue(), order, includeKey); iter.hasNext(); )
                     {
                         RoaringBitmap bm = iter.next().getKeys();
                         bitmap.or(bm);
-                        cnt++;
 
                         if (Iterables.size(bitmap) >= maxRows)
                             break;
