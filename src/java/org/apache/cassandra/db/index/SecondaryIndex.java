@@ -303,12 +303,17 @@ public abstract class SecondaryIndex
      */
     public boolean indexes(ByteBuffer name)
     {
+        return getColumnDefinition(name) != null;
+    }
+
+    public ColumnDefinition getColumnDefinition(ByteBuffer name)
+    {
         for (ColumnDefinition columnDef : columnDefs)
         {
             if (baseCfs.getComparator().compare(columnDef.name, name) == 0)
-                return true;
+                return columnDef;
         }
-        return false;
+        return null;
     }
 
     /**

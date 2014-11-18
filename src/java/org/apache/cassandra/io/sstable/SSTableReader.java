@@ -110,9 +110,6 @@ public class SSTableReader extends SSTable implements Closeable
     public RestorableMeter readMeter;
     private ScheduledFuture readMeterSyncFuture;
 
-    //TODO:JEB move this somewhere else fo sstable does not directly rely on OnDiskSA
-    private final Map<ByteBuffer, OnDiskSA> suffixArrays;
-
     public static long getApproximateKeyCount(Iterable<SSTableReader> sstables, CFMetaData metadata)
     {
         long count = 0;
@@ -316,7 +313,8 @@ public class SSTableReader extends SSTable implements Closeable
                                  bf,
                                  maxDataAge,
                                  sstableMetadata);
-        ssTableReader.loadSecondaryIndexes();
+        ColumnFamilyStore cfs = Keyspace.open(metadata.ksName).getColumnFamilyStore(metadata.cfName);
+        cfs.indexManager.registerSecondaryIndexes(ssTableReader);
         return ssTableReader;
     }
 
@@ -333,7 +331,6 @@ public class SSTableReader extends SSTable implements Closeable
         this.maxDataAge = maxDataAge;
 
         deletingTask = new SSTableDeletingTask(this);
-        suffixArrays = new HashMap<>();
 
         // Don't track read rates for tables in the system keyspace and don't bother trying to load or persist
         // the read meter when in client mode
@@ -394,7 +391,8 @@ public class SSTableReader extends SSTable implements Closeable
         // close the BF so it can be opened later.
         bf.close();
         indexSummary.close();
-        closeSecondaryIndexes();
+        ColumnFamilyStore cfs = Keyspace.open(metadata.ksName).getColumnFamilyStore(metadata.cfName);
+        cfs.indexManager.closeSecondaryIndexes(this);
     }
 
     public void setTrackedBy(DataTracker tracker)
@@ -466,42 +464,6 @@ public class SSTableReader extends SSTable implements Closeable
         dfile = dbuilder.complete(descriptor.filenameFor(Component.DATA));
         if (saveSummaryIfCreated && (recreateBloomFilter || !summaryLoaded)) // save summary information to disk
             saveSummary(this, ibuilder, dbuilder);
-        loadSecondaryIndexes();
-    }
-
-    private void loadSecondaryIndexes()
-    {
-        Descriptor desc = descriptor;
-        for (Component component : getComponents(Component.Type.SECONDARY_INDEX))
-        {
-            String fileName = desc.filenameFor(component);
-            OnDiskSA onDiskSA = null;
-            try
-            {
-                onDiskSA = new OnDiskSA(new File(fileName), metadata.comparator);
-            }
-            catch (IOException e)
-            {
-                logger.error("problem opening index {} for sstable {}", fileName, this, e);
-            }
-
-            int start = fileName.indexOf("_") + 1;
-            int end = fileName.lastIndexOf(".");
-            ByteBuffer name = ByteBufferUtil.bytes(fileName.substring(start, end));
-            suffixArrays.put(name, onDiskSA);
-        }
-    }
-
-    private void closeSecondaryIndexes()
-    {
-        for (OnDiskSA sa : suffixArrays.values())
-            FileUtils.closeQuietly(sa);
-        suffixArrays.clear();
-    }
-
-    public Map<ByteBuffer, OnDiskSA> getSuffixArrays()
-    {
-        return suffixArrays;
     }
 
     private void buildSummary(boolean recreateBloomFilter, SegmentedFile.Builder ibuilder, SegmentedFile.Builder dbuilder, boolean summaryLoaded) throws IOException
