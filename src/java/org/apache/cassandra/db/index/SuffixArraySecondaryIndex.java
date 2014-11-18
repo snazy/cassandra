@@ -47,8 +47,10 @@ import org.apache.cassandra.io.sstable.Descriptor;
 import org.apache.cassandra.io.sstable.SSTableReader;
 import org.apache.cassandra.io.sstable.SSTableWriterListenable;
 import org.apache.cassandra.io.sstable.SSTableWriterListener;
+import org.apache.cassandra.io.util.FileUtils;
 import org.apache.cassandra.thrift.IndexExpression;
 import org.apache.cassandra.thrift.IndexOperator;
+import org.apache.cassandra.utils.ByteBufferUtil;
 import org.apache.cassandra.utils.Pair;
 import org.roaringbitmap.RoaringBitmap;
 
@@ -73,10 +75,14 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
 
     private final Map<ByteBuffer, Component> columnDefComponents;
 
+    private final Map<SSTableReader, List<Pair<ByteBuffer, OnDiskSA>>> suffixArrays;
+
+
     public SuffixArraySecondaryIndex()
     {
         openListeners = new ConcurrentHashMap<>();
         columnDefComponents = new ConcurrentHashMap<>();
+        suffixArrays = new ConcurrentHashMap<>();
     }
 
     public void init()
@@ -87,6 +93,9 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
         //  we'll loop here just for sanity sake ...
         for (ColumnDefinition col : columnDefs)
             addComponent(col);
+
+
+        //TODO:JEB get all existing sstable's suffix arrays loaded up here
     }
 
     private void addComponent(ColumnDefinition def)
@@ -104,6 +113,55 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
     {
         super.addColumnDef(columnDef);
         addComponent(columnDef);
+    }
+
+    public void add(SSTableReader reader)
+    {
+        Descriptor desc = reader.descriptor;
+        Set<Component> components = reader.getComponents(Component.Type.SECONDARY_INDEX);
+        List<Pair<ByteBuffer, OnDiskSA>> pairs = new ArrayList<>(components.size());
+        for (Component component : components)
+        {
+            String fileName = desc.filenameFor(component);
+            OnDiskSA onDiskSA = null;
+            try
+            {
+                //TODO:JEB ugle hack to get validator via the columnDefs
+                ColumnDefinition cDef = null;
+                for (Map.Entry<ByteBuffer, Component> e : columnDefComponents.entrySet())
+                {
+                    if (e.getValue() == component)
+                    {
+                        cDef = getColumnDefinition(e.getKey());
+                        break;
+                    }
+                }
+                assert cDef != null;
+
+                onDiskSA = new OnDiskSA(new File(fileName), cDef.getValidator());
+            }
+            catch (IOException e)
+            {
+                logger.error("problem opening index {} for sstable {}", fileName, this, e);
+            }
+
+            int start = fileName.indexOf("_") + 1;
+            int end = fileName.lastIndexOf(".");
+            ByteBuffer name = ByteBufferUtil.bytes(fileName.substring(start, end));
+            pairs.add(Pair.create(name, onDiskSA));
+        }
+        suffixArrays.put(reader, pairs);
+    }
+
+    public void remove(SSTableReader reader)
+    {
+        List<Pair<ByteBuffer, OnDiskSA>> suffixArray = suffixArrays.remove(reader);
+        if (suffixArray == null || suffixArray.isEmpty())
+            return;
+
+        for (Pair<ByteBuffer, OnDiskSA> pair : suffixArray)
+            FileUtils.closeQuietly(pair.right);
+        suffixArray.clear();
     }
 
     private AbstractType<?> getComparator()
@@ -259,10 +317,22 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
                     Component component = entry.getValue().left;
                     assert columnDefComponents.values().contains(component);
 
+                    // TODO:JEB ugly hack to get ColumnDef so we can get the validator (column name comparator)
+                    ColumnDefinition cDef = null;
+                    for (Map.Entry<ByteBuffer, Component> e : columnDefComponents.entrySet())
+                    {
+                        if (e.getValue() == component)
+                        {
+                            cDef = getColumnDefinition(e.getKey());
+                            break;
+                        }
+                    }
+                    assert cDef != null;
+
                     OnDiskSABuilder builder = componentBuilders.get(component);
                     if (builder == null)
                     {
-                        builder = new OnDiskSABuilder(getComparator(), OnDiskSABuilder.Mode.SUFFIX);
+                        builder = new OnDiskSABuilder(cDef.getValidator(), OnDiskSABuilder.Mode.SUFFIX);
                         componentBuilders.put(component, builder);
                     }
 
@@ -324,28 +394,50 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
                 if (keys.size() >= maxKeys)
                     break;
 
-                Map<ByteBuffer, OnDiskSA> indices = reader.getSuffixArrays();
+                List<Pair<ByteBuffer, OnDiskSA>> indices = suffixArrays.get(reader);
                 if (indices.isEmpty())
                     continue;
 
-                RoaringBitmap bitmap = new RoaringBitmap();
+                RoaringBitmap bitmap = null;
                 for (IndexExpression exp : filter.getClause())
                 {
-                    OnDiskSA sa = indices.get(exp.bufferForColumn_name());
+                    OnDiskSA sa = getIndex(indices, exp.bufferForColumn_name());
                     if (sa == null)
                         continue;
 
                     RoaringBitmap matches = search(sa, exp, maxKeys);
                     if (matches == null || matches.isEmpty())
+                    {
+                        bitmap = null;
                         continue;
+                    }
 
-                    bitmap.or(matches);
+                    if (bitmap == null)
+                    {
+                        bitmap = new RoaringBitmap();
+                        bitmap.or(matches);
+                        continue;
+                    }
+
+                    bitmap.and(matches);
                 }
 
-                keys.addAll(readKeys(reader, bitmap));
+                if (bitmap != null)
+                    keys.addAll(readKeys(reader, bitmap));
             }
 
             return loadRows(keys, maxKeys);
+        }
+
+        private OnDiskSA getIndex(List<Pair<ByteBuffer, OnDiskSA>> indices, ByteBuffer byteBuffer)
+        {
+            for (Pair<ByteBuffer, OnDiskSA> index : indices)
+            {
+                // TODO:JEB not sure if we need to use the column's (name) comparator, or if BB compare() is good enough
+                if (index.left.equals(byteBuffer))
+                    return index.right;
+            }
+            return null;
         }
 
         private RoaringBitmap search(OnDiskSA sa, IndexExpression exp, int maxRows)
@@ -363,14 +455,14 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
                     OnDiskSA.IteratorOrder order = op == IndexOperator.GTE || op == IndexOperator.GT
                         ? OnDiskSA.IteratorOrder.ASC : OnDiskSA.IteratorOrder.DESC;
                     boolean includeKey = op == IndexOperator.GTE || op == IndexOperator.LTE;
-                    int curCnt = 0;
+                    int cnt = 0;
                     for (Iterator<OnDiskSA.DataSuffix> iter = sa.iteratorAt(exp.bufferForValue(), order, includeKey); iter.hasNext(); )
                     {
                         RoaringBitmap bm = iter.next().getKeys();
-                        bitmap.and(bm);
+                        bitmap.or(bm);
+                        cnt++;
 
-                        curCnt += Iterables.size(bm);
-                        if (curCnt >= maxRows)
+                        if (Iterables.size(bitmap) >= maxRows)
                             break;
                     }
                     return bitmap;

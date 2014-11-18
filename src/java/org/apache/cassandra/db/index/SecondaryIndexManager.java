@@ -622,6 +622,28 @@ public class SecondaryIndexManager
         return set.build();
     }
 
+    public void registerSecondaryIndexes(SSTableReader ssTableReader)
+    {
+        for (SecondaryIndex secondaryIndex : rowLevelIndexMap.values())
+        {
+            if (secondaryIndex instanceof SuffixArraySecondaryIndex)
+            {
+                ((SuffixArraySecondaryIndex)secondaryIndex).add(ssTableReader);
+            }
+        }
+    }
+
+    public void closeSecondaryIndexes(SSTableReader ssTableReader)
+    {
+        for (SecondaryIndex secondaryIndex : rowLevelIndexMap.values())
+        {
+            if (secondaryIndex instanceof SuffixArraySecondaryIndex)
+            {
+                ((SuffixArraySecondaryIndex)secondaryIndex).remove(ssTableReader);
+            }
+        }
+    }
+
     public static interface Updater
     {
         /** called when constructing the index against pre-existing data */
