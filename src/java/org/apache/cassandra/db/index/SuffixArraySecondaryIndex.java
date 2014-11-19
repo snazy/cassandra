@@ -130,17 +130,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
             OnDiskSA onDiskSA = null;
             try
             {
-                //TODO:JEB ugly hack to get validator via the columnDefs
-                ColumnDefinition cDef = null;
-                for (Map.Entry<ByteBuffer, Component> e : columnDefComponents.entrySet())
-                {
-                    if (e.getValue().equals(component))
-                    {
-                        cDef = getColumnDefinition(e.getKey());
-                        break;
-                    }
-                }
-
+                ColumnDefinition cDef = getColumnDef(component);
                 if (cDef == null || !toAdd.contains(cDef))
                     continue;
                 //because of the truly whacked out way in which 2I instances get the column defs passed in vs. init,
@@ -160,7 +150,24 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
             pairs.add(Pair.create(name, onDiskSA));
         }
         if (!pairs.isEmpty())
-            suffixArrays.put(reader, pairs);
+        {
+            List<Pair<ByteBuffer, OnDiskSA>> openSAs = suffixArrays.get(reader);
+            if (openSAs == null)
+                suffixArrays.put(reader, pairs);
+            else
+                openSAs.addAll(pairs);
+        }
+    }
+
+    private ColumnDefinition getColumnDef(Component component)
+    {
+        //TODO:JEB ugly hack to get validator via the columnDefs
+        for (Map.Entry<ByteBuffer, Component> e : columnDefComponents.entrySet())
+        {
+            if (e.getValue().equals(component))
+                return getColumnDefinition(e.getKey());
+        }
+        return null;
     }
 
     public void add(SSTableReader reader)
@@ -333,22 +340,10 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
                     Component component = entry.getValue().left;
                     assert columnDefComponents.values().contains(component);
 
-                    // TODO:JEB ugly hack to get ColumnDef so we can get the validator (column name comparator)
-                    ColumnDefinition cDef = null;
-                    for (Map.Entry<ByteBuffer, Component> e : columnDefComponents.entrySet())
-                    {
-                        if (e.getValue() == component)
-                        {
-                            cDef = getColumnDefinition(e.getKey());
-                            break;
-                        }
-                    }
-                    assert cDef != null;
-
                     OnDiskSABuilder builder = componentBuilders.get(component);
                     if (builder == null)
                     {
-                        AbstractType<?> validator = cDef.getValidator();
+                        AbstractType<?> validator = getColumnDef(component).getValidator();
                         OnDiskSABuilder.Mode mode = (validator instanceof AsciiType || validator instanceof UTF8Type) ?
                                OnDiskSABuilder.Mode.SUFFIX : OnDiskSABuilder.Mode.ORIGINAL;
                         builder = new OnDiskSABuilder(validator, mode);
