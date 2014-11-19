@@ -79,7 +79,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
     private final Map<ByteBuffer, Component> columnDefComponents;
 
     private final Map<SSTableReader, List<Pair<ByteBuffer, OnDiskSA>>> suffixArrays;
-
+    private volatile boolean hasInited;
 
     public SuffixArraySecondaryIndex()
     {
@@ -90,40 +90,33 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
 
     public void init()
     {
-        logger.info("init'ing a SuffixArraySecondaryIndex");
-
-        // while init() is called form SIM when the class is first created, and only one columnDef has been set,
-        //  we'll loop here just for sanity sake ...
-        for (ColumnDefinition col : columnDefs)
-            addComponent(col);
-
-        for (SSTableReader reader : baseCfs.getDataTracker().getSSTables())
-            add(reader, columnDefs);
+        // init() is called by SIM only on the instance that it will keep around, but will call addColumnDef on any instance
+        // that it happens to create (and subsequently/immediately throw away)
+        hasInited = true;
+        addComponent(columnDefs);
     }
 
-    private void addComponent(ColumnDefinition def)
+    private void addComponent(Set<ColumnDefinition> defs)
     {
-        AbstractType<?> type = getComparator();
-        if (type == null)
+        //TODO:JEB not sure if this is the correct comparator
+        AbstractType<?> type = baseCfs.getComparator();
+        for (ColumnDefinition def : defs)
+        {
+            String indexName = String.format(FILE_NAME_FORMAT, type.getString(def.name));
+            columnDefComponents.put(def.name, new Component(Component.Type.SECONDARY_INDEX, indexName));
+        }
+
+        if (!hasInited)
             return;
 
-        String indexName = String.format(FILE_NAME_FORMAT, type.getString(def.name));
-        logger.info("adding a columnDef: {}, baseCfs = {}, component index name = {}", def, baseCfs, indexName);
-        columnDefComponents.put(def.name, new Component(Component.Type.SECONDARY_INDEX, indexName));
-
         for (SSTableReader reader : baseCfs.getDataTracker().getSSTables())
-            add(reader, Collections.singletonList(def));
+            add(reader, defs);
     }
 
     void addColumnDef(ColumnDefinition columnDef)
     {
         super.addColumnDef(columnDef);
-        addComponent(columnDef);
-    }
-
-    public void add(SSTableReader reader)
-    {
-        add(reader, columnDefs);
+        addComponent(Collections.singleton(columnDef));
     }
 
     public void add(SSTableReader reader, Collection<ColumnDefinition> toAdd)
@@ -170,6 +163,12 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
             suffixArrays.put(reader, pairs);
     }
 
+    public void add(SSTableReader reader)
+    {
+        assert hasInited : "trying to add an sstable to this secondary index before it's been init'ed";
+        add(reader, columnDefs);
+    }
+
     public void remove(SSTableReader reader)
     {
         List<Pair<ByteBuffer, OnDiskSA>> suffixArray = suffixArrays.remove(reader);
@@ -181,9 +180,9 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
         suffixArray.clear();
     }
 
-    private AbstractType<?> getComparator()
+    public boolean isIndexBuilt(ByteBuffer columnName)
     {
-        return baseCfs != null ? baseCfs.getComparator() : null;
+        return true;
     }
 
     public void validateOptions() throws ConfigurationException
@@ -437,8 +436,8 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
 
                     if (i == 0)
                         bitmap.or(matches);
-
-                    bitmap.and(matches);
+                    else
+                        bitmap.and(matches);
                 }
 
                 if (bitmap != null)

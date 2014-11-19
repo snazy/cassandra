@@ -355,9 +355,9 @@ public abstract class SecondaryIndex
                 throw new RuntimeException("Unknown index type: " + cdef.getIndexName());
         }
 
+        index.setBaseCfs(baseCfs);
         index.addColumnDef(cdef);
         index.validateOptions();
-        index.setBaseCfs(baseCfs);
 
         return index;
     }
