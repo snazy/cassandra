@@ -7,14 +7,11 @@ import java.io.RandomAccessFile;
 import java.nio.ByteBuffer;
 import java.util.Iterator;
 
-import com.google.common.collect.Iterators;
+import com.google.common.collect.AbstractIterator;
+
 import org.apache.cassandra.db.marshal.AbstractType;
-import org.apache.cassandra.db.marshal.Int32Type;
 import org.apache.cassandra.io.FSReadError;
 import org.apache.cassandra.utils.ByteBufferDataInput;
-
-import com.google.common.collect.AbstractIterator;
-import org.apache.commons.collections.iterators.EmptyIterator;
 import org.roaringbitmap.RoaringBitmap;
 
 import static org.apache.cassandra.db.index.search.OnDiskBlock.SearchResult;

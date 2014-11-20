@@ -7,6 +7,7 @@ import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.ConcurrentModificationException;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
@@ -18,13 +19,19 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Future;
 import java.util.concurrent.FutureTask;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
+import com.google.common.collect.HashBasedTable;
 import com.google.common.collect.ImmutableList;
-import com.google.common.collect.Iterables;
+import com.google.common.collect.Table;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import org.apache.cassandra.concurrent.JMXEnabledThreadPoolExecutor;
+import org.apache.cassandra.concurrent.NamedThreadFactory;
 import org.apache.cassandra.concurrent.Stage;
 import org.apache.cassandra.concurrent.StageManager;
 import org.apache.cassandra.config.ColumnDefinition;
@@ -68,6 +75,18 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
     protected static final Logger logger = LoggerFactory.getLogger(SuffixArraySecondaryIndex.class);
     public static final String FILE_NAME_FORMAT = "SI_%s.db";
 
+    private static final ThreadPoolExecutor executor = getExecutor();
+
+    private static ThreadPoolExecutor getExecutor()
+    {
+        ThreadPoolExecutor executor = new JMXEnabledThreadPoolExecutor(1, 8, 60, TimeUnit.SECONDS,
+                                                    new LinkedBlockingQueue<Runnable>(),
+                                                    new NamedThreadFactory("SuffixArrayBuilder"),
+                                                    "internal");
+        executor.allowCoreThreadTimeOut(true);
+        return executor;
+    }
+
     /**
      * A sanity ceiling on the number of max rows we'll ever return for a query.
      */
@@ -78,14 +97,14 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
 
     private final Map<ByteBuffer, Component> columnDefComponents;
 
-    private final Map<SSTableReader, List<Pair<ByteBuffer, OnDiskSA>>> suffixArrays;
+    private final Table<SSTableReader, ByteBuffer, OnDiskSA> suffixArrays;
     private volatile boolean hasInited;
 
     public SuffixArraySecondaryIndex()
     {
         openListeners = new ConcurrentHashMap<>();
         columnDefComponents = new ConcurrentHashMap<>();
-        suffixArrays = new ConcurrentHashMap<>();
+        suffixArrays = HashBasedTable.create();
     }
 
     public void init()
@@ -98,6 +117,8 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
 
     private void addComponent(Set<ColumnDefinition> defs)
     {
+        if (baseCfs == null)
+            return;
         //TODO:JEB not sure if this is the correct comparator
         AbstractType<?> type = baseCfs.getComparator();
         for (ColumnDefinition def : defs)
@@ -108,6 +129,8 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
 
         if (!hasInited)
             return;
+
+        executor.setCorePoolSize(columnDefs.size());
 
         for (SSTableReader reader : baseCfs.getDataTracker().getSSTables())
             add(reader, defs);
@@ -122,9 +145,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
     public void add(SSTableReader reader, Collection<ColumnDefinition> toAdd)
     {
         Descriptor desc = reader.descriptor;
-        Set<Component> components = reader.getComponents(Component.Type.SECONDARY_INDEX);
-        List<Pair<ByteBuffer, OnDiskSA>> pairs = new ArrayList<>(components.size());
-        for (Component component : components)
+        for (Component component : reader.getComponents(Component.Type.SECONDARY_INDEX))
         {
             String fileName = desc.filenameFor(component);
             OnDiskSA onDiskSA = null;
@@ -136,26 +157,17 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
                 //because of the truly whacked out way in which 2I instances get the column defs passed in vs. init,
                 // we have this insane check so we don't open the file numerous times .. <sigh>
 
-                logger.info("opening sa {}", fileName);
                 onDiskSA = new OnDiskSA(new File(fileName), cDef.getValidator());
             }
             catch (IOException e)
             {
-                logger.error("problem opening index {} for sstable {}", fileName, this, e);
+                logger.error("problem opening suffix array index {} for sstable {}", fileName, this, e);
             }
 
             int start = fileName.indexOf("_") + 1;
             int end = fileName.lastIndexOf(".");
             ByteBuffer name = ByteBufferUtil.bytes(fileName.substring(start, end));
-            pairs.add(Pair.create(name, onDiskSA));
-        }
-        if (!pairs.isEmpty())
-        {
-            List<Pair<ByteBuffer, OnDiskSA>> openSAs = suffixArrays.get(reader);
-            if (openSAs == null)
-                suffixArrays.put(reader, pairs);
-            else
-                openSAs.addAll(pairs);
+            suffixArrays.put(reader, name, onDiskSA);
         }
     }
 
@@ -178,13 +190,24 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
 
     public void remove(SSTableReader reader)
     {
-        List<Pair<ByteBuffer, OnDiskSA>> suffixArray = suffixArrays.remove(reader);
-        if (suffixArray == null || suffixArray.isEmpty())
-            return;
-
-        for (Pair<ByteBuffer, OnDiskSA> pair : suffixArray)
-            FileUtils.closeQuietly(pair.right);
-        suffixArray.clear();
+        // this ConcurrentModificationException catching is because the suffixArrays as a guava table
+        // returns only a HashMap, not anything more concurrency-safe
+        while (true)
+        {
+            try
+            {
+                for (Map.Entry<ByteBuffer, OnDiskSA> entry : suffixArrays.row(reader).entrySet())
+                {
+                    suffixArrays.remove(reader, entry.getKey());
+                    FileUtils.closeQuietly(entry.getValue());
+                }
+                break;
+            }
+            catch (ConcurrentModificationException cme)
+            {
+                continue;
+            }
+        }
     }
 
     public boolean isIndexBuilt(ByteBuffer columnName)
@@ -354,17 +377,28 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
                 }
 
                 // now do the writing
+                logger.info("about to submit for concurrent SA'ing");
+                List<Future<Boolean>> futures = new ArrayList<>(componentBuilders.size());
                 for (Map.Entry<Component, OnDiskSABuilder> entry : componentBuilders.entrySet())
                 {
-                    String fileName = null;
+                    String fileName = descriptor.filenameFor(entry.getKey());
+                    logger.info("submitting {} for concurrent SA'ing", fileName);
+                    futures.add(executor.submit(new BuilderFinisher(entry.getValue(), fileName)));
+                }
+
+                for (Future<Boolean> f : futures)
+                {
                     try
                     {
-                        fileName = descriptor.filenameFor(entry.getKey());
-                        entry.getValue().finish(new File(fileName));
+                        // set *some* upper bound of wait time
+                        f.get(60, TimeUnit.MINUTES);
+                    }
+                    catch (TimeoutException toe)
+                    {
+                        logger.warn("timed out waiting for a suffix array index to be created");
                     }
                     catch (Exception e)
                     {
-                        logger.error("failed to write output file {}", fileName);
                         throw new IOError(e);
                     }
                 }
@@ -380,6 +414,33 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
         public int compareTo(String o)
         {
             return descriptor.generation;
+        }
+    }
+
+    private class BuilderFinisher implements Callable<Boolean>
+    {
+        private final OnDiskSABuilder builder;
+        private final String fileName;
+
+        public BuilderFinisher(OnDiskSABuilder builder, String fileName)
+        {
+            this.builder = builder;
+            this.fileName = fileName;
+        }
+
+        public Boolean call() throws Exception
+        {
+            try
+            {
+                logger.info("starting SA for {}", fileName);
+                builder.finish(new File(fileName));
+                logger.info("finishing SA for {}", fileName);
+                return Boolean.TRUE;
+            }
+            catch (Exception e)
+            {
+                throw new Exception(String.format("failed to write output file %s", fileName), e);
+            }
         }
     }
 
@@ -408,7 +469,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
                 if (keys.size() >= maxKeys)
                     break;
 
-                List<Pair<ByteBuffer, OnDiskSA>> indices = suffixArrays.get(reader);
+                Map<ByteBuffer, OnDiskSA> indices = suffixArrays.row(reader);
                 if (indices.isEmpty())
                     continue;
 
@@ -417,11 +478,11 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
                 for (int i = 0; i < l.size(); i++)
                 {
                     IndexExpression exp = l.get(i);
-                    OnDiskSA sa = getIndex(indices, exp.bufferForColumn_name());
+                    OnDiskSA sa = indices.get(exp.bufferForColumn_name());
                     if (sa == null)
                         continue;
 
-                    RoaringBitmap matches = search(sa, exp, maxKeys);
+                    RoaringBitmap matches = search(sa, exp);
                     // this is intended ONLY while we do not support OR between predicates
                     if (matches == null || matches.isEmpty())
                     {
@@ -442,18 +503,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
             return loadRows(keys, maxKeys);
         }
 
-        private OnDiskSA getIndex(List<Pair<ByteBuffer, OnDiskSA>> indices, ByteBuffer byteBuffer)
-        {
-            for (Pair<ByteBuffer, OnDiskSA> index : indices)
-            {
-                // TODO:JEB not sure if we need to use the column's (name) comparator, or if BB compare() is good enough
-                if (index.left.equals(byteBuffer))
-                    return index.right;
-            }
-            return null;
-        }
-
-        private RoaringBitmap search(OnDiskSA sa, IndexExpression exp, int maxRows)
+        private RoaringBitmap search(OnDiskSA sa, IndexExpression exp)
         {
             try
             {
@@ -472,9 +522,6 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
                     {
                         RoaringBitmap bm = iter.next().getKeys();
                         bitmap.or(bm);
-
-                        if (Iterables.size(bitmap) >= maxRows)
-                            break;
                     }
                     return bitmap;
                 }
