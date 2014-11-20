@@ -12,6 +12,7 @@ import com.carrotsearch.hppc.LongArrayList;
 import com.google.common.collect.AbstractIterator;
 
 import org.apache.cassandra.db.marshal.AbstractType;
+import org.apache.cassandra.db.marshal.UTF8Type;
 import org.apache.cassandra.io.FSWriteError;
 import org.apache.cassandra.io.util.FileUtils;
 import org.apache.cassandra.utils.ByteBufferDataOutput;
@@ -101,7 +102,7 @@ public class OnDiskSABuilder
             Iterator<Pair<ByteBuffer, RoaringBitmap>> suffixes = sa.finish();
 
             // align biggest element size on the 2 default chunks size boundary
-            int dataBlockSize = (int) align(sa.maxElementSize, INDEX_BLOCK_SIZE) * 2;
+            int dataBlockSize = 1 << 20;//(int) align(sa.maxElementSize, INDEX_BLOCK_SIZE) * 2;
             while (suffixes.hasNext())
             {
                 Pair<ByteBuffer, RoaringBitmap> suffix = suffixes.next();
@@ -219,7 +220,15 @@ public class OnDiskSABuilder
         public void serialize(DataOutput out) throws IOException
         {
             super.serialize(out);
-            keys.serialize(out);
+            try
+            {
+                keys.serialize(out);
+            }
+            catch (Exception e)
+            {
+                throw new RuntimeException(String.format("failed to serialize keys for term %s, keys size = %d",
+                                                         UTF8Type.instance.compose(suffix), keys.serializedSizeInBytes()), e);
+            }
         }
     }
 

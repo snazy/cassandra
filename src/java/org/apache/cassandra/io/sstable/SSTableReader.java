@@ -1269,10 +1269,17 @@ public class SSTableReader extends SSTable implements Closeable
     public DecoratedKey keyAt(long position) throws IOException
     {
         FileDataInput in = dfile.getSegment(position);
-        if (in.isEOF())
-            return null;
-        ByteBuffer key = ByteBufferUtil.readWithShortLength(in);
-        return partitioner.decorateKey(key);
+        try
+        {
+            if (in.isEOF())
+                return null;
+            ByteBuffer key = ByteBufferUtil.readWithShortLength(in);
+            return partitioner.decorateKey(key);
+        }
+        finally
+        {
+            in.close();
+        }
     }
 
     /**
