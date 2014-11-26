@@ -32,7 +32,7 @@ import org.apache.cassandra.utils.CLibrary;
  * Adds buffering, mark, and fsyncing to OutputStream.  We always fsync on close; we may also
  * fsync incrementally if Config.trickle_fsync is enabled.
  */
-public class SequentialWriter extends OutputStream
+public class SequentialWriter extends AbstractDataOutput
 {
     private static final Logger logger = LoggerFactory.getLogger(SequentialWriter.class);
 
@@ -167,6 +167,13 @@ public class SequentialWriter extends OutputStream
         current += toCopy;
 
         return toCopy;
+    }
+
+    public void skipBytes(int numBytes) throws IOException
+    {
+        flush();
+        out.seek(out.getFilePointer() + numBytes);
+        current = bufferOffset = out.getFilePointer();
     }
 
     /**

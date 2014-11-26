@@ -3,16 +3,22 @@ package org.apache.cassandra.db.index.search;
 import java.nio.ByteBuffer;
 
 import org.apache.cassandra.db.marshal.AbstractType;
+import org.apache.cassandra.io.util.RandomAccessReader;
 
 public abstract class OnDiskBlock<T extends Suffix>
 {
-    protected final ByteBuffer data;
+    // this contains offsets of the suffixes and suffix data
+    protected final ByteBuffer blockIndex;
     protected final int blockIndexSize;
+    protected final RandomAccessReader source;
+    protected final long auxiliarySectionOffset;
 
-    public OnDiskBlock(ByteBuffer data)
+    public OnDiskBlock(ByteBuffer blockIndex, RandomAccessReader source)
     {
-        this.data = data;
-        this.blockIndexSize = data.getInt() * 4;
+        this.blockIndex = blockIndex;
+        this.blockIndexSize = blockIndex.getInt() * 2;
+        this.source = source;
+        this.auxiliarySectionOffset = source.getFilePointer();
     }
 
     public SearchResult<T> search(AbstractType<?> comparator, ByteBuffer query)
@@ -41,7 +47,7 @@ public abstract class OnDiskBlock<T extends Suffix>
 
     protected T getElement(int index)
     {
-        ByteBuffer dup = data.duplicate();
+        ByteBuffer dup = blockIndex.duplicate();
         int startsAt = getElementPosition(index);
         if (getElementsSize() - 1 == index) // last element
             dup.position(startsAt);
@@ -53,21 +59,21 @@ public abstract class OnDiskBlock<T extends Suffix>
 
     protected int getElementPosition(int idx)
     {
-        return getElementPosition(data, idx, blockIndexSize);
+        return getElementPosition(blockIndex, idx, blockIndexSize);
     }
 
     protected int getElementsSize()
     {
-        return blockIndexSize / 4;
+        return blockIndexSize / 2;
     }
 
     protected abstract T cast(ByteBuffer data);
 
     static int getElementPosition(ByteBuffer data, int idx, int indexSize)
     {
-        idx *= 4;
+        idx *= 2;
         assert idx < indexSize;
-        return data.position() + indexSize + data.getInt(data.position() + idx);
+        return data.position() + indexSize + data.getShort(data.position() + idx);
     }
 
     public static class SearchResult<T>
