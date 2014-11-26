@@ -16,14 +16,10 @@ public class Suffix
     public ByteBuffer getSuffix()
     {
         ByteBuffer dup = content.duplicate();
-        int len = dup.getInt();
+        int len = dup.getShort();
         dup.limit(dup.position() + len);
         return dup;
     }
-
-    /**
-     * TODO: optimize compare/get methods so they don't do any buffer copies
-     */
 
     public int compareTo(AbstractType<?> comparator, ByteBuffer query)
     {
@@ -32,9 +28,11 @@ public class Suffix
 
     public int compareTo(AbstractType<?> comparator, ByteBuffer query, boolean checkFully)
     {
-        ByteBuffer dup = content.duplicate();
-        int len = dup.getInt();
-        dup.limit(dup.position() + (checkFully ? len : Math.min(len, query.remaining())));
-        return comparator.compare(dup, query.duplicate());
+        int position = content.position(), limit = content.limit(), len = content.getShort(position);
+        content.position(position + 2).limit(position + 2 + (checkFully ? len : Math.min(len, query.remaining())));
+        int cmp = comparator.compare(content, query);
+        content.position(position).limit(limit);
+        return cmp;
+
     }
 }

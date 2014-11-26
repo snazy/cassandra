@@ -3,23 +3,23 @@ package org.apache.cassandra.db.index.search;
 import java.io.DataOutput;
 import java.io.File;
 import java.io.IOException;
-import java.io.RandomAccessFile;
 import java.nio.ByteBuffer;
 import java.util.*;
-
-import com.carrotsearch.hppc.IntArrayList;
-import com.carrotsearch.hppc.LongArrayList;
-import com.google.common.collect.AbstractIterator;
 
 import org.apache.cassandra.db.marshal.AbstractType;
 import org.apache.cassandra.db.marshal.UTF8Type;
 import org.apache.cassandra.io.FSWriteError;
 import org.apache.cassandra.io.util.FileUtils;
+import org.apache.cassandra.io.util.SequentialWriter;
 import org.apache.cassandra.utils.ByteBufferDataOutput;
 import org.apache.cassandra.utils.ByteBufferUtil;
 import org.apache.cassandra.utils.Pair;
-import org.apache.cassandra.utils.PrimitiveIntSort;
 
+import com.carrotsearch.hppc.LongArrayList;
+import com.carrotsearch.hppc.ShortArrayList;
+import com.google.common.collect.AbstractIterator;
+import net.mintern.primitive.Primitive;
+import net.mintern.primitive.comparators.LongComparator;
 import org.roaringbitmap.RoaringBitmap;
 
 /**
@@ -34,19 +34,23 @@ public class OnDiskSABuilder
         SUFFIX, ORIGINAL
     }
 
-    public static final int INDEX_BLOCK_SIZE = 4096;
+    public static final int BLOCK_SIZE = 4096;
 
     private final AbstractType<?> comparator;
 
-    private final List<MutableLevel<InMemorySuffix>> levels = new ArrayList<>();
+    private final List<MutableLevel<InMemoryPointerSuffix>> levels = new ArrayList<>();
+    private MutableLevel<InMemoryDataSuffix> dataLevel;
+
     private InMemoryDataSuffix lastProcessed;
 
     private final SA sa;
+    private final Mode mode;
 
     public OnDiskSABuilder(AbstractType<?> comparator, Mode mode)
     {
         this.comparator = comparator;
         this.sa = new SA(comparator, mode);
+        this.mode = mode;
     }
 
     public OnDiskSABuilder add(ByteBuffer term, RoaringBitmap keys)
@@ -55,7 +59,7 @@ public class OnDiskSABuilder
         return this;
     }
 
-    private void addSuffix(ByteBuffer suffix, RoaringBitmap keys, RandomAccessFile out, int blockSize) throws IOException
+    private void addSuffix(ByteBuffer suffix, RoaringBitmap keys, SequentialWriter out) throws IOException
     {
         InMemoryDataSuffix current = new InMemoryDataSuffix(suffix, keys);
 
@@ -71,21 +75,21 @@ public class OnDiskSABuilder
         }
         else
         {
-            addSuffix(lastProcessed, out, blockSize);
+            addSuffix(lastProcessed, out);
             lastProcessed = current;
         }
     }
 
-    private void addSuffix(InMemoryDataSuffix suffix, RandomAccessFile out, int blockSize) throws IOException
+    private void addSuffix(InMemoryDataSuffix suffix, SequentialWriter out) throws IOException
     {
-        InMemorySuffix ptr = getLevel(0, out, blockSize).add(suffix);
+        InMemoryPointerSuffix ptr = dataLevel.add(suffix);
         if (ptr == null)
             return;
 
-        int levelIdx = 1;
+        int levelIdx = 0;
         for (;;)
         {
-            MutableLevel<InMemorySuffix> level = getLevel(levelIdx++, out, INDEX_BLOCK_SIZE);
+            MutableLevel<InMemoryPointerSuffix> level = getIndexLevel(levelIdx++, out);
             if ((ptr = level.add(ptr)) == null)
                 break;
         }
@@ -93,25 +97,26 @@ public class OnDiskSABuilder
 
     public void finish(File file) throws FSWriteError
     {
-        RandomAccessFile out = null;
+        SequentialWriter out = null;
 
         try
         {
-            out = new RandomAccessFile(file, "rw");
+            out = new SequentialWriter(file, BLOCK_SIZE, false);
 
             Iterator<Pair<ByteBuffer, RoaringBitmap>> suffixes = sa.finish();
 
-            // align biggest element size on the 2 default chunks size boundary
-            int dataBlockSize = 1 << 20;//(int) align(sa.maxElementSize, INDEX_BLOCK_SIZE) * 2;
+            dataLevel = new MutableLevel<>(out, new MutableDataBlock(mode));
+
             while (suffixes.hasNext())
             {
                 Pair<ByteBuffer, RoaringBitmap> suffix = suffixes.next();
-                addSuffix(suffix.left, suffix.right, out, dataBlockSize);
+                addSuffix(suffix.left, suffix.right, out);
             }
 
             // add the very last processed suffix
-            addSuffix(lastProcessed, out, dataBlockSize);
+            addSuffix(lastProcessed, out);
 
+            dataLevel.flush();
             for (MutableLevel l : levels)
                 l.flush(); // flush all of the buffers
 
@@ -119,12 +124,13 @@ public class OnDiskSABuilder
 
             final long levelIndexPosition = out.getFilePointer();
 
-            out.writeInt(levels.size() - 1);
+            out.writeInt(levels.size());
             for (int i = levels.size() - 1; i >= 0; i--)
                 levels.get(i).flushMetadata();
 
+            dataLevel.flushMetadata();
+
             out.writeLong(levelIndexPosition);
-            out.writeInt(dataBlockSize);
         }
         catch (IOException e)
         {
@@ -136,16 +142,16 @@ public class OnDiskSABuilder
         }
     }
 
-    private MutableLevel<InMemorySuffix> getLevel(int idx, RandomAccessFile out, int blockSize)
+    private MutableLevel<InMemoryPointerSuffix> getIndexLevel(int idx, SequentialWriter out)
     {
         if (levels.size() == 0)
-            levels.add(new MutableLevel<>(out, blockSize));
+            levels.add(new MutableLevel<>(out, new MutableBlock<InMemoryPointerSuffix>()));
 
         if (levels.size() - 1 < idx)
         {
             int toAdd = idx - (levels.size() - 1);
             for (int i = 0; i < toAdd; i++)
-                levels.add(new MutableLevel<>(out, blockSize));
+                levels.add(new MutableLevel<>(out, new MutableBlock<InMemoryPointerSuffix>()));
         }
 
         return levels.get(idx);
@@ -162,12 +168,12 @@ public class OnDiskSABuilder
 
         public int serializedSize()
         {
-            return 4 + suffix.remaining();
+            return 2 + suffix.remaining();
         }
 
         public void serialize(DataOutput out) throws IOException
         {
-            ByteBufferUtil.writeWithLength(suffix, out);
+            ByteBufferUtil.writeWithShortLength(suffix, out);
         }
     }
 
@@ -209,27 +215,6 @@ public class OnDiskSABuilder
         {
             keys = RoaringBitmap.or(keys, newKeys);
         }
-
-        @Override
-        public int serializedSize()
-        {
-            return super.serializedSize() + keys.serializedSizeInBytes();
-        }
-
-        @Override
-        public void serialize(DataOutput out) throws IOException
-        {
-            super.serialize(out);
-            try
-            {
-                keys.serialize(out);
-            }
-            catch (Exception e)
-            {
-                throw new RuntimeException(String.format("failed to serialize keys for term %s, keys size = %d",
-                                                         UTF8Type.instance.compose(suffix), keys.serializedSizeInBytes()), e);
-            }
-        }
     }
 
     private static class SA
@@ -239,7 +224,6 @@ public class OnDiskSABuilder
         private final Mode mode;
 
         private int charCount = 0;
-        private int maxElementSize = 0;
 
         public SA(AbstractType<?> comparator, Mode mode)
         {
@@ -250,9 +234,6 @@ public class OnDiskSABuilder
         public void add(ByteBuffer term, RoaringBitmap keys)
         {
             terms.add(new Term(charCount, term, keys));
-
-            // to figure out how big chunk should be
-            maxElementSize = Math.max(maxElementSize, 4 + term.remaining() + keys.serializedSizeInBytes());
             charCount += term.remaining();
         }
 
@@ -273,18 +254,33 @@ public class OnDiskSABuilder
 
         private Iterator<Pair<ByteBuffer, RoaringBitmap>> constructSuffixes()
         {
-            final int[] suffixes = new int[charCount];
-            for (int i = 0; i < suffixes.length; i++)
-                suffixes[i] = i;
+            // each element has term index and char position encoded as two 32-bit integers
+            // to avoid binary search per suffix while sorting suffix array.
+            final long[] suffixes = new long[charCount];
+            long termIndex = -1, currentTermLength = -1;
+            for (int i = 0; i < charCount; i++)
+            {
+                if (i >= currentTermLength || currentTermLength == -1)
+                {
+                    Term currentTerm = terms.get((int) ++termIndex);
+                    currentTermLength = currentTerm.position + currentTerm.value.remaining();
+                }
 
-            PrimitiveIntSort.qsort(suffixes, new PrimitiveIntSort.CompareInt()
+                suffixes[i] = (termIndex << 32) | i;
+            }
+
+            Primitive.sort(suffixes, new LongComparator()
             {
                 @Override
-                public boolean lessThan(int a, int b)
+                public int compare(long a, long b)
                 {
-                    return comparator.compare(getSuffix(terms, a), getSuffix(terms, b)) < 0;
+                    Term aTerm = terms.get((int) (a >>> 32));
+                    Term bTerm = terms.get((int) (b >>> 32));
+                    return comparator.compare(aTerm.getSuffix(((int) a) - aTerm.position),
+                                              bTerm.getSuffix(((int) b) - bTerm.position));
                 }
             });
+
 
             return new AbstractIterator<Pair<ByteBuffer, RoaringBitmap>>()
             {
@@ -296,20 +292,18 @@ public class OnDiskSABuilder
                     if (current >= suffixes.length)
                         return endOfData();
 
-                    int startsAt = suffixes[current++];
-                    Term term = getTerm(terms, startsAt);
-                    return Pair.create(getSuffix(term, startsAt), term.keys);
+                    long index = suffixes[current++];
+                    Term term = terms.get((int) (index >>> 32));
+                    return Pair.create(term.getSuffix(((int) index) - term.position), term.keys);
                 }
             };
         }
 
         private Iterator<Pair<ByteBuffer, RoaringBitmap>> constructOriginal()
         {
-            Collections.sort(terms, new Comparator<Term>()
-            {
+            Collections.sort(terms, new Comparator<Term>() {
                 @Override
-                public int compare(Term a, Term b)
-                {
+                public int compare(Term a, Term b) {
                     return comparator.compare(a.value, b.value);
                 }
             });
@@ -329,55 +323,21 @@ public class OnDiskSABuilder
                 }
             };
         }
-
-        private ByteBuffer getSuffix(List<Term> values, int pos)
-        {
-            return getSuffix(getTerm(values, pos), pos);
-        }
-
-        private ByteBuffer getSuffix(Term t, int pos)
-        {
-            return t.getSuffix(pos - t.position);
-        }
-
-        private Term getTerm(List<Term> values, int idx)
-        {
-            int start = 0;
-            int end = values.size() - 1;
-
-            int currentIndex = 0;
-            while (start <= end)
-            {
-                int mid = start + ((end - start) >> 1);
-                int stopIndex = values.get(mid).position;
-                if (stopIndex <= idx)
-                {
-                    currentIndex = mid;
-                    start = mid + 1;
-                }
-                else
-                {
-                    end = mid - 1;
-                }
-            }
-
-            return values.get(currentIndex);
-        }
     }
 
     private static class MutableLevel<T extends InMemorySuffix>
     {
         private final LongArrayList blockOffsets = new LongArrayList();
 
-        private final RandomAccessFile out;
+        private final SequentialWriter out;
 
-        private final MutableBlock inProcessBlock;
+        private final MutableBlock<T> inProcessBlock;
         private InMemoryPointerSuffix lastSuffix;
 
-        public MutableLevel(RandomAccessFile out, int blockSize)
+        public MutableLevel(SequentialWriter out, MutableBlock<T> block)
         {
             this.out = out;
-            this.inProcessBlock = new MutableBlock(blockSize);
+            this.inProcessBlock = block;
         }
 
         public InMemoryPointerSuffix add(T suffix) throws IOException
@@ -410,48 +370,126 @@ public class OnDiskSABuilder
         }
     }
 
-    private static class MutableBlock
+    private static class MutableBlock<T extends InMemorySuffix>
     {
-        private final ByteBufferDataOutput buffer;
-        private final IntArrayList offsets = new IntArrayList();
+        protected final ByteBufferDataOutput buffer;
+        protected final ShortArrayList offsets;
 
-        protected MutableBlock(int blockSize)
+        public MutableBlock()
         {
-            buffer = new ByteBufferDataOutput(ByteBuffer.allocate(blockSize));
+            buffer = new ByteBufferDataOutput(ByteBuffer.allocate(BLOCK_SIZE));
+            offsets = new ShortArrayList();
         }
 
-        private void add(InMemorySuffix suffix) throws IOException
+        public final void add(T suffix) throws IOException
         {
-            offsets.add(buffer.position());
+            offsets.add((short) buffer.position());
+            addInternal(suffix);
+        }
+
+        protected void addInternal(T suffix) throws IOException
+        {
             suffix.serialize(buffer);
         }
 
-        public boolean hasSpaceFor(InMemorySuffix element)
+        public boolean hasSpaceFor(T element)
         {
-            return getWatermark() + 4 + element.serializedSize() < buffer.capacity();
+            return sizeAfter(element) < buffer.capacity();
         }
 
-        private int getWatermark()
+        protected int sizeAfter(T element)
         {
-            return 4 + offsets.size() * 4 + buffer.position();
+            return getWatermark() + 4 + element.serializedSize();
         }
 
-        public void flushAndClear(RandomAccessFile out) throws IOException
+        protected int getWatermark()
+        {
+            return 4 + offsets.size() * 2 + buffer.position();
+        }
+
+        public void flushAndClear(SequentialWriter out) throws IOException
         {
             out.writeInt(offsets.size());
             for (int i = 0; i < offsets.size(); i++)
-                out.writeInt(offsets.get(i));
+                out.writeShort(offsets.get(i));
 
             buffer.writeFullyTo(out);
 
-            long endOfBlock = out.getFilePointer();
-            if ((endOfBlock & (buffer.capacity() - 1)) != 0) // align on the block boundary if needed
-                out.seek(align(endOfBlock, buffer.capacity()));
-
-            out.getFD().sync(); // now fsync whole block
+            alignToBlock(out);
 
             offsets.clear();
             buffer.clear();
+        }
+
+        protected void alignToBlock(SequentialWriter out) throws IOException
+        {
+            long endOfBlock = out.getFilePointer();
+            if ((endOfBlock & (BLOCK_SIZE - 1)) != 0) // align on the block boundary if needed
+                out.skipBytes((int) (align(endOfBlock, BLOCK_SIZE) - endOfBlock));
+        }
+    }
+
+    private static class MutableDataBlock extends MutableBlock<InMemoryDataSuffix>
+    {
+        private final List<RoaringBitmap> positions = new ArrayList<>();
+        private final Mode mode;
+        private int offset = 0;
+
+        public MutableDataBlock(Mode mode)
+        {
+            this.mode = mode;
+        }
+
+        @Override
+        protected void addInternal(InMemoryDataSuffix suffix) throws IOException
+        {
+            // checking for the equal keys only makes
+            // sense in the mode.SUFFIX case because
+            // in that mode words are split into multiple suffixes
+            // and suffixes are stored separately this way
+            // suffixes share keys from the original word which could be optimized.
+            if (mode == Mode.SUFFIX)
+            {
+                int offset = 0;
+                for (RoaringBitmap p : positions)
+                {
+                    if (p.equals(suffix.keys))
+                    {
+                        writeSuffix(suffix, offset);
+                        return;
+                    }
+
+                    offset += p.serializedSizeInBytes();
+                }
+            }
+
+            positions.add(suffix.keys);
+            writeSuffix(suffix, offset);
+            offset += suffix.keys.serializedSizeInBytes();
+        }
+
+        @Override
+        protected int sizeAfter(InMemoryDataSuffix element)
+        {
+            return super.sizeAfter(element) + 4;
+        }
+
+        @Override
+        public void flushAndClear(SequentialWriter out) throws IOException
+        {
+            super.flushAndClear(out);
+            for (RoaringBitmap p : positions)
+                p.serialize(out);
+
+            super.alignToBlock(out);
+            positions.clear();
+            offset = 0;
+        }
+
+        private void writeSuffix(InMemorySuffix suffix, int offset) throws IOException
+        {
+            suffix.serialize(buffer);
+            buffer.writeInt(offset);
         }
     }
 
