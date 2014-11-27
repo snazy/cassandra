@@ -14,7 +14,6 @@ import org.apache.cassandra.io.FSReadError;
 
 import com.google.common.collect.AbstractIterator;
 import org.apache.cassandra.io.util.RandomAccessReader;
->>>>>>> 628b20d... new block layout (suffixes - first 4K, RB next N blocks) for faster lookup/write and less disk space
 import org.roaringbitmap.RoaringBitmap;
 
 import static org.apache.cassandra.db.index.search.OnDiskBlock.SearchResult;

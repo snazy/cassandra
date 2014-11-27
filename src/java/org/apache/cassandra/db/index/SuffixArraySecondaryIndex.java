@@ -156,7 +156,6 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
                     continue;
                 //because of the truly whacked out way in which 2I instances get the column defs passed in vs. init,
                 // we have this insane check so we don't open the file numerous times .. <sigh>
-
                 onDiskSA = new OnDiskSA(new File(fileName), cDef.getValidator());
             }
             catch (IOException e)
@@ -354,6 +353,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
 
         public void complete()
         {
+            curKey = null;
             try
             {
                 // first, build up a listing per-component (per-index)
@@ -375,6 +375,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
 
                     builder.add(entry.getKey(), entry.getValue().right);
                 }
+                termBitmaps.clear();
 
                 // now do the writing
                 logger.info("about to submit for concurrent SA'ing");
@@ -391,7 +392,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
                     try
                     {
                         // set *some* upper bound of wait time
-                        f.get(60, TimeUnit.MINUTES);
+                        f.get(120, TimeUnit.MINUTES);
                     }
                     catch (TimeoutException toe)
                     {
@@ -419,7 +420,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
 
     private class BuilderFinisher implements Callable<Boolean>
     {
-        private final OnDiskSABuilder builder;
+        private OnDiskSABuilder builder;
         private final String fileName;
 
         public BuilderFinisher(OnDiskSABuilder builder, String fileName)
@@ -440,6 +441,11 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
             catch (Exception e)
             {
                 throw new Exception(String.format("failed to write output file %s", fileName), e);
+            }
+            finally
+            {
+                //release the builder and any resources asap
+                builder = null;
             }
         }
     }
@@ -528,7 +534,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
             }
             catch (IOException e)
             {
-                logger.warn("failed to read index for bitmap");
+                logger.warn("failed to read index for bitmap", e);
                 return null;
             }
         }
