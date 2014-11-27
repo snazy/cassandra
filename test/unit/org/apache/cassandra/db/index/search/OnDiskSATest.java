@@ -64,7 +64,7 @@ public class OnDiskSATest
         Assert.assertEquals(RoaringBitmap.bitmapOf(1, 2, 5, 6, 11, 12), onDisk.search(UTF8Type.instance.fromString("l")));
         Assert.assertEquals(RoaringBitmap.bitmapOf(7), onDisk.search(UTF8Type.instance.fromString("oo")));
         Assert.assertEquals(RoaringBitmap.bitmapOf(7), onDisk.search(UTF8Type.instance.fromString("o")));
-        Assert.assertEquals(RoaringBitmap.bitmapOf(1, 2, 3, 4), onDisk.search(UTF8Type.instance.fromString("t")));
+        Assert.assertEquals(RoaringBitmap.bitmapOf(1, 2, 3, 4, 6), onDisk.search(UTF8Type.instance.fromString("t")));
 
         Assert.assertEquals(null, onDisk.search(UTF8Type.instance.decompose("hello")));
 
@@ -220,6 +220,46 @@ public class OnDiskSATest
         Assert.assertEquals(2, Iterators.size(onDisk.iteratorAt(number, OnDiskSA.IteratorOrder.ASC, true)));
         Assert.assertEquals(2, Iterators.size(onDisk.iteratorAt(number, OnDiskSA.IteratorOrder.DESC, false)));
         Assert.assertEquals(2, Iterators.size(onDisk.iteratorAt(number, OnDiskSA.IteratorOrder.DESC, true)));
+
+        onDisk.close();
+    }
+
+    @Test
+    public void testMultiSuffixMatches() throws Exception
+    {
+        OnDiskSABuilder builder = new OnDiskSABuilder(UTF8Type.instance, OnDiskSABuilder.Mode.SUFFIX)
+        {{
+                add(UTF8Type.instance.decompose("Eliza"), bitMapOf(1, 2));
+                add(UTF8Type.instance.decompose("Elizabeth"), bitMapOf(3, 4));
+                add(UTF8Type.instance.decompose("Aliza"), bitMapOf(5, 6));
+                add(UTF8Type.instance.decompose("Taylor"), bitMapOf(7, 8));
+                add(UTF8Type.instance.decompose("Pavel"), bitMapOf(9, 10));
+        }};
+
+        File index = File.createTempFile("on-disk-sa-multi-suffix-match", ".db");
+        index.deleteOnExit();
+
+        builder.finish(index);
+
+        OnDiskSA onDisk = new OnDiskSA(index, UTF8Type.instance);
+
+        Assert.assertEquals(bitMapOf(1, 2, 3, 4, 5, 6), onDisk.search(UTF8Type.instance.decompose("liz")));
+        Assert.assertEquals(bitMapOf(1, 2, 3, 4, 5, 6, 7, 8, 9, 10), onDisk.search(UTF8Type.instance.decompose("a")));
+        Assert.assertEquals(bitMapOf(5, 6), onDisk.search(UTF8Type.instance.decompose("A")));
+        Assert.assertEquals(bitMapOf(1, 2, 3, 4), onDisk.search(UTF8Type.instance.decompose("E")));
+        Assert.assertEquals(bitMapOf(1, 2, 3, 4, 5, 6, 7, 8, 9, 10), onDisk.search(UTF8Type.instance.decompose("l")));
+        Assert.assertEquals(bitMapOf(3, 4), onDisk.search(UTF8Type.instance.decompose("bet")));
+        Assert.assertEquals(bitMapOf(3, 4, 9, 10), onDisk.search(UTF8Type.instance.decompose("e")));
+        Assert.assertEquals(bitMapOf(7, 8), onDisk.search(UTF8Type.instance.decompose("yl")));
+        Assert.assertEquals(bitMapOf(7, 8), onDisk.search(UTF8Type.instance.decompose("T")));
+        Assert.assertEquals(bitMapOf(1, 2, 3, 4, 5, 6), onDisk.search(UTF8Type.instance.decompose("za")));
+        Assert.assertEquals(bitMapOf(3, 4), onDisk.search(UTF8Type.instance.decompose("ab")));
+
+        Assert.assertNull(onDisk.search(UTF8Type.instance.decompose("Pi")));
+        Assert.assertNull(onDisk.search(UTF8Type.instance.decompose("ethz")));
+        Assert.assertNull(onDisk.search(UTF8Type.instance.decompose("liw")));
+        Assert.assertNull(onDisk.search(UTF8Type.instance.decompose("Taw")));
+        Assert.assertNull(onDisk.search(UTF8Type.instance.decompose("Av")));
 
         onDisk.close();
     }
