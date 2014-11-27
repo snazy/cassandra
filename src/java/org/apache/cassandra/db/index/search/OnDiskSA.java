@@ -1,6 +1,9 @@
 package org.apache.cassandra.db.index.search;
 
-import java.io.*;
+import java.io.Closeable;
+import java.io.File;
+import java.io.IOException;
+import java.io.PrintStream;
 import java.nio.ByteBuffer;
 import java.util.Iterator;
 
@@ -11,9 +14,9 @@ import org.apache.cassandra.io.FSReadError;
 import org.apache.cassandra.utils.ByteBufferDataInput;
 import org.apache.cassandra.db.marshal.AbstractType;
 import org.apache.cassandra.io.FSReadError;
+import org.apache.cassandra.io.util.RandomAccessReader;
 
 import com.google.common.collect.AbstractIterator;
-import org.apache.cassandra.io.util.RandomAccessReader;
 import org.roaringbitmap.RoaringBitmap;
 
 import static org.apache.cassandra.db.index.search.OnDiskBlock.SearchResult;
@@ -80,13 +83,22 @@ public class OnDiskSA implements Iterable<OnDiskSA.DataSuffix>, Closeable
 
     public RoaringBitmap search(ByteBuffer query) throws IOException
     {
-        if (levels.length == 0) // not enough data to even feel a single block
+        RoaringBitmap keys = null;
+        Iterator<DataSuffix> suffixes = iteratorAt(query, IteratorOrder.DESC, true);
+
+        while (suffixes.hasNext())
         {
-            return searchDataBlock(query, 0);
+            DataSuffix suffix = suffixes.next();
+            if (suffix.compareTo(comparator, query, false) != 0)
+                break;
+
+            if (keys == null)
+                keys = suffix.getKeys();
+            else
+                keys.or(suffix.getKeys());
         }
 
-        PointerSuffix ptr = findPointer(query);
-        return ptr == null ? null : searchDataBlock(query, getBlockIdx(ptr, query));
+        return keys;
     }
 
     public Iterator<DataSuffix> iteratorAt(ByteBuffer query, IteratorOrder order, boolean inclusive)
@@ -129,16 +141,6 @@ public class OnDiskSA implements Iterable<OnDiskSA.DataSuffix>, Closeable
         }
 
         return ptr;
-    }
-
-    private RoaringBitmap searchDataBlock(ByteBuffer query, int blockIdx) throws IOException
-    {
-        SearchResult<DataSuffix> suffix = dataLevel.getBlock(blockIdx).search(comparator, query);
-        if (suffix == null || suffix.result == null)
-            return null;
-
-        int cmp = suffix.result.compareTo(comparator, query, false);
-        return cmp != 0 ? null : suffix.result.getKeys();
     }
 
     private SearchResult<DataSuffix> searchIndex(ByteBuffer query, int blockIdx)
@@ -394,5 +396,39 @@ public class OnDiskSA implements Iterable<OnDiskSA.DataSuffix>, Closeable
         protected abstract int nextBlock();
         protected abstract int nextIndex();
         protected abstract int startIndex();
+    }
+
+    @SuppressWarnings("unused")
+    public void printSA(PrintStream out) throws IOException
+    {
+        int level = 0;
+        for (OnDiskSA.PointerLevel l : levels)
+        {
+            out.println(" !!!! level " + (level++));
+            for (int i = 0; i < l.blockCount; i++)
+            {
+                out.println(" --- block " + i + " ---- ");
+                OnDiskSA.PointerBlock block = l.getBlock(i);
+                for (int j = 0; j < block.getElementsSize(); j++)
+                {
+                    OnDiskSA.PointerSuffix p = block.getElement(j);
+                    out.printf("PointerSuffix(chars: %s, blockIdx: %d)%n", comparator.compose(p.getSuffix()), p.getBlock());
+                }
+            }
+        }
+
+        out.println(" !!!!! data blocks !!!!! ");
+        for (int i = 0; i < dataLevel.blockCount; i++)
+        {
+            out.println(" --- block " + i + " ---- ");
+            OnDiskSA.DataBlock block = dataLevel.getBlock(i);
+            for (int j = 0; j < block.getElementsSize(); j++)
+            {
+                OnDiskSA.DataSuffix p = block.getElement(j);
+                out.printf("DataSuffix(chars: %s, keys: %s)%n", comparator.compose(p.getSuffix()), p.getKeys());
+            }
+        }
+
+        out.println(" ***** end of level printout ***** ");
     }
 }
