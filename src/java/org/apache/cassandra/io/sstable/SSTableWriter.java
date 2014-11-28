@@ -93,9 +93,12 @@ public class SSTableWriter extends SSTable
         }
 
         //TODO:JEB would be great to pass the listeners in here, rather than reaching out to an explicit component
-        ColumnFamilyStore cfs = Keyspace.open(metadata.ksName).getColumnFamilyStore(metadata.cfName);
-        for (SecondaryIndex secondaryIndex : cfs.indexManager.getIndexes())
-            components.addAll(secondaryIndex.getIndexComponents());
+        if (!metadata.cfName.contains(".")) // hack to make sure current SSTW is not for a native, in-built secondary index
+        {
+            ColumnFamilyStore cfs = Keyspace.open(metadata.ksName).getColumnFamilyStore(metadata.cfName);
+            for (SecondaryIndex secondaryIndex : cfs.indexManager.getIndexes())
+                components.addAll(secondaryIndex.getIndexComponents());
+        }
 
         return components;
     }
@@ -132,10 +135,17 @@ public class SSTableWriter extends SSTable
 
         //TODO:JEB would be great to pass the listeners in here, rather than reaching out to an explicit component
         // TODO:JEB esp, think about how this will work with offline components (scrub, etc)
-        ColumnFamilyStore cfs = Keyspace.open(metadata.ksName).getColumnFamilyStore(metadata.cfName);
-        listeners = cfs.indexManager.getSSTableWriterListsners(descriptor);
-        for (SSTableWriterListener listener : listeners)
-            listener.begin();
+        if (!metadata.cfName.contains(".")) // hack to make sure current SSTW is not for a native, in-built secondary index
+        {
+            ColumnFamilyStore cfs = Keyspace.open(metadata.ksName).getColumnFamilyStore(metadata.cfName);
+            listeners = cfs.indexManager.getSSTableWriterListsners(descriptor);
+            for (SSTableWriterListener listener : listeners)
+                listener.begin();
+        }
+        else
+        {
+            listeners = Collections.EMPTY_SET;
+        }
     }
 
     public void mark()
