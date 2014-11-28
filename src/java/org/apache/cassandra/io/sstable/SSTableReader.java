@@ -313,8 +313,9 @@ public class SSTableReader extends SSTable implements Closeable
                                  bf,
                                  maxDataAge,
                                  sstableMetadata);
-        ColumnFamilyStore cfs = Keyspace.open(metadata.ksName).getColumnFamilyStore(metadata.cfName);
-        cfs.indexManager.registerSecondaryIndexes(ssTableReader);
+        //TODO:JEB maybe don;t need these
+//        ColumnFamilyStore cfs = Keyspace.open(metadata.ksName).getColumnFamilyStore(metadata.cfName);
+//        cfs.indexManager.registerSecondaryIndexes(ssTableReader);
         return ssTableReader;
     }
 

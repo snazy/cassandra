@@ -44,6 +44,7 @@ import org.apache.cassandra.db.DecoratedKey;
 import org.apache.cassandra.db.Keyspace;
 import org.apache.cassandra.db.ReadCommand;
 import org.apache.cassandra.db.Row;
+import org.apache.cassandra.db.SystemKeyspace;
 import org.apache.cassandra.db.columniterator.IdentityQueryFilter;
 import org.apache.cassandra.db.filter.ExtendedFilter;
 import org.apache.cassandra.db.index.search.OnDiskSA;
@@ -97,6 +98,8 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
 
     private final Map<ByteBuffer, Component> columnDefComponents;
 
+    // TODO: maybe switch away from Guava table (and opening indices when sstable loads)
+    // and use LoadingCache to load only when requested
     private final Table<SSTableReader, ByteBuffer, OnDiskSA> suffixArrays;
     private volatile boolean hasInited;
 
@@ -144,30 +147,30 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
 
     public void add(SSTableReader reader, Collection<ColumnDefinition> toAdd)
     {
-        Descriptor desc = reader.descriptor;
-        for (Component component : reader.getComponents(Component.Type.SECONDARY_INDEX))
-        {
-            String fileName = desc.filenameFor(component);
-            OnDiskSA onDiskSA = null;
-            try
-            {
-                ColumnDefinition cDef = getColumnDef(component);
-                if (cDef == null || !toAdd.contains(cDef))
-                    continue;
-                //because of the truly whacked out way in which 2I instances get the column defs passed in vs. init,
-                // we have this insane check so we don't open the file numerous times .. <sigh>
-                onDiskSA = new OnDiskSA(new File(fileName), cDef.getValidator());
-            }
-            catch (IOException e)
-            {
-                logger.error("problem opening suffix array index {} for sstable {}", fileName, this, e);
-            }
-
-            int start = fileName.indexOf("_") + 1;
-            int end = fileName.lastIndexOf(".");
-            ByteBuffer name = ByteBufferUtil.bytes(fileName.substring(start, end));
-            suffixArrays.put(reader, name, onDiskSA);
-        }
+//        Descriptor desc = reader.descriptor;
+//        for (Component component : reader.getComponents(Component.Type.SECONDARY_INDEX))
+//        {
+//            String fileName = desc.filenameFor(component);
+//            OnDiskSA onDiskSA = null;
+//            try
+//            {
+//                ColumnDefinition cDef = getColumnDef(component);
+//                if (cDef == null || !toAdd.contains(cDef))
+//                    continue;
+//                //because of the truly whacked out way in which 2I instances get the column defs passed in vs. init,
+//                // we have this insane check so we don't open the file numerous times .. <sigh>
+//                onDiskSA = new OnDiskSA(new File(fileName), cDef.getValidator());
+//            }
+//            catch (IOException e)
+//            {
+//                logger.error("problem opening suffix array index {} for sstable {}", fileName, this, e);
+//            }
+//
+//            int start = fileName.indexOf("_") + 1;
+//            int end = fileName.lastIndexOf(".");
+//            ByteBuffer name = ByteBufferUtil.bytes(fileName.substring(start, end));
+//            suffixArrays.put(reader, name, onDiskSA);
+//        }
     }
 
     private ColumnDefinition getColumnDef(Component component)
@@ -433,9 +436,10 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
         {
             try
             {
+                long start = System.nanoTime();
                 logger.info("starting SA for {}", fileName);
                 builder.finish(new File(fileName));
-                logger.info("finishing SA for {}", fileName);
+                logger.info("finishing SA for {} in {} ms", fileName, TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start));
                 return Boolean.TRUE;
             }
             catch (Exception e)
@@ -475,7 +479,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
                 if (keys.size() >= maxKeys)
                     break;
 
-                Map<ByteBuffer, OnDiskSA> indices = suffixArrays.row(reader);
+                Map<ByteBuffer, OnDiskSA> indices = getIndices(reader);//suffixArrays.row(reader);
                 if (indices.isEmpty())
                     continue;
 
@@ -502,11 +506,50 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
                         bitmap.and(matches);
                 }
 
+                closeIndices(indices);
+
                 if (bitmap != null)
                     keys.addAll(readKeys(reader, bitmap));
             }
 
             return loadRows(keys, maxKeys);
+        }
+
+        private void closeIndices(Map<ByteBuffer, OnDiskSA> indices)
+        {
+            for (OnDiskSA sa : indices.values())
+                FileUtils.closeQuietly(sa);
+        }
+
+        private Map<ByteBuffer, OnDiskSA> getIndices(SSTableReader reader)
+        {
+            Map<ByteBuffer, OnDiskSA> sas = new HashMap<>();
+
+            Descriptor desc = reader.descriptor;
+            for (Component component : reader.getComponents(Component.Type.SECONDARY_INDEX))
+            {
+                String fileName = desc.filenameFor(component);
+                OnDiskSA onDiskSA = null;
+                try
+                {
+                    ColumnDefinition cDef = getColumnDef(component);
+                    if (cDef == null)
+                        continue;
+                    //because of the truly whacked out way in which 2I instances get the column defs passed in vs. init,
+                    // we have this insane check so we don't open the file numerous times .. <sigh>
+                    onDiskSA = new OnDiskSA(new File(fileName), cDef.getValidator());
+                }
+                catch (IOException e)
+                {
+                    logger.error("problem opening suffix array index {} for sstable {}", fileName, this, e);
+                }
+
+                int start = fileName.indexOf("_") + 1;
+                int end = fileName.lastIndexOf(".");
+                ByteBuffer name = ByteBufferUtil.bytes(fileName.substring(start, end));
+                sas.put(name, onDiskSA);
+            }
+            return sas;
         }
 
         private RoaringBitmap search(OnDiskSA sa, IndexExpression exp)
