@@ -313,7 +313,7 @@ public class SSTableReader extends SSTable implements Closeable
                                  bf,
                                  maxDataAge,
                                  sstableMetadata);
-        //TODO:JEB maybe don;t need these
+        //TODO:JEB maybe don't need these
 //        ColumnFamilyStore cfs = Keyspace.open(metadata.ksName).getColumnFamilyStore(metadata.cfName);
 //        cfs.indexManager.registerSecondaryIndexes(ssTableReader);
         return ssTableReader;
@@ -392,8 +392,9 @@ public class SSTableReader extends SSTable implements Closeable
         // close the BF so it can be opened later.
         bf.close();
         indexSummary.close();
-        ColumnFamilyStore cfs = Keyspace.open(metadata.ksName).getColumnFamilyStore(metadata.cfName);
-        cfs.indexManager.closeSecondaryIndexes(this);
+        //TODO:JEB maybe don't need these
+//        ColumnFamilyStore cfs = Keyspace.open(metadata.ksName).getColumnFamilyStore(metadata.cfName);
+//        cfs.indexManager.closeSecondaryIndexes(this);
     }
 
     public void setTrackedBy(DataTracker tracker)
