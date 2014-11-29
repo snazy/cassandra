@@ -4,31 +4,8 @@ import java.io.File;
 import java.io.IOError;
 import java.io.IOException;
 import java.nio.ByteBuffer;
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.Collections;
-import java.util.ConcurrentModificationException;
-import java.util.HashMap;
-import java.util.Iterator;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
-import java.util.TreeSet;
-import java.util.concurrent.Callable;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Future;
-import java.util.concurrent.FutureTask;
-import java.util.concurrent.LinkedBlockingQueue;
-import java.util.concurrent.ThreadPoolExecutor;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
-
-import com.google.common.collect.HashBasedTable;
-import com.google.common.collect.ImmutableList;
-import com.google.common.collect.Table;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import java.util.*;
+import java.util.concurrent.*;
 
 import org.apache.cassandra.concurrent.JMXEnabledThreadPoolExecutor;
 import org.apache.cassandra.concurrent.NamedThreadFactory;
@@ -39,13 +16,10 @@ import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.db.Column;
 import org.apache.cassandra.db.ColumnFamily;
 import org.apache.cassandra.db.ColumnFamilyStore;
-import org.apache.cassandra.db.DataTracker;
 import org.apache.cassandra.db.DecoratedKey;
 import org.apache.cassandra.db.Keyspace;
 import org.apache.cassandra.db.ReadCommand;
 import org.apache.cassandra.db.Row;
-import org.apache.cassandra.db.SystemKeyspace;
-import org.apache.cassandra.db.columniterator.IdentityQueryFilter;
 import org.apache.cassandra.db.filter.ExtendedFilter;
 import org.apache.cassandra.db.index.search.OnDiskSA;
 import org.apache.cassandra.db.index.search.OnDiskSABuilder;
@@ -61,9 +35,20 @@ import org.apache.cassandra.io.sstable.SSTableWriterListener;
 import org.apache.cassandra.io.util.FileUtils;
 import org.apache.cassandra.thrift.IndexExpression;
 import org.apache.cassandra.thrift.IndexOperator;
-import org.apache.cassandra.utils.ByteBufferUtil;
 import org.apache.cassandra.utils.Pair;
+
+
+import com.google.common.collect.*;
+import com.google.common.util.concurrent.Futures;
+import com.google.common.util.concurrent.Uninterruptibles;
+import org.roaringbitmap.IntIterator;
 import org.roaringbitmap.RoaringBitmap;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+
+import static org.apache.cassandra.db.index.search.OnDiskSA.IteratorOrder;
+import static org.apache.cassandra.db.index.search.OnDiskSA.DataSuffix;
 
 /**
  * Note: currently does not work with cql3 tables (unless 'WITH COMPACT STORAGE' is declared when creating the table).
@@ -81,9 +66,9 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
     private static ThreadPoolExecutor getExecutor()
     {
         ThreadPoolExecutor executor = new JMXEnabledThreadPoolExecutor(1, 8, 60, TimeUnit.SECONDS,
-                                                    new LinkedBlockingQueue<Runnable>(),
-                                                    new NamedThreadFactory("SuffixArrayBuilder"),
-                                                    "internal");
+                                                                       new LinkedBlockingQueue<Runnable>(),
+                                                                       new NamedThreadFactory("SuffixArrayBuilder"),
+                                                                       "internal");
         executor.allowCoreThreadTimeOut(true);
         return executor;
     }
@@ -206,9 +191,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
                 break;
             }
             catch (ConcurrentModificationException cme)
-            {
-                continue;
-            }
+            {}
         }
     }
 
@@ -468,112 +451,111 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
 
         public List<Row> search(ExtendedFilter filter)
         {
-            DataTracker tracker = baseCfs.getDataTracker();
+            final Set<ByteBuffer> keys = new TreeSet<>();
+            final int maxKeys = Math.min(MAX_ROWS, filter.maxRows());
 
-            //TODO punt on memtables for now....
+            Map<ByteBuffer, Expression> expressions = analyzeQuery(filter.getClause());
 
-            int maxKeys = Math.min(MAX_ROWS, filter.maxRows());
-            Set<ByteBuffer> keys = new TreeSet<>();
-            for (SSTableReader reader : tracker.getSSTables())
+            search_per_sstable_loop:
+            for (SSTableReader reader : baseCfs.getDataTracker().getSSTables())
             {
-                if (keys.size() >= maxKeys)
-                    break;
+                RoaringBitmap positions = null;
+                for (Map.Entry<ByteBuffer, Expression> exp : expressions.entrySet())
+                {
+                    ColumnDefinition columnDef = getColumnDefinition(exp.getKey());
+                    if (columnDef == null)
+                        continue;
 
-                Map<ByteBuffer, OnDiskSA> indices = getIndices(reader);//suffixArrays.row(reader);
-                if (indices.isEmpty())
+                    String columnName = (String) baseCfs.getComparator().compose(columnDef.name);
+                    String indexPath = reader.descriptor.filenameFor(String.format(FILE_NAME_FORMAT, columnName));
+
+                    OnDiskSA sa = null;
+                    try
+                    {
+                        sa = new OnDiskSA(new File(indexPath), columnDef.getValidator());
+
+                        RoaringBitmap matches = search(sa, exp.getValue(), columnDef.getValidator());
+                        // this is intended ONLY while we do not support OR between predicates
+                        if (matches == null || matches.isEmpty())
+                        {
+                            positions = null;
+                            break;
+                        }
+
+                        if (positions == null)
+                            positions = matches;
+                        else
+                            positions.and(matches);
+                    }
+                    catch (IOException e)
+                    {
+                        logger.error("Failed to read SA index file: " + indexPath + ", skipping.", e);
+                    }
+                    finally
+                    {
+                        FileUtils.closeQuietly(sa);
+                    }
+                }
+
+                // java doesn't have unlikely macro, but this branch is exactly it
+                if (positions == null)
                     continue;
 
-                RoaringBitmap bitmap = new RoaringBitmap();
-                List<IndexExpression> l = filter.getClause();
-                for (int i = 0; i < l.size(); i++)
+                IntIterator positionsIter = positions.getIntIterator();
+                while (positionsIter.hasNext())
                 {
-                    IndexExpression exp = l.get(i);
-                    OnDiskSA sa = indices.get(exp.bufferForColumn_name());
-                    if (sa == null)
+                    ByteBuffer key;
+                    if ((key = readKeyFromIndex(reader, positionsIter.next())) == null)
                         continue;
 
-                    RoaringBitmap matches = search(sa, exp);
-                    // this is intended ONLY while we do not support OR between predicates
-                    if (matches == null || matches.isEmpty())
-                    {
-                        bitmap = null;
-                        break;
-                    }
-
-                    if (i == 0)
-                        bitmap.or(matches);
-                    else
-                        bitmap.and(matches);
+                    keys.add(key);
+                    // read exactly up until all results are found and break main loop
+                    // otherwise we are going to read a lot more keys from the index then actually required.
+                    if (keys.size() >= maxKeys)
+                        break search_per_sstable_loop;
                 }
-
-                closeIndices(indices);
-
-                if (bitmap != null)
-                    keys.addAll(readKeys(reader, bitmap));
             }
 
-            return loadRows(keys, maxKeys);
+            return loadRows(keys, filter);
         }
 
-        private void closeIndices(Map<ByteBuffer, OnDiskSA> indices)
-        {
-            for (OnDiskSA sa : indices.values())
-                FileUtils.closeQuietly(sa);
-        }
-
-        private Map<ByteBuffer, OnDiskSA> getIndices(SSTableReader reader)
-        {
-            Map<ByteBuffer, OnDiskSA> sas = new HashMap<>();
-
-            Descriptor desc = reader.descriptor;
-            for (Component component : reader.getComponents(Component.Type.SECONDARY_INDEX))
-            {
-                String fileName = desc.filenameFor(component);
-                OnDiskSA onDiskSA = null;
-                try
-                {
-                    ColumnDefinition cDef = getColumnDef(component);
-                    if (cDef == null)
-                        continue;
-                    //because of the truly whacked out way in which 2I instances get the column defs passed in vs. init,
-                    // we have this insane check so we don't open the file numerous times .. <sigh>
-                    onDiskSA = new OnDiskSA(new File(fileName), cDef.getValidator());
-                }
-                catch (IOException e)
-                {
-                    logger.error("problem opening suffix array index {} for sstable {}", fileName, this, e);
-                }
-
-                int start = fileName.indexOf("_") + 1;
-                int end = fileName.lastIndexOf(".");
-                ByteBuffer name = ByteBufferUtil.bytes(fileName.substring(start, end));
-                sas.put(name, onDiskSA);
-            }
-            return sas;
-        }
-
-        private RoaringBitmap search(OnDiskSA sa, IndexExpression exp)
+        private RoaringBitmap search(OnDiskSA sa, Expression exp, AbstractType<?> validator)
         {
             try
             {
-                final IndexOperator op = exp.getOp();
-                if (op == IndexOperator.EQ)
+                // in case query is simple x = y
+                if (!exp.isRange())
+                    return sa.search(exp.eq.value);
+
+                // in case of range query we'll have to do
+                // a little bit more work e.g. figure bounds and iteration order
+
+                IteratorOrder order;
+                Iterator<DataSuffix> suffixes = (exp.lower == null) // in case query is col <(=) x
+                                    ? sa.iteratorAt(exp.upper.value, (order = IteratorOrder.ASC), exp.upper.inclusive)
+                                    : sa.iteratorAt(exp.lower.value, (order = IteratorOrder.DESC), exp.lower.inclusive);
+
+                RoaringBitmap results = null;
+                while (suffixes.hasNext())
                 {
-                    return sa.search(exp.bufferForValue());
-                }
-                else
-                {
-                    RoaringBitmap bitmap = new RoaringBitmap();
-                    OnDiskSA.IteratorOrder order = op == IndexOperator.GTE || op == IndexOperator.GT
-                        ? OnDiskSA.IteratorOrder.DESC : OnDiskSA.IteratorOrder.ASC;
-                    boolean includeKey = op == IndexOperator.GTE || op == IndexOperator.LTE;
-                    for (Iterator<OnDiskSA.DataSuffix> iter = sa.iteratorAt(exp.bufferForValue(), order, includeKey); iter.hasNext(); )
+                    DataSuffix suffix = suffixes.next();
+
+                    if (order == IteratorOrder.DESC && exp.upper != null)
                     {
-                        RoaringBitmap bm = iter.next().getKeys();
-                        bitmap.or(bm);
+                        int cmp = validator.compare(suffix.getSuffix(), exp.upper.value);
+                        if ((cmp > 0 && exp.upper.inclusive) || (cmp >= 0 && !exp.upper.inclusive))
+                            break;
                     }
-                    return bitmap;
+
+                    RoaringBitmap positions = suffix.getKeys();
+
+                    if (results == null)
+                        results = positions;
+                    else
+                        results.or(positions);
                 }
+
+                return results;
             }
             catch (IOException e)
             {
@@ -582,68 +564,80 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
             }
         }
 
-        private Set<ByteBuffer> readKeys(SSTableReader reader, RoaringBitmap bitmap)
+        private ByteBuffer readKeyFromIndex(SSTableReader reader, int keyPosition)
         {
-            Set<ByteBuffer> keys = new TreeSet<>();
-            for (Integer i : bitmap)
+            try
             {
-                try
-                {
-                    DecoratedKey key = reader.keyAt(i);
-                    if (key != null)
-                        keys.add(key.key);
-                }
-                catch (IOException ioe)
-                {
-                    logger.warn("failed to read key at position {} from sstable {}; ignoring.", i, reader, ioe);
-                }
+                return reader.keyAt(keyPosition);
             }
-            return keys;
+            catch (IOException ioe)
+            {
+                logger.warn("failed to read key at position {} from sstable {}; ignoring.", keyPosition, reader, ioe);
+            }
+
+            return null;
         }
 
-        private List<Row> loadRows(Set<ByteBuffer> keys, int maxRows)
+        private List<Row> loadRows(Set<ByteBuffer> keys, ExtendedFilter filter)
         {
-            ExecutorService readStage = StageManager.getStage(Stage.READ);
             final long timestamp = System.currentTimeMillis();
+            final CountDownLatch latch = new CountDownLatch(keys.size());
 
             List<Future<Row>> futures = new ArrayList<>(keys.size());
-            int cur = 0;
+            ExecutorService readStage = StageManager.getStage(Stage.READ);
+
             for (ByteBuffer key : keys)
             {
-                ReadCommand cmd = ReadCommand.create(baseCfs.keyspace.getName(), key, baseCfs.getColumnFamilyName(), timestamp, new IdentityQueryFilter());
-                futures.add(readStage.submit(new RowReader(cmd)));
-                cur++;
-                if (cur == maxRows)
-                    break;
+                ReadCommand cmd = ReadCommand.create(baseCfs.keyspace.getName(),
+                                                     key,
+                                                     baseCfs.getColumnFamilyName(),
+                                                     timestamp,
+                                                     filter.columnFilter(key));
+
+                futures.add(readStage.submit(new RowReader(cmd, latch)));
             }
 
-            List<Row> rows = new ArrayList<>(cur);
-            for (Future<Row> future : futures)
+            // This is going to (potentially) return partial results but it's better then
+            // waiting for every single future which is going to delay concurrent requests
+            // and result in the TimeoutException anyway (as client waiting for a single rpc-range-timeout).
+            // If some of the futures weren't done at the time of rpc-range-timeout expiration,
+            // we are going to cancel them (with mayInterruptIfRunning set to true) to give more room to other requests.
+
+            Uninterruptibles.awaitUninterruptibly(latch, DatabaseDescriptor.getRangeRpcTimeout(), TimeUnit.MILLISECONDS);
+
+            List<Row> rows = new ArrayList<>(keys.size());
+            for (Future<Row> f : futures)
             {
-                try
-                {
-                    rows.add(future.get(DatabaseDescriptor.getRangeRpcTimeout(), TimeUnit.MILLISECONDS));
-                }
-                catch (Exception e)
-                {
-                    logger.error("problem reading row", e);
-                }
+                if (f.isDone())
+                    rows.add(Futures.getUnchecked(f));
+                else
+                    f.cancel(true);
             }
+
             return rows;
         }
 
         private class RowReader implements Callable<Row>
         {
             private final ReadCommand command;
+            private final CountDownLatch latch;
 
-            public RowReader(ReadCommand command)
+            public RowReader(ReadCommand command, CountDownLatch latch)
             {
                 this.command = command;
+                this.latch = latch;
             }
 
             public Row call() throws Exception
             {
-                return command.getRow(Keyspace.open(command.ksName));
+                try
+                {
+                    return command.getRow(Keyspace.open(command.ksName));
+                }
+                finally
+                {
+                    latch.countDown();
+                }
             }
         }
 
@@ -657,6 +651,72 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
                     return true;
             }
             return false;
+        }
+
+        private Map<ByteBuffer, Expression> analyzeQuery(List<IndexExpression> expressions)
+        {
+            Map<ByteBuffer, Expression> groups = new HashMap<>();
+            for (IndexExpression e : expressions)
+            {
+                ByteBuffer name = e.bufferForColumn_name();
+
+                Expression exp = groups.get(name);
+                if (exp == null)
+                    groups.put(name, (exp = new Expression()));
+
+                exp.add(e.op, e.bufferForValue());
+            }
+
+            return groups;
+        }
+    }
+
+    private static class Expression
+    {
+        private Bound eq, lower, upper;
+
+        public void add(IndexOperator op, ByteBuffer value)
+        {
+            switch (op)
+            {
+                case EQ:
+                    eq = new Bound(value, true);
+                    break;
+
+                case LT:
+                    upper = new Bound(value, false);
+                    break;
+
+                case LTE:
+                    upper = new Bound(value, true);
+                    break;
+
+                case GT:
+                    lower = new Bound(value, false);
+                    break;
+
+                case GTE:
+                    lower = new Bound(value, true);
+                    break;
+
+            }
+        }
+
+        public boolean isRange()
+        {
+            return lower != null || upper != null;
+        }
+    }
+
+    private static class Bound
+    {
+        private final ByteBuffer value;
+        private final boolean inclusive;
+
+        public Bound(ByteBuffer value, boolean inclusive)
+        {
+            this.value = value;
+            this.inclusive = inclusive;
         }
     }
 }
