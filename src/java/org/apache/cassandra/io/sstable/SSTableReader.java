@@ -44,7 +44,6 @@ import org.apache.cassandra.db.columniterator.OnDiskAtomIterator;
 import org.apache.cassandra.db.commitlog.ReplayPosition;
 import org.apache.cassandra.db.compaction.ICompactionScanner;
 import org.apache.cassandra.db.index.SecondaryIndex;
-import org.apache.cassandra.db.index.search.OnDiskSA;
 import org.apache.cassandra.dht.*;
 import org.apache.cassandra.io.compress.CompressedRandomAccessReader;
 import org.apache.cassandra.io.compress.CompressedThrottledReader;
@@ -1272,7 +1271,16 @@ public class SSTableReader extends SSTable implements Closeable
     {
         try (FileDataInput in = dfile.getSegment(position))
         {
-            return in.isEOF() ? null : ByteBufferUtil.readWithShortLength(in);
+            if (in.isEOF())
+                return null;
+
+            ByteBuffer key = ByteBufferUtil.readWithShortLength(in);
+
+            // give a hit to subsequent reads from the SSTable where the key
+            // is in the data file, this is (for now) only exploited by SuffixArraySecondaryIndex.
+            cacheKey(partitioner.decorateKey(key), new RowIndexEntry(position));
+
+            return key;
         }
     }
 
