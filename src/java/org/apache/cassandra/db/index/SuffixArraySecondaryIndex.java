@@ -465,7 +465,15 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
 
         protected List<Row> performSearch(ExtendedFilter filter)
         {
-            final Set<ByteBuffer> keys = new TreeSet<>();
+            final Set<ByteBuffer> keys = new TreeSet<>(new Comparator<ByteBuffer>()
+            {
+                @Override
+                public int compare(ByteBuffer a, ByteBuffer b)
+                {
+                    return baseCfs.partitioner.getToken(a).compareTo(baseCfs.partitioner.getToken(b));
+                }
+            });
+
             final int maxKeys = Math.min(MAX_ROWS, filter.maxRows());
 
             Map<ByteBuffer, Expression> expressions = analyzeQuery(filter.getClause());
