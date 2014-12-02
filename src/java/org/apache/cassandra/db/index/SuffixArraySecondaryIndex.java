@@ -1,5 +1,6 @@
 package org.apache.cassandra.db.index;
 
+import java.io.Closeable;
 import java.io.File;
 import java.io.IOError;
 import java.io.IOException;
@@ -459,7 +460,8 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
             search_per_sstable_loop:
             for (SSTableReader reader : baseCfs.getDataTracker().getSSTables())
             {
-                List<Iterator<RoaringBitmap>> iterators = new ArrayList<>();
+                boolean missingIndex = false;
+                List<SuffixIterator> iterators = new ArrayList<>();
                 for (Map.Entry<ByteBuffer, Expression> exp : expressions.entrySet())
                 {
                     ColumnDefinition columnDef = getColumnDefinition(exp.getKey());
@@ -469,115 +471,97 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
                     String columnName = (String) baseCfs.getComparator().compose(columnDef.name);
                     String indexPath = reader.descriptor.filenameFor(String.format(FILE_NAME_FORMAT, columnName));
 
-                    iterators.add(getSuffixes(indexPath, exp.getValue(), columnDef.getValidator()));
+                    SuffixIterator suffixes = getSuffixes(indexPath, exp.getValue(), columnDef.getValidator());
+
+                    // if there was a problem when fetching one of the indexes, we skip current SSTable,
+                    // as it's not going to produce any AND results.
+                    if (suffixes == null)
+                    {
+                        missingIndex = true;
+                        break;
+                    }
+
+                    iterators.add(suffixes);
                 }
 
-
-                while (true)
+                if (missingIndex)
                 {
-                    int exhaustedCount = 0;
+                    // cleanup already open iterators
+                    for (SuffixIterator suffixes : iterators)
+                        FileUtils.closeQuietly(suffixes);
 
-                    RoaringBitmap step = null;
-                    for (Iterator<RoaringBitmap> positions : iterators)
+                    // carry on to the next SSTable (if any).
+                    continue;
+                }
+
+                try
+                {
+                    while (true)
                     {
-                        RoaringBitmap expressionStep = new RoaringBitmap();
-                        while (positions.hasNext())
+                        int exhaustedCount = 0;
+
+                        RoaringBitmap step = null;
+                        for (Iterator<RoaringBitmap> positions : iterators)
                         {
-                            expressionStep.or(positions.next());
-                            if (expressionStep.getCardinality() >= maxKeys)
-                                break;
+                            RoaringBitmap expressionStep = new RoaringBitmap();
+                            while (positions.hasNext()) {
+                                expressionStep.or(positions.next());
+                                if (expressionStep.getCardinality() >= maxKeys)
+                                    break;
+                            }
+
+                            if (step == null)
+                                step = expressionStep;
+                            else
+                                step.and(expressionStep);
+
+                            if (!positions.hasNext())
+                                exhaustedCount++;
                         }
 
                         if (step == null)
-                            step = expressionStep;
-                        else
-                            step.and(expressionStep);
-
-                        if (!positions.hasNext())
-                            exhaustedCount++;
-                    }
-
-                    if (step == null)
-                        continue;
-
-                    IntIterator positions = step.getIntIterator();
-                    while (positions.hasNext())
-                    {
-                        ByteBuffer key;
-                        if ((key = readKeyFromIndex(reader, positions.next())) == null)
                             continue;
 
-                        keys.add(key);
-                        // read exactly up until all results are found and break main loop
-                        // otherwise we are going to read a lot more keys from the index then actually required.
-                        if (keys.size() >= maxKeys)
-                            break search_per_sstable_loop;
-                    }
+                        IntIterator positions = step.getIntIterator();
+                        while (positions.hasNext())
+                        {
+                            ByteBuffer key;
+                            if ((key = readKeyFromIndex(reader, positions.next())) == null)
+                                continue;
 
-                    if (exhaustedCount == iterators.size())
-                        break;
+                            keys.add(key);
+                            // read exactly up until all results are found and break main loop
+                            // otherwise we are going to read a lot more keys from the index then actually required.
+                            if (keys.size() >= maxKeys)
+                                break search_per_sstable_loop;
+                        }
+
+                        if (exhaustedCount == iterators.size())
+                            break;
+                    }
+                }
+                finally
+                {
+                    for (SuffixIterator suffixes : iterators)
+                        FileUtils.closeQuietly(suffixes);
                 }
             }
 
             return loadRows(keys, filter);
         }
 
-        private Iterator<RoaringBitmap> getSuffixes(final String indexFile, final Expression exp, final AbstractType<?> validator)
+        private SuffixIterator getSuffixes(final String indexFile, final Expression exp, final AbstractType<?> validator)
         {
 
-            final OnDiskSA sa;
             try
             {
-                sa = new OnDiskSA(new File(indexFile), validator);
+                return new SuffixIterator(indexFile, exp, validator);
             }
             catch (IOException e)
             {
                 logger.error("Failed to read SA index file: " + indexFile + ", skipping.", e);
-                return Iterators.emptyIterator();
+                return null;
             }
-
-            final IteratorOrder order;
-            final Iterator<DataSuffix> suffixes = (exp.lower == null) // in case query is col <(=) x
-                                ? sa.iteratorAt(exp.upper.value, (order = IteratorOrder.ASC), exp.upper.inclusive)
-                                : sa.iteratorAt(exp.lower.value, (order = IteratorOrder.DESC), exp.lower.inclusive);
-
-            return new AbstractIterator<RoaringBitmap>()
-            {
-                @Override
-                protected RoaringBitmap computeNext()
-                {
-                    if (!suffixes.hasNext())
-                    {
-                        FileUtils.closeQuietly(sa);
-                        return endOfData();
-                    }
-
-                    DataSuffix suffix = suffixes.next();
-
-                    if (order == IteratorOrder.DESC && exp.upper != null)
-                    {
-                        ByteBuffer s = suffix.getSuffix();
-                        s.limit(s.position() + exp.upper.value.remaining());
-
-                        int cmp = validator.compare(s, exp.upper.value);
-                        if ((cmp > 0 && exp.upper.inclusive) || (cmp >= 0 && !exp.upper.inclusive))
-                        {
-                            FileUtils.closeQuietly(sa);
-                            return endOfData();
-                        }
-                    }
-
-                    try
-                    {
-                        return suffix.getKeys();
-                    }
-                    catch (IOException e)
-                    {
-                        logger.error("Failed to get positions from the one data suffixes (" + indexFile + ").");
-                        return endOfData();
-                    }
-                }
-            };
         }
 
         private ByteBuffer readKeyFromIndex(SSTableReader reader, int keyPosition)
@@ -729,6 +713,63 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
         {
             this.value = value;
             this.inclusive = inclusive;
+        }
+    }
+
+    private static class SuffixIterator extends AbstractIterator<RoaringBitmap> implements Closeable
+    {
+        private final OnDiskSA sa;
+        private final String indexFile;
+        private final Expression exp;
+        private final AbstractType<?> validator;
+        private final Iterator<DataSuffix> suffixes;
+        private final IteratorOrder order;
+
+        public SuffixIterator(String indexFile, Expression exp, AbstractType<?> validator) throws IOException
+        {
+            this.indexFile = indexFile;
+            this.validator = validator;
+            this.exp = exp;
+            this.sa = new OnDiskSA(new File(indexFile), validator);
+            this.suffixes = (exp.lower == null) // in case query is col <(=) x
+                                    ? sa.iteratorAt(exp.upper.value, (order = IteratorOrder.ASC), exp.upper.inclusive)
+                                    : sa.iteratorAt(exp.lower.value, (order = IteratorOrder.DESC), exp.lower.inclusive);
+
+        }
+
+        @Override
+        protected RoaringBitmap computeNext()
+        {
+            if (!suffixes.hasNext())
+                return endOfData();
+
+            DataSuffix suffix = suffixes.next();
+
+            if (order == IteratorOrder.DESC && exp.upper != null)
+            {
+                ByteBuffer s = suffix.getSuffix();
+                s.limit(s.position() + exp.upper.value.remaining());
+
+                int cmp = validator.compare(s, exp.upper.value);
+                if ((cmp > 0 && exp.upper.inclusive) || (cmp >= 0 && !exp.upper.inclusive))
+                    return endOfData();
+            }
+
+            try
+            {
+                return suffix.getKeys();
+            }
+            catch (IOException e)
+            {
+                logger.error("Failed to get positions from the one data suffixes (" + indexFile + ").", e);
+                return endOfData();
+            }
+        }
+
+        @Override
+        public void close()
+        {
+            FileUtils.closeQuietly(sa);
         }
     }
 }
