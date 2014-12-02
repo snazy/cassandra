@@ -452,6 +452,19 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
 
         public List<Row> search(ExtendedFilter filter)
         {
+            try
+            {
+                return performSearch(filter);
+            }
+            catch(Exception e)
+            {
+                logger.info("error occurred while searching suffix array indexes; ignoring", e);
+                return Collections.EMPTY_LIST;
+            }
+        }
+
+        protected List<Row> performSearch(ExtendedFilter filter)
+        {
             final Set<ByteBuffer> keys = new TreeSet<>();
             final int maxKeys = Math.min(MAX_ROWS, filter.maxRows());
 
