@@ -36,12 +36,13 @@ import org.apache.cassandra.io.sstable.SSTableWriterListener;
 import org.apache.cassandra.io.util.FileUtils;
 import org.apache.cassandra.thrift.IndexExpression;
 import org.apache.cassandra.thrift.IndexOperator;
+import org.apache.cassandra.utils.ByteBufferUtil;
 import org.apache.cassandra.utils.Pair;
 
 
 import com.google.common.collect.*;
 import com.google.common.util.concurrent.Futures;
-import com.google.common.util.concurrent.Uninterruptibles;
+
 import org.roaringbitmap.IntIterator;
 import org.roaringbitmap.RoaringBitmap;
 import org.slf4j.Logger;
@@ -237,7 +238,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
         // better yet, the index rebuild path can be bypassed by overriding buildIndexAsync(), and just return
         // some empty Future - all current callers of buildIndexAsync() ignore the returned Future.
         // seems a little dangerous (not future proof) but good enough for a v1
-        logger.debug("received an index() call");
+        logger.trace("received an index() call");
     }
 
     /**
@@ -421,7 +422,6 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
             try
             {
                 long start = System.nanoTime();
-                logger.info("starting SA for {}", fileName);
                 builder.finish(new File(fileName));
                 logger.info("finishing SA for {} in {} ms", fileName, TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start));
                 return Boolean.TRUE;
@@ -445,15 +445,23 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
 
     protected class LocalSecondaryIndexSearcher extends SecondaryIndexSearcher
     {
+        private final Phaser phaser;
+        private final long executionTimeLimit;
+        private int phaserPhase;
+
         protected LocalSecondaryIndexSearcher(SecondaryIndexManager indexManager, Set<ByteBuffer> columns)
         {
             super(indexManager, columns);
+            phaser = new Phaser();
+            executionTimeLimit = (long)(DatabaseDescriptor.getRangeRpcTimeout() -
+                                 (DatabaseDescriptor.getRangeRpcTimeout() * .1));
         }
 
         public List<Row> search(ExtendedFilter filter)
         {
             try
             {
+                phaserPhase = phaser.register();
                 return performSearch(filter);
             }
             catch(Exception e)
@@ -461,59 +469,26 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
                 logger.info("error occurred while searching suffix array indexes; ignoring", e);
                 return Collections.EMPTY_LIST;
             }
+            finally
+            {
+                phaser.forceTermination();
+            }
         }
 
         protected List<Row> performSearch(ExtendedFilter filter)
         {
-            final Set<ByteBuffer> keys = new TreeSet<>(new Comparator<ByteBuffer>()
-            {
-                @Override
-                public int compare(ByteBuffer a, ByteBuffer b)
-                {
-                    return baseCfs.partitioner.getToken(a).compareTo(baseCfs.partitioner.getToken(b));
-                }
-            });
-
-            final int maxKeys = Math.min(MAX_ROWS, filter.maxRows());
-
+            final int maxRows = Math.min(MAX_ROWS, filter.maxRows());
+            long now = System.currentTimeMillis();
+            List<Row> rows = new ArrayList<>(maxRows);
             Map<ByteBuffer, Expression> expressions = analyzeQuery(filter.getClause());
+            List<Future<Row>> loadingRows = new ArrayList<>(maxRows);
 
             search_per_sstable_loop:
             for (SSTableReader reader : baseCfs.getDataTracker().getSSTables())
             {
-                boolean missingIndex = false;
-                List<SuffixIterator> iterators = new ArrayList<>();
-                for (Map.Entry<ByteBuffer, Expression> exp : expressions.entrySet())
-                {
-                    ColumnDefinition columnDef = getColumnDefinition(exp.getKey());
-                    if (columnDef == null)
-                        continue;
-
-                    String columnName = (String) baseCfs.getComparator().compose(columnDef.name);
-                    String indexPath = reader.descriptor.filenameFor(String.format(FILE_NAME_FORMAT, columnName));
-
-                    SuffixIterator suffixes = getSuffixes(indexPath, exp.getValue(), columnDef.getValidator());
-
-                    // if there was a problem when fetching one of the indexes, we skip current SSTable,
-                    // as it's not going to produce any AND results.
-                    if (suffixes == null)
-                    {
-                        missingIndex = true;
-                        break;
-                    }
-
-                    iterators.add(suffixes);
-                }
-
-                if (missingIndex)
-                {
-                    // cleanup already open iterators
-                    for (SuffixIterator suffixes : iterators)
-                        FileUtils.closeQuietly(suffixes);
-
-                    // carry on to the next SSTable (if any).
+                List<SuffixIterator> iterators = getIterators(expressions, reader);
+                if (iterators.isEmpty())
                     continue;
-                }
 
                 try
                 {
@@ -527,7 +502,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
                             RoaringBitmap expressionStep = new RoaringBitmap();
                             while (positions.hasNext()) {
                                 expressionStep.or(positions.next());
-                                if (expressionStep.getCardinality() >= maxKeys)
+                                if (expressionStep.getCardinality() >= maxRows)
                                     break;
                             }
 
@@ -550,11 +525,16 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
                             if ((key = readKeyFromIndex(reader, positions.next())) == null)
                                 continue;
 
-                            keys.add(key);
+                            loadingRows.add(submitRow(key, filter, expressions));
                             // read exactly up until all results are found and break main loop
                             // otherwise we are going to read a lot more keys from the index then actually required.
-                            if (keys.size() >= maxKeys)
-                                break search_per_sstable_loop;
+                            if (rows.size() + loadingRows.size() >= maxRows)
+                            {
+                                // check up on loading rows to see who is loaded
+                                harvest(rows, loadingRows, -1);
+                                if (rows.size() >= maxRows)
+                                    break search_per_sstable_loop;
+                            }
                         }
 
                         if (exhaustedCount == iterators.size())
@@ -567,13 +547,40 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
                         FileUtils.closeQuietly(suffixes);
                 }
             }
+            harvest(rows, loadingRows, now);
+            return rows;
+        }
 
-            return loadRows(keys, filter);
+        private List<SuffixIterator> getIterators(Map<ByteBuffer, Expression> expressions, SSTableReader reader)
+        {
+            List<SuffixIterator> iterators = new ArrayList<>();
+            for (Map.Entry<ByteBuffer, Expression> exp : expressions.entrySet())
+            {
+                ColumnDefinition columnDef = getColumnDefinition(exp.getKey());
+                if (columnDef == null)
+                    continue;
+
+                String columnName = (String) baseCfs.getComparator().compose(columnDef.name);
+                String indexPath = reader.descriptor.filenameFor(String.format(FILE_NAME_FORMAT, columnName));
+
+                SuffixIterator suffixes = getSuffixes(indexPath, exp.getValue(), columnDef.getValidator());
+
+                // if there was a problem when fetching one of the indexes, we skip current SSTable,
+                // as it's not going to produce any AND results.
+                if (suffixes == null)
+                {
+                    for (SuffixIterator s : iterators)
+                        FileUtils.closeQuietly(s);
+                    return Collections.EMPTY_LIST;
+                }
+
+                iterators.add(suffixes);
+            }
+            return iterators;
         }
 
         private SuffixIterator getSuffixes(final String indexFile, final Expression exp, final AbstractType<?> validator)
         {
-
             try
             {
                 return new SuffixIterator(indexFile, exp, validator);
@@ -599,66 +606,98 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
             return null;
         }
 
-        private List<Row> loadRows(Set<ByteBuffer> keys, ExtendedFilter filter)
+        private void harvest(List<Row> rows, List<Future<Row>> futures, long startTime)
         {
-            final long timestamp = System.currentTimeMillis();
-            final CountDownLatch latch = new CountDownLatch(keys.size());
-
-            List<Future<Row>> futures = new ArrayList<>(keys.size());
-            ExecutorService readStage = StageManager.getStage(Stage.READ);
-
-            for (ByteBuffer key : keys)
+            boolean lastTime = startTime > 0;
+            if (lastTime)
             {
-                ReadCommand cmd = ReadCommand.create(baseCfs.keyspace.getName(),
-                                                     key,
-                                                     baseCfs.getColumnFamilyName(),
-                                                     timestamp,
-                                                     filter.columnFilter(key));
-
-                futures.add(readStage.submit(new RowReader(cmd, latch)));
+                try
+                {
+                    long elapsed = System.currentTimeMillis() - startTime;
+                    long remainingTime = executionTimeLimit - elapsed;
+                    if (remainingTime > 0)
+                    {
+                        phaser.arrive();
+                        phaser.awaitAdvanceInterruptibly(phaserPhase, remainingTime, TimeUnit.MILLISECONDS);
+                    }
+                }
+                catch (InterruptedException | TimeoutException e)
+                {
+                    //nop
+                }
             }
 
-            // This is going to (potentially) return partial results but it's better then
-            // waiting for every single future which is going to delay concurrent requests
-            // and result in the TimeoutException anyway (as client waiting for a single rpc-range-timeout).
-            // If some of the futures weren't done at the time of rpc-range-timeout expiration,
-            // we are going to cancel them (with mayInterruptIfRunning set to true) to give more room to other requests.
-
-            Uninterruptibles.awaitUninterruptibly(latch, DatabaseDescriptor.getRangeRpcTimeout(), TimeUnit.MILLISECONDS);
-
-            List<Row> rows = new ArrayList<>(keys.size());
-            for (Future<Row> f : futures)
+            for (Iterator<Future<Row>> iter = futures.iterator(); iter.hasNext();)
             {
+                Future<Row> f = iter.next();
                 if (f.isDone())
-                    rows.add(Futures.getUnchecked(f));
-                else
+                {
+                    Row r = Futures.getUnchecked(f);
+                    if (r != null)
+                        rows.add(r);
+                    iter.remove();
+                }
+                else if (lastTime)
+                {
                     f.cancel(true);
+                    iter.remove();
+                }
             }
+        }
 
-            return rows;
+        private Future<Row> submitRow(ByteBuffer key, ExtendedFilter filter, Map<ByteBuffer, Expression> expressions)
+        {
+            ExecutorService readStage = StageManager.getStage(Stage.READ);
+            ReadCommand cmd = ReadCommand.create(baseCfs.keyspace.getName(),
+                                                 key,
+                                                 baseCfs.getColumnFamilyName(),
+                                                 System.currentTimeMillis(),
+                                                 filter.columnFilter(key));
+
+            return readStage.submit(new RowReader(cmd, expressions));
         }
 
         private class RowReader implements Callable<Row>
         {
             private final ReadCommand command;
-            private final CountDownLatch latch;
+            private final Map<ByteBuffer, Expression> expressions;
 
-            public RowReader(ReadCommand command, CountDownLatch latch)
+            public RowReader(ReadCommand command, Map<ByteBuffer, Expression> expressions)
             {
                 this.command = command;
-                this.latch = latch;
+                this.expressions = expressions;
+                phaser.register();
             }
 
             public Row call() throws Exception
             {
                 try
                 {
-                    return command.getRow(Keyspace.open(command.ksName));
+                    Row row = command.getRow(Keyspace.open(command.ksName));
+                    return satisfiesPredicates(row) ? row : null;
                 }
                 finally
                 {
-                    latch.countDown();
+                    phaser.arriveAndDeregister();
                 }
+            }
+
+            /**
+             * reapply the predicates to see if the row still satisfies the search predicates
+             * now that it's been loaded and merged from the LSM storage engine.
+             */
+            private boolean satisfiesPredicates(Row row)
+            {
+                if (row.cf == null)
+                    return false;
+                long now = System.currentTimeMillis();
+                for (Map.Entry<ByteBuffer, Expression> entry : expressions.entrySet())
+                {
+                    Column col = row.cf.getColumn(entry.getKey());
+                    if (col == null || !col.isLive(now) || !entry.getValue().contains(col.value()))
+                        return false;
+                }
+                return true;
             }
         }
 
@@ -683,7 +722,13 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
 
                 Expression exp = groups.get(name);
                 if (exp == null)
-                    groups.put(name, (exp = new Expression()));
+                {
+                    ColumnDefinition columnDef = getColumnDefinition(name);
+                    if (columnDef == null)
+                        continue;
+
+                    groups.put(name, (exp = new Expression(columnDef.getValidator())));
+                }
 
                 exp.add(e.op, e.bufferForValue());
             }
@@ -694,7 +739,13 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
 
     private static class Expression
     {
+        private final AbstractType<?> validator;
         private Bound lower, upper;
+
+        private Expression(AbstractType<?> validator)
+        {
+            this.validator = validator;
+        }
 
         public void add(IndexOperator op, ByteBuffer value)
         {
@@ -722,6 +773,35 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
                     break;
 
             }
+        }
+
+        public boolean contains(ByteBuffer value)
+        {
+            if (lower != null)
+            {
+                // suffix check
+                if (!ByteBufferUtil.contains(lower.value, value))
+                    return false;
+
+                // range - mainly for numeric values
+                int cmp = validator.compare(lower.value, value);
+                if ((cmp > 0 && !lower.inclusive) || (cmp <= 0 && lower.inclusive))
+                    return false;
+            }
+
+            if (upper != null)
+            {
+                // suffix check
+                if (!ByteBufferUtil.contains(upper.value, value))
+                    return false;
+
+                // range - mainly for numeric values
+                int cmp = validator.compare(upper.value, value);
+                if ((cmp < 0 && !upper.inclusive) || (cmp <= 0 && upper.inclusive))
+                    return false;
+            }
+
+            return true;
         }
     }
 

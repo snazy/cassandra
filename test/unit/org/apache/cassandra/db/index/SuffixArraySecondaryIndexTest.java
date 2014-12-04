@@ -47,25 +47,25 @@ public class SuffixArraySecondaryIndexTest extends SchemaLoader
         final ByteBuffer age = UTF8Type.instance.decompose("age");
 
         Set<String> rows = getIndexed(store, 10, new IndexExpression(firstName, IndexOperator.EQ, UTF8Type.instance.decompose("a")));
-        Assert.assertTrue(Arrays.equals(new String[] { "key1", "key2", "key3", "key4" }, rows.toArray(new String[rows.size()])));
+        Assert.assertTrue(rows.toString(), Arrays.equals(new String[] { "key1", "key2", "key3", "key4" }, rows.toArray(new String[rows.size()])));
 
         rows = getIndexed(store, 10, new IndexExpression(firstName, IndexOperator.EQ, UTF8Type.instance.decompose("av")));
-        Assert.assertTrue(Arrays.equals(new String[] { "key1", "key2", "key3" }, rows.toArray(new String[rows.size()])));
+        Assert.assertTrue(rows.toString(), Arrays.equals(new String[] { "key1", "key2", "key3" }, rows.toArray(new String[rows.size()])));
 
         rows = getIndexed(store, 10, new IndexExpression(firstName, IndexOperator.EQ, UTF8Type.instance.decompose("as")));
-        Assert.assertTrue(Arrays.equals(new String[] { "key4" }, rows.toArray(new String[rows.size()])));
+        Assert.assertTrue(rows.toString(), Arrays.equals(new String[] { "key4" }, rows.toArray(new String[rows.size()])));
 
         rows = getIndexed(store, 10, new IndexExpression(firstName, IndexOperator.EQ, UTF8Type.instance.decompose("aw")));
-        Assert.assertEquals(0, rows.size());
+        Assert.assertEquals(rows.toString(), 0, rows.size());
 
         rows = getIndexed(store, 10, new IndexExpression(age, IndexOperator.EQ, Int32Type.instance.decompose(27)));
-        Assert.assertTrue(Arrays.equals(new String[] { "key3", "key4" }, rows.toArray(new String[rows.size()])));
+        Assert.assertTrue(rows.toString(), Arrays.equals(new String[] { "key3", "key4" }, rows.toArray(new String[rows.size()])));
 
         rows = getIndexed(store, 10, new IndexExpression(age, IndexOperator.EQ, Int32Type.instance.decompose(26)));
-        Assert.assertTrue(Arrays.equals(new String[] { "key2" }, rows.toArray(new String[rows.size()])));
+        Assert.assertTrue(rows.toString(), Arrays.equals(new String[] { "key2" }, rows.toArray(new String[rows.size()])));
 
         rows = getIndexed(store, 10, new IndexExpression(age, IndexOperator.EQ, Int32Type.instance.decompose(13)));
-        Assert.assertEquals(0, rows.size());
+        Assert.assertEquals(rows.toString(), 0, rows.size());
     }
 
     @Test
@@ -87,18 +87,18 @@ public class SuffixArraySecondaryIndexTest extends SchemaLoader
         Set<String> rows = getIndexed(store, 10,
                                       new IndexExpression(firstName, IndexOperator.EQ, UTF8Type.instance.decompose("a")),
                                       new IndexExpression(age, IndexOperator.GT, Int32Type.instance.decompose(14)));
-        Assert.assertTrue(Arrays.equals(new String[] { "key2", "key3", "key4" }, rows.toArray(new String[rows.size()])));
+        Assert.assertTrue(rows.toString(), Arrays.equals(new String[] { "key2", "key3", "key4" }, rows.toArray(new String[rows.size()])));
 
         rows = getIndexed(store, 10,
                           new IndexExpression(firstName, IndexOperator.EQ, UTF8Type.instance.decompose("a")),
                           new IndexExpression(age, IndexOperator.LT, Int32Type.instance.decompose(27)));
-        Assert.assertTrue(Arrays.equals(new String[] { "key1", "key2" }, rows.toArray(new String[rows.size()])));
+        Assert.assertTrue(rows.toString(), Arrays.equals(new String[] { "key1", "key2" }, rows.toArray(new String[rows.size()])));
 
         rows = getIndexed(store, 10,
                          new IndexExpression(firstName, IndexOperator.EQ, UTF8Type.instance.decompose("a")),
                          new IndexExpression(age, IndexOperator.GT, Int32Type.instance.decompose(14)),
                          new IndexExpression(age, IndexOperator.LT, Int32Type.instance.decompose(27)));
-        Assert.assertTrue(Arrays.equals(new String[] { "key2" }, rows.toArray(new String[rows.size()])));
+        Assert.assertTrue(rows.toString(), Arrays.equals(new String[] { "key2" }, rows.toArray(new String[rows.size()])));
 
     }
 
@@ -144,33 +144,33 @@ public class SuffixArraySecondaryIndexTest extends SchemaLoader
         Set<String> rows = getIndexed(store, 10,
                 new IndexExpression(firstName, IndexOperator.EQ, UTF8Type.instance.decompose("a")));
 
-        Assert.assertTrue(Arrays.equals(new String[] { "key0", "key11", "key12", "key13", "key14",
+        Assert.assertTrue(rows.toString(), Arrays.equals(new String[] { "key0", "key11", "key12", "key13", "key14",
                 "key3", "key4", "key6", "key7", "key8" }, rows.toArray(new String[rows.size()])));
 
         rows = getIndexed(store, 5,
                 new IndexExpression(firstName, IndexOperator.EQ, UTF8Type.instance.decompose("a")));
 
-        Assert.assertEquals(5, rows.size());
+        Assert.assertEquals(rows.toString(), 5, rows.size());
 
         rows = getIndexed(store, 10,
                 new IndexExpression(firstName, IndexOperator.EQ, UTF8Type.instance.decompose("a")),
                 new IndexExpression(age, IndexOperator.GTE, Int32Type.instance.decompose(35)));
 
-        Assert.assertTrue(Arrays.equals(new String[] { "key0", "key11", "key12", "key13", "key4", "key6", "key7" },
+        Assert.assertTrue(rows.toString(), Arrays.equals(new String[] { "key0", "key11", "key12", "key13", "key4", "key6", "key7" },
                 rows.toArray(new String[rows.size()])));
 
         rows = getIndexed(store, 10,
                 new IndexExpression(firstName, IndexOperator.EQ, UTF8Type.instance.decompose("a")),
                 new IndexExpression(age, IndexOperator.LT, Int32Type.instance.decompose(32)));
 
-        Assert.assertTrue(Arrays.equals(new String[] { "key14", "key3", "key8" }, rows.toArray(new String[rows.size()])));
+        Assert.assertTrue(rows.toString(), Arrays.equals(new String[] { "key14", "key3", "key8" }, rows.toArray(new String[rows.size()])));
 
         rows = getIndexed(store, 10,
                 new IndexExpression(firstName, IndexOperator.EQ, UTF8Type.instance.decompose("a")),
                 new IndexExpression(age, IndexOperator.GT, Int32Type.instance.decompose(27)),
                 new IndexExpression(age, IndexOperator.LT, Int32Type.instance.decompose(32)));
 
-        Assert.assertTrue(Arrays.equals(new String[] { "key14" }, rows.toArray(new String[rows.size()])));
+        Assert.assertTrue(rows.toString(), Arrays.equals(new String[] { "key14" }, rows.toArray(new String[rows.size()])));
 
     }
 
