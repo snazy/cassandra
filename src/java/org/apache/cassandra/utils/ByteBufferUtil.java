@@ -553,6 +553,15 @@ public class ByteBufferUtil
         return prefix.equals(value.duplicate().limit(value.remaining() - diff));
     }
 
+    public static boolean contains(ByteBuffer subBuffer, ByteBuffer buffer)
+    {
+        if (subBuffer.remaining() > buffer.remaining())
+            return false;
+
+        int diff = subBuffer.remaining() - buffer.remaining();
+        return subBu ffer.equals(buffer.duplicate().position(value.position() + diff));
+    }
+
     /** trims size of bytebuffer to exactly number of bytes in it, to do not hold too much memory */
     public static ByteBuffer minimalBufferFor(ByteBuffer buf)
     {
