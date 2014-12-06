@@ -497,7 +497,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
             catch(Exception e)
             {
                 logger.info("error occurred while searching suffix array indexes; ignoring", e);
-                return Collections.EMPTY_LIST;
+                return Collections.emptyList();
             }
             finally
             {
@@ -507,18 +507,16 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
 
         protected List<Row> performSearch(ExtendedFilter filter) throws IOException
         {
-            System.out.println("^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^");
-            System.out.println("^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^  NEXT SEARCH ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^");
-            System.out.println("^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^");
             final int maxRows = Math.min(MAX_ROWS, filter.maxRows());
-            long now = System.currentTimeMillis();
+            final long now = System.currentTimeMillis();
+
             List<Row> rows = new ArrayList<>(maxRows);
             List<Future<Row>> loadingRows = new ArrayList<>(maxRows);
             List<Pair<ByteBuffer, Expression>> expressions = analyzeQuery(filter.getClause());
             if (expressions.isEmpty())
             {
                 // how the fuck did this happen? either way, bail immediately to conserve any trivial number of CPU cycles from this disaster of a query....
-                return Collections.EMPTY_LIST;
+                return Collections.emptyList();
             }
 
             // take first predicate, get (top n) list of matches, and iterate
@@ -535,87 +533,76 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
 
             final Set<DecoratedKey> eliminatedKeys = new TreeSet<>(DecoratedKey.comparator);
 
-            Pair<ByteBuffer, Expression> firstPredicate = expressions.remove(0);
-            SuffixIterator si = getSuffixIterator(sstables.iterator(), firstPredicate.left, firstPredicate.right);
-            if (si == null)
-                return Collections.EMPTY_LIST;
-            outermost: while (si.hasNext())
+            Pair<ByteBuffer, Expression> eqPredicate = expressions.remove(0);
+            try (SuffixIterator eqSuffixes = getSuffixIterator(sstables.iterator(), eqPredicate.left, eqPredicate.right))
             {
-                // load next maxRows predicate matches (keys)
-                RoaringBitmap predicateMatches = si.next();
-                final Set<DecoratedKey> localKeys = new TreeSet<>(DecoratedKey.comparator);
-                IntIterator positions = predicateMatches.getIntIterator();
-                while (positions.hasNext() && rows.size() < maxRows)
-                {
-                    DecoratedKey key;
-                    if ((key = readKeyFromIndex(si.getCurrentReader(), positions.next())) == null)
-                        continue;
+                if (eqSuffixes == null)
+                    return Collections.emptyList();
 
-                    if (eliminatedKeys.add(key))
-                        localKeys.add(key);
-                }
-
-                System.out.println("localKeys size: " + localKeys.size());
-                keys_loop: for (DecoratedKey decoratedKey : localKeys)
+                outermost:
+                while (eqSuffixes.hasNext())
                 {
-                    System.out.println("\t&&&&&&&&&&&&&&&&&&&& search for matching predicates for key: " + baseCfs.getComparator().compose(decoratedKey.key) + " &&&&&&&&&&&&&&&&&&&&&&&&&&");
-                    ColumnFamilyStore.ViewFragment view = baseCfs.markReferenced(decoratedKey);
-                    try
+                    Iterator<DecoratedKey> keys = eqSuffixes.next();
+
+                    keys_loop:
+                    while (keys.hasNext() && rows.size() < maxRows)
                     {
-                        //TODO: add in optimization to first look at the sstable from which the row key came
-                        // i think there's a good probability other matching columns may be in the same sstable
+                        DecoratedKey key = keys.next();
+                        if (!eliminatedKeys.add(key))
+                            continue;
 
-                        predicate_loop: for (Pair<ByteBuffer, Expression> predicate : expressions)
+                        ColumnFamilyStore.ViewFragment view = baseCfs.markReferenced(key);
+                        try
                         {
-                            System.out.println("\tnext predicate for key: " + baseCfs.getComparator().compose(predicate.left));
-                            Iterator<SSTableReader> candidates = Iterators.filter(view.sstables.iterator(), new BloomFilterPredicate(decoratedKey.key));
-                            System.out.println("candidates size = " + Iterators.size(Iterators.filter(view.sstables.iterator(), new BloomFilterPredicate(decoratedKey.key)))
-                                                    + ", view size = " + view.sstables.size());
-                            SuffixIterator suffixIterator = getSuffixIterator(candidates, predicate.left, predicate.right);
+                            //TODO: add in optimization to first look at the sstable from which the row key came
+                            // i think there's a good probability other matching columns may be in the same sstable
 
-                            suffix_loop: while (suffixIterator.hasNext())
+                            predicate_loop:
+                            for (Pair<ByteBuffer, Expression> predicate : expressions)
                             {
-                                RoaringBitmap bitmap = suffixIterator.next();
-                                IntIterator intIterator = bitmap.getIntIterator();
-//                                while (intIterator.hasNext())
-//                                {
-//                                    int position = intIterator.next();
-//                                    DecoratedKey dkey = suffixIterator.curSstable.keyAt(position);
-//                                    System.out.println("\there's a predicate for key: " + baseCfs.getComparator().compose(dkey.key) + "/" + baseCfs.getComparator().compose(predicate.left)
-//                                                            + ", from sstable " + suffixIterator.curSstable);
-//                                    if (dkey.equals(decoratedKey))
-//                                    {
-//                                        // we're good for this predicate (in any sstable), so move on to next predicate
-//                                        System.out.println("\tfound a matching predicate for key: " + baseCfs.getComparator().compose(decoratedKey.key) + "/" + baseCfs.getComparator().compose(predicate.left));
-//                                        continue predicate_loop;
-//                                    }
-////                                    if (dkey.compareTo(decoratedKey) > 0)
-////                                    {
-////                                        // we're past the range of this suffix, so try the next suffix
-////                                        continue suffix_loop;
-////                                    }
-//                                }
+                                Iterator<SSTableReader> candidates = Iterators.filter(view.sstables.iterator(), new BloomFilterPredicate(key.key));
+                                try (SuffixIterator suffixIterator = getSuffixIterator(candidates, predicate.left, predicate.right))
+                                {
+                                    while (suffixIterator.hasNext())
+                                    {
+                                        Iterator<DecoratedKey> candidateKeys = suffixIterator.next();
+                                        while (candidateKeys.hasNext())
+                                        {
+                                            int cmp = candidateKeys.next().compareTo(key);
+                                            if (cmp == 0)
+                                            {
+                                                // we're good for this predicate (in any sstable), so move on to next predicate
+                                                continue predicate_loop;
+                                            }
+                                            else if (cmp > 0)
+                                            {
+                                                // we're past the range of this suffix, so try the next suffix
+                                                break;
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // if we got here, there's no match for the current predicate, so skip this key
+                                continue keys_loop;
                             }
-                            // if we got here, there's no match for the current predicate, so skip this key
-                            System.out.println("\t\tdid not find a matching predicate for key: " + baseCfs.getComparator().compose(decoratedKey.key) + "/" + baseCfs.getComparator().compose(predicate.left));
-                            continue keys_loop;
+
+                            // if we got here, all the predicates have been satisfied
+                            loadingRows.add(submitRow(key.key, filter, analyzeQuery(filter.getClause())));
+                            // read exactly up until all results are found and break main loop
+                            // otherwise we are going to read a lot more keys from the index then actually required.
+                            if (rows.size() + loadingRows.size() >= maxRows)
+                            {
+                                // check up on loading rows to see who is loaded
+                                harvest(rows, loadingRows, maxRows, -1);
+                                if (rows.size() >= maxRows)
+                                    break outermost;
+                            }
                         }
-                        // if we got here, all the predicates have been satisfied
-                        System.out.println("\t\tloading key: " + baseCfs.getComparator().compose(decoratedKey.key));
-                        loadingRows.add(submitRow(decoratedKey.key, filter, analyzeQuery(filter.getClause())));
-                        // read exactly up until all results are found and break main loop
-                        // otherwise we are going to read a lot more keys from the index then actually required.
-                        if (rows.size() + loadingRows.size() >= maxRows)
+                        finally
                         {
-                            // check up on loading rows to see who is loaded
-                            harvest(rows, loadingRows, maxRows, -1);
-                            if (rows.size() >= maxRows)
-                                break outermost;
+                            SSTableReader.releaseReferences(view.sstables);
                         }
-                    }
-                    finally
-                    {
-                        SSTableReader.releaseReferences(view.sstables);
                     }
                 }
             }
@@ -648,19 +635,6 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
                 return null;
             return new SuffixIterator(sstables, indexedColumn, predicate, columnDef.getValidator());
 
-        }
-        private DecoratedKey readKeyFromIndex(SSTableReader reader, int keyPosition)
-        {
-            try
-            {
-                return reader.keyAt(keyPosition);
-            }
-            catch (IOException ioe)
-            {
-                logger.warn("failed to read key at position {} from sstable {}; ignoring.", keyPosition, reader, ioe);
-            }
-
-            return null;
         }
 
         private void harvest(List<Row> rows, List<Future<Row>> futures, int maxRows, long startTime)
@@ -783,7 +757,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
 
         private List<Pair<ByteBuffer, Expression>> analyzeQuery(List<IndexExpression> expressions)
         {
-            // differentiate between equality and inequlaity expressions while analyizing so we can later put the equality
+            // differentiate between equality and inequality expressions while analyzing so we can later put the equality
             // statements at the front of the list of expressions.
             List<Pair<ByteBuffer, Expression>> equalityExpressions = new ArrayList<>();
             List<Pair<ByteBuffer, Expression>> inequalityExpressions = new ArrayList<>();
@@ -891,7 +865,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
         }
     }
 
-    private class SuffixIterator extends AbstractIterator<RoaringBitmap> implements Closeable
+    private class SuffixIterator extends AbstractIterator<Iterator<DecoratedKey>> implements Closeable
     {
         private final Expression exp;
         private final Iterator<SSTableReader> sstables;
@@ -902,7 +876,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
 
         private OnDiskSA sa;
         private Iterator<DataSuffix> suffixes;
-        private SSTableReader curSstable;
+        private SSTableReader currentSSTable;
 
         public SuffixIterator(Iterator<SSTableReader> ssTables, ByteBuffer indexedColumn, Expression exp, AbstractType<?> validator)
         {
@@ -919,12 +893,11 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
         }
 
         @Override
-        protected RoaringBitmap computeNext()
+        protected Iterator<DecoratedKey> computeNext()
         {
             if (sa == null || !suffixes.hasNext())
             {
-                loadNext();
-                if (sa == null)
+                if (!loadNext())
                     return endOfData();
             }
 
@@ -943,36 +916,32 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
                 }
             }
 
-            try
-            {
-                return suffix.getKeys();
-            }
-            catch (IOException e)
-            {
-                logger.error("Failed to get positions from the one data suffixes", e);
-                return endOfData();
-            }
+            return new KeyIterator(currentSSTable, suffix);
         }
 
-        private void loadNext()
+        private boolean loadNext()
         {
+            // close exhausted iterator and move to the new file
             FileUtils.closeQuietly(sa);
+
             while (sstables.hasNext())
             {
                 SSTableReader ssTable = sstables.next();
-                System.out.println("** loadNext() sstable = " + ssTable + "/" + columnName);
                 String indexFile = ssTable.descriptor.filenameFor(String.format(FILE_NAME_FORMAT, columnName));
+
                 try
                 {
                     File f = new File(indexFile);
                     if (f.exists())
                     {
                         sa = new OnDiskSA(f, validator);
-                        curSstable = ssTable;
+                        currentSSTable = ssTable;
                         suffixes = (exp.lower == null) // in case query is col <(=) x
                                    ? sa.iteratorAt(exp.upper.value, order, exp.upper.inclusive)
                                    : sa.iteratorAt(exp.lower.value, order, exp.lower.inclusive);
-                        return;
+
+                        if (suffixes.hasNext())
+                            return true;
                     }
                 }
                 catch (IOException e)
@@ -980,21 +949,70 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
                     logger.info("failed to open suffix array file {}, skipping", indexFile, e);
                 }
             }
-            // if no more sstables, clear out the sa field
-            sa = null;
-            curSstable = null;
-            suffixes = null;
-        }
 
-        public SSTableReader getCurrentReader()
-        {
-            return curSstable;
+            // if there are no more SSTables to check, clear out the currentSSTable and suffixes
+            // but leave "sa" in tact so it can be closed by close() method, otherwise there is going to be FB leak.
+            currentSSTable = null;
+            suffixes = null;
+
+            return false;
         }
 
         @Override
         public void close()
         {
             FileUtils.closeQuietly(sa);
+        }
+    }
+
+    private static class KeyIterator extends AbstractIterator<DecoratedKey>
+    {
+        private final SSTableReader sstable;
+        private final IntIterator positions;
+
+        public KeyIterator(SSTableReader sstable, DataSuffix suffix)
+        {
+            this.sstable = sstable;
+
+            IntIterator positions = null;
+
+            try
+            {
+                positions = suffix.getKeys().getIntIterator();
+            }
+            catch (IOException e)
+            {
+                logger.error("Failed to get positions from the one data suffixes.", e);
+            }
+
+            this.positions = positions;
+        }
+
+        @Override
+        protected DecoratedKey computeNext()
+        {
+            if (positions == null)
+                return endOfData();
+
+            while (positions.hasNext())
+            {
+                DecoratedKey key;
+                int position = positions.next();
+
+                try
+                {
+                    if ((key = sstable.keyAt(position)) == null)
+                        continue;
+
+                    return key;
+                }
+                catch (IOException e)
+                {
+                    logger.warn("failed to read key at position {} from sstable {}; ignoring.", position, sstable, e);
+                }
+            }
+
+            return endOfData();
         }
     }
 }

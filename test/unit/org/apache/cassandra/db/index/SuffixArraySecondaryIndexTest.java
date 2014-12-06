@@ -17,7 +17,6 @@ import org.apache.cassandra.utils.ByteBufferUtil;
 import org.apache.cassandra.utils.Pair;
 
 import org.junit.After;
-import org.junit.Ignore;
 import org.junit.Test;
 
 public class SuffixArraySecondaryIndexTest extends SchemaLoader
@@ -32,7 +31,6 @@ public class SuffixArraySecondaryIndexTest extends SchemaLoader
     }
 
     @Test
-    @Ignore
     public void testSingleExpressionQueries() throws Exception
     {
         Map<String, Pair<String, Integer>> data = new HashMap<String, Pair<String, Integer>>()
@@ -71,7 +69,6 @@ public class SuffixArraySecondaryIndexTest extends SchemaLoader
     }
 
     @Test
-    @Ignore
     public void testMultiExpressionQueries() throws Exception
     {
         Map<String, Pair<String, Integer>> data = new HashMap<String, Pair<String, Integer>>()
@@ -106,7 +103,6 @@ public class SuffixArraySecondaryIndexTest extends SchemaLoader
     }
 
     @Test
-    @Ignore
     public void testCrossSSTableQueries() throws Exception
     {
         Map<String, Pair<String, Integer>> part1 = new HashMap<String, Pair<String, Integer>>()
@@ -185,7 +181,7 @@ public class SuffixArraySecondaryIndexTest extends SchemaLoader
     }
 
     @Test
-    public void testCrossSSTableQueriesMucky() throws Exception
+    public void testMultiExpressionQueriesWhereRowSplitBetweenSSTables() throws Exception
     {
         Map<String, Pair<String, Integer>> part1 = new HashMap<String, Pair<String, Integer>>()
         {{
@@ -226,7 +222,7 @@ public class SuffixArraySecondaryIndexTest extends SchemaLoader
         final ByteBuffer firstName = UTF8Type.instance.decompose("first_name");
         final ByteBuffer age = UTF8Type.instance.decompose("age");
 
-        Set<String> /*rows = getIndexed(store, 10,
+        Set<String> rows = getIndexed(store, 10,
                                       new IndexExpression(firstName, IndexOperator.EQ, UTF8Type.instance.decompose("Fiona")),
                                       new IndexExpression(age, IndexOperator.LT, Int32Type.instance.decompose(40)));
 
@@ -249,20 +245,19 @@ public class SuffixArraySecondaryIndexTest extends SchemaLoader
 
         Assert.assertTrue(rows.toString(), Arrays.equals(new String[] { "key0", "key11", "key12", "key13", "key4", "key6", "key7" },
                                                          rows.toArray(new String[rows.size()])));
-*/
+
         rows = getIndexed(store, 10,
                           new IndexExpression(firstName, IndexOperator.EQ, UTF8Type.instance.decompose("a")),
                           new IndexExpression(age, IndexOperator.LT, Int32Type.instance.decompose(32)));
 
         Assert.assertTrue(rows.toString(), Arrays.equals(new String[] { "key14", "key3", "key8" }, rows.toArray(new String[rows.size()])));
 
-//        rows = getIndexed(store, 10,
-//                          new IndexExpression(firstName, IndexOperator.EQ, UTF8Type.instance.decompose("a")),
-//                          new IndexExpression(age, IndexOperator.GT, Int32Type.instance.decompose(27)),
-//                          new IndexExpression(age, IndexOperator.LT, Int32Type.instance.decompose(32)));
-//
-//        Assert.assertTrue(rows.toString(), Arrays.equals(new String[] { "key14" }, rows.toArray(new String[rows.size()])));
+        rows = getIndexed(store, 10,
+                          new IndexExpression(firstName, IndexOperator.EQ, UTF8Type.instance.decompose("a")),
+                          new IndexExpression(age, IndexOperator.GT, Int32Type.instance.decompose(27)),
+                          new IndexExpression(age, IndexOperator.LT, Int32Type.instance.decompose(32)));
 
+        Assert.assertTrue(rows.toString(), Arrays.equals(new String[] { "key14" }, rows.toArray(new String[rows.size()])));
     }
 
     private static ColumnFamilyStore loadData(Map<String, Pair<String, Integer>> data)
