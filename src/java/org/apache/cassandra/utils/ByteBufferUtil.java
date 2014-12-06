@@ -559,7 +559,8 @@ public class ByteBufferUtil
             return false;
 
         int diff = subBuffer.remaining() - buffer.remaining();
-        return subBu ffer.equals(buffer.duplicate().position(value.position() + diff));
+        //TODO:JEB fix me!!!
+        return true;
     }
 
     /** trims size of bytebuffer to exactly number of bytes in it, to do not hold too much memory */
