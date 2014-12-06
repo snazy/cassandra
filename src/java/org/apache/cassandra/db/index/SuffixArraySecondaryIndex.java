@@ -5,8 +5,37 @@ import java.io.File;
 import java.io.IOError;
 import java.io.IOException;
 import java.nio.ByteBuffer;
-import java.util.*;
-import java.util.concurrent.*;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.ConcurrentModificationException;
+import java.util.HashMap;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.TreeSet;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Future;
+import java.util.concurrent.FutureTask;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.Phaser;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+
+import com.google.common.base.Predicate;
+import com.google.common.collect.AbstractIterator;
+import com.google.common.collect.HashBasedTable;
+import com.google.common.collect.ImmutableList;
+import com.google.common.collect.Iterators;
+import com.google.common.collect.Table;
+import com.google.common.util.concurrent.Futures;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import org.apache.cassandra.concurrent.JMXEnabledThreadPoolExecutor;
 import org.apache.cassandra.concurrent.NamedThreadFactory;
@@ -21,6 +50,7 @@ import org.apache.cassandra.db.DecoratedKey;
 import org.apache.cassandra.db.Keyspace;
 import org.apache.cassandra.db.ReadCommand;
 import org.apache.cassandra.db.Row;
+import org.apache.cassandra.db.columniterator.OnDiskAtomIterator;
 import org.apache.cassandra.db.filter.ExtendedFilter;
 import org.apache.cassandra.db.index.search.OnDiskSA;
 import org.apache.cassandra.db.index.search.OnDiskSABuilder;
@@ -38,19 +68,11 @@ import org.apache.cassandra.thrift.IndexExpression;
 import org.apache.cassandra.thrift.IndexOperator;
 import org.apache.cassandra.utils.ByteBufferUtil;
 import org.apache.cassandra.utils.Pair;
-
-
-import com.google.common.collect.*;
-import com.google.common.util.concurrent.Futures;
-
 import org.roaringbitmap.IntIterator;
 import org.roaringbitmap.RoaringBitmap;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
-
-import static org.apache.cassandra.db.index.search.OnDiskSA.IteratorOrder;
 import static org.apache.cassandra.db.index.search.OnDiskSA.DataSuffix;
+import static org.apache.cassandra.db.index.search.OnDiskSA.IteratorOrder;
 
 /**
  * Note: currently does not work with cql3 tables (unless 'WITH COMPACT STORAGE' is declared when creating the table).
@@ -445,16 +467,24 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
 
     protected class LocalSecondaryIndexSearcher extends SecondaryIndexSearcher
     {
-        private final Phaser phaser;
+        private final Comparator<OnDiskAtomIterator> comparator = new Comparator<OnDiskAtomIterator>()
+        {
+            public int compare(OnDiskAtomIterator i1, OnDiskAtomIterator i2)
+            {
+                return i1.getKey().compareTo(i2.getKey());
+            }
+        };
+
         private final long executionTimeLimit;
+        private final Phaser phaser;
         private int phaserPhase;
 
         protected LocalSecondaryIndexSearcher(SecondaryIndexManager indexManager, Set<ByteBuffer> columns)
         {
             super(indexManager, columns);
-            phaser = new Phaser();
             executionTimeLimit = (long)(DatabaseDescriptor.getRangeRpcTimeout() -
-                                 (DatabaseDescriptor.getRangeRpcTimeout() * .1));
+                                        (DatabaseDescriptor.getRangeRpcTimeout() * .1));
+            phaser = new Phaser();
         }
 
         public List<Row> search(ExtendedFilter filter)
@@ -475,124 +505,151 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
             }
         }
 
-        protected List<Row> performSearch(ExtendedFilter filter)
+        protected List<Row> performSearch(ExtendedFilter filter) throws IOException
         {
+            System.out.println("^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^");
+            System.out.println("^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^  NEXT SEARCH ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^");
+            System.out.println("^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^");
             final int maxRows = Math.min(MAX_ROWS, filter.maxRows());
             long now = System.currentTimeMillis();
             List<Row> rows = new ArrayList<>(maxRows);
-            Map<ByteBuffer, Expression> expressions = analyzeQuery(filter.getClause());
             List<Future<Row>> loadingRows = new ArrayList<>(maxRows);
-
-            search_per_sstable_loop:
-            for (SSTableReader reader : baseCfs.getDataTracker().getSSTables())
+            List<Pair<ByteBuffer, Expression>> expressions = analyzeQuery(filter.getClause());
+            if (expressions.isEmpty())
             {
-                List<SuffixIterator> iterators = getIterators(expressions, reader);
-                if (iterators.isEmpty())
-                    continue;
+                // how the fuck did this happen? either way, bail immediately to conserve any trivial number of CPU cycles from this disaster of a query....
+                return Collections.EMPTY_LIST;
+            }
 
-                try
+            // take first predicate, get (top n) list of matches, and iterate
+            //  - get and decorate the key, get list of candidate sstables from IntervalTree, and check the BF for the key, add to matches list
+            //  - iterate through remaining predicates
+            //      - merge iterate through the matching sstables' indexes for predicate to find any matches on *key* from first predicate match (thus, dereference the candidate's file position to a key)
+            //      -- can break out of merge iterator if any predicate is satisfied by any sstable
+            //      -- can break out of a given sstable iterator (via endOfData()) if the key's token is greater than predicate value (because row key's tokens are ordered)
+            //  - if key matches all predicates, load row and do rest of work...
+
+            // TODO:JEB - this is a Set we get from dataTracker, but we need to order them!!!!
+            // also, we might need to mark sstables as referenced at the higher level here
+            Set<SSTableReader> sstables = baseCfs.getDataTracker().getSSTables();
+
+            final Set<DecoratedKey> eliminatedKeys = new TreeSet<>(DecoratedKey.comparator);
+
+            Pair<ByteBuffer, Expression> firstPredicate = expressions.remove(0);
+            SuffixIterator si = getSuffixIterator(sstables.iterator(), firstPredicate.left, firstPredicate.right);
+            if (si == null)
+                return Collections.EMPTY_LIST;
+            outermost: while (si.hasNext())
+            {
+                // load next maxRows predicate matches (keys)
+                RoaringBitmap predicateMatches = si.next();
+                final Set<DecoratedKey> localKeys = new TreeSet<>(DecoratedKey.comparator);
+                IntIterator positions = predicateMatches.getIntIterator();
+                while (positions.hasNext() && rows.size() < maxRows)
                 {
-                    while (true)
+                    DecoratedKey key;
+                    if ((key = readKeyFromIndex(si.getCurrentReader(), positions.next())) == null)
+                        continue;
+
+                    if (eliminatedKeys.add(key))
+                        localKeys.add(key);
+                }
+
+                System.out.println("localKeys size: " + localKeys.size());
+                keys_loop: for (DecoratedKey decoratedKey : localKeys)
+                {
+                    System.out.println("\t&&&&&&&&&&&&&&&&&&&& search for matching predicates for key: " + baseCfs.getComparator().compose(decoratedKey.key) + " &&&&&&&&&&&&&&&&&&&&&&&&&&");
+                    ColumnFamilyStore.ViewFragment view = baseCfs.markReferenced(decoratedKey);
+                    try
                     {
-                        int exhaustedCount = 0;
+                        //TODO: add in optimization to first look at the sstable from which the row key came
+                        // i think there's a good probability other matching columns may be in the same sstable
 
-                        RoaringBitmap step = null;
-                        for (Iterator<RoaringBitmap> positions : iterators)
+                        predicate_loop: for (Pair<ByteBuffer, Expression> predicate : expressions)
                         {
-                            RoaringBitmap expressionStep = new RoaringBitmap();
-                            while (positions.hasNext()) {
-                                expressionStep.or(positions.next());
-                                if (expressionStep.getCardinality() >= maxRows)
-                                    break;
-                            }
+                            System.out.println("\tnext predicate for key: " + baseCfs.getComparator().compose(predicate.left));
+                            Iterator<SSTableReader> candidates = Iterators.filter(view.sstables.iterator(), new BloomFilterPredicate(decoratedKey.key));
+                            System.out.println("candidates size = " + Iterators.size(Iterators.filter(view.sstables.iterator(), new BloomFilterPredicate(decoratedKey.key)))
+                                                    + ", view size = " + view.sstables.size());
+                            SuffixIterator suffixIterator = getSuffixIterator(candidates, predicate.left, predicate.right);
 
-                            if (step == null)
-                                step = expressionStep;
-                            else
-                                step.and(expressionStep);
-
-                            if (!positions.hasNext())
-                                exhaustedCount++;
-                        }
-
-                        if (step == null)
-                            continue;
-
-                        IntIterator positions = step.getIntIterator();
-                        while (positions.hasNext())
-                        {
-                            ByteBuffer key;
-                            if ((key = readKeyFromIndex(reader, positions.next())) == null)
-                                continue;
-
-                            loadingRows.add(submitRow(key, filter, expressions));
-                            // read exactly up until all results are found and break main loop
-                            // otherwise we are going to read a lot more keys from the index then actually required.
-                            if (rows.size() + loadingRows.size() >= maxRows)
+                            suffix_loop: while (suffixIterator.hasNext())
                             {
-                                // check up on loading rows to see who is loaded
-                                harvest(rows, loadingRows, -1);
-                                if (rows.size() >= maxRows)
-                                    break search_per_sstable_loop;
+                                RoaringBitmap bitmap = suffixIterator.next();
+                                IntIterator intIterator = bitmap.getIntIterator();
+//                                while (intIterator.hasNext())
+//                                {
+//                                    int position = intIterator.next();
+//                                    DecoratedKey dkey = suffixIterator.curSstable.keyAt(position);
+//                                    System.out.println("\there's a predicate for key: " + baseCfs.getComparator().compose(dkey.key) + "/" + baseCfs.getComparator().compose(predicate.left)
+//                                                            + ", from sstable " + suffixIterator.curSstable);
+//                                    if (dkey.equals(decoratedKey))
+//                                    {
+//                                        // we're good for this predicate (in any sstable), so move on to next predicate
+//                                        System.out.println("\tfound a matching predicate for key: " + baseCfs.getComparator().compose(decoratedKey.key) + "/" + baseCfs.getComparator().compose(predicate.left));
+//                                        continue predicate_loop;
+//                                    }
+////                                    if (dkey.compareTo(decoratedKey) > 0)
+////                                    {
+////                                        // we're past the range of this suffix, so try the next suffix
+////                                        continue suffix_loop;
+////                                    }
+//                                }
                             }
+                            // if we got here, there's no match for the current predicate, so skip this key
+                            System.out.println("\t\tdid not find a matching predicate for key: " + baseCfs.getComparator().compose(decoratedKey.key) + "/" + baseCfs.getComparator().compose(predicate.left));
+                            continue keys_loop;
                         }
-
-                        if (exhaustedCount == iterators.size())
-                            break;
+                        // if we got here, all the predicates have been satisfied
+                        System.out.println("\t\tloading key: " + baseCfs.getComparator().compose(decoratedKey.key));
+                        loadingRows.add(submitRow(decoratedKey.key, filter, analyzeQuery(filter.getClause())));
+                        // read exactly up until all results are found and break main loop
+                        // otherwise we are going to read a lot more keys from the index then actually required.
+                        if (rows.size() + loadingRows.size() >= maxRows)
+                        {
+                            // check up on loading rows to see who is loaded
+                            harvest(rows, loadingRows, maxRows, -1);
+                            if (rows.size() >= maxRows)
+                                break outermost;
+                        }
+                    }
+                    finally
+                    {
+                        SSTableReader.releaseReferences(view.sstables);
                     }
                 }
-                finally
-                {
-                    for (SuffixIterator suffixes : iterators)
-                        FileUtils.closeQuietly(suffixes);
-                }
             }
-            harvest(rows, loadingRows, now);
+
+            // last call to here in case we didn't max out the row count above (and exited early)
+            // if we did hit the max, harvest will clean up/close the rows to be loaded
+            harvest(rows, loadingRows, maxRows, now);
             return rows;
         }
 
-        private List<SuffixIterator> getIterators(Map<ByteBuffer, Expression> expressions, SSTableReader reader)
+        private class BloomFilterPredicate implements Predicate<SSTableReader>
         {
-            List<SuffixIterator> iterators = new ArrayList<>();
-            for (Map.Entry<ByteBuffer, Expression> exp : expressions.entrySet())
+            private final ByteBuffer key;
+
+            private BloomFilterPredicate(ByteBuffer key)
             {
-                ColumnDefinition columnDef = getColumnDefinition(exp.getKey());
-                if (columnDef == null)
-                    continue;
-
-                String columnName = (String) baseCfs.getComparator().compose(columnDef.name);
-                String indexPath = reader.descriptor.filenameFor(String.format(FILE_NAME_FORMAT, columnName));
-
-                SuffixIterator suffixes = getSuffixes(indexPath, exp.getValue(), columnDef.getValidator());
-
-                // if there was a problem when fetching one of the indexes, we skip current SSTable,
-                // as it's not going to produce any AND results.
-                if (suffixes == null)
-                {
-                    for (SuffixIterator s : iterators)
-                        FileUtils.closeQuietly(s);
-                    return Collections.EMPTY_LIST;
-                }
-
-                iterators.add(suffixes);
+                this.key = key;
             }
-            return iterators;
+
+            public boolean apply(SSTableReader reader)
+            {
+                return reader.getBloomFilter().isPresent(key);
+            }
         }
 
-        private SuffixIterator getSuffixes(final String indexFile, final Expression exp, final AbstractType<?> validator)
+        private SuffixIterator getSuffixIterator(Iterator<SSTableReader> sstables, ByteBuffer indexedColumn, Expression predicate)
         {
-            try
-            {
-                return new SuffixIterator(indexFile, exp, validator);
-            }
-            catch (IOException e)
-            {
-                logger.error("Failed to read SA index file: " + indexFile + ", skipping.", e);
+            ColumnDefinition columnDef = getColumnDefinition(indexedColumn);
+            if (columnDef == null)
                 return null;
-            }
-        }
+            return new SuffixIterator(sstables, indexedColumn, predicate, columnDef.getValidator());
 
-        private ByteBuffer readKeyFromIndex(SSTableReader reader, int keyPosition)
+        }
+        private DecoratedKey readKeyFromIndex(SSTableReader reader, int keyPosition)
         {
             try
             {
@@ -606,8 +663,19 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
             return null;
         }
 
-        private void harvest(List<Row> rows, List<Future<Row>> futures, long startTime)
+        private void harvest(List<Row> rows, List<Future<Row>> futures, int maxRows, long startTime)
         {
+            if (rows.size() >= maxRows)
+            {
+                for (Iterator<Future<Row>> iter = futures.iterator(); iter.hasNext();)
+                {
+                    Future<Row> f = iter.next();
+                    f.cancel(true);
+                    iter.remove();
+                }
+                return;
+            }
+
             boolean lastTime = startTime > 0;
             if (lastTime)
             {
@@ -630,14 +698,14 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
             for (Iterator<Future<Row>> iter = futures.iterator(); iter.hasNext();)
             {
                 Future<Row> f = iter.next();
-                if (f.isDone())
+                if (f.isDone() && !(rows.size() >= maxRows))
                 {
                     Row r = Futures.getUnchecked(f);
                     if (r != null)
                         rows.add(r);
                     iter.remove();
                 }
-                else if (lastTime)
+                else if (lastTime || rows.size() >= maxRows)
                 {
                     f.cancel(true);
                     iter.remove();
@@ -645,7 +713,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
             }
         }
 
-        private Future<Row> submitRow(ByteBuffer key, ExtendedFilter filter, Map<ByteBuffer, Expression> expressions)
+        private Future<Row> submitRow(ByteBuffer key, ExtendedFilter filter, List<Pair<ByteBuffer, Expression>> expressions)
         {
             ExecutorService readStage = StageManager.getStage(Stage.READ);
             ReadCommand cmd = ReadCommand.create(baseCfs.keyspace.getName(),
@@ -660,9 +728,9 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
         private class RowReader implements Callable<Row>
         {
             private final ReadCommand command;
-            private final Map<ByteBuffer, Expression> expressions;
+            private final List<Pair<ByteBuffer, Expression>> expressions;
 
-            public RowReader(ReadCommand command, Map<ByteBuffer, Expression> expressions)
+            public RowReader(ReadCommand command, List<Pair<ByteBuffer, Expression>> expressions)
             {
                 this.command = command;
                 this.expressions = expressions;
@@ -691,10 +759,10 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
                 if (row.cf == null)
                     return false;
                 long now = System.currentTimeMillis();
-                for (Map.Entry<ByteBuffer, Expression> entry : expressions.entrySet())
+                for (Pair<ByteBuffer, Expression> entry : expressions)
                 {
-                    Column col = row.cf.getColumn(entry.getKey());
-                    if (col == null || !col.isLive(now) || !entry.getValue().contains(col.value()))
+                    Column col = row.cf.getColumn(entry.left);
+                    if (col == null || !col.isLive(now) || !entry.right.contains(col.value()))
                         return false;
                 }
                 return true;
@@ -713,27 +781,32 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
             return false;
         }
 
-        private Map<ByteBuffer, Expression> analyzeQuery(List<IndexExpression> expressions)
+        private List<Pair<ByteBuffer, Expression>> analyzeQuery(List<IndexExpression> expressions)
         {
-            Map<ByteBuffer, Expression> groups = new HashMap<>();
+            // differentiate between equality and inequlaity expressions while analyizing so we can later put the equality
+            // statements at the front of the list of expressions.
+            List<Pair<ByteBuffer, Expression>> equalityExpressions = new ArrayList<>();
+            List<Pair<ByteBuffer, Expression>> inequalityExpressions = new ArrayList<>();
             for (IndexExpression e : expressions)
             {
                 ByteBuffer name = e.bufferForColumn_name();
-
-                Expression exp = groups.get(name);
-                if (exp == null)
+                List<Pair<ByteBuffer, Expression>> expList = e.op.equals(IndexOperator.EQ) ? equalityExpressions : inequalityExpressions;
+                Expression exp = null;
+                for (Pair<ByteBuffer, Expression> pair : expList)
                 {
-                    ColumnDefinition columnDef = getColumnDefinition(name);
-                    if (columnDef == null)
-                        continue;
-
-                    groups.put(name, (exp = new Expression(columnDef.getValidator())));
+                    if (pair.left.equals(name))
+                        exp = pair.right;
                 }
+
+                if (exp == null)
+                    //TODO:JEB actually get the validator to pass in
+                    expList.add(Pair.create(name, exp = new Expression(null)));
 
                 exp.add(e.op, e.bufferForValue());
             }
 
-            return groups;
+            equalityExpressions.addAll(inequalityExpressions);
+            return equalityExpressions;
         }
     }
 
@@ -777,6 +850,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
 
         public boolean contains(ByteBuffer value)
         {
+            //TODO:JEB fix the comparison checks!!!
             if (lower != null)
             {
                 // suffix check
@@ -784,9 +858,9 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
                     return false;
 
                 // range - mainly for numeric values
-                int cmp = validator.compare(lower.value, value);
-                if ((cmp > 0 && !lower.inclusive) || (cmp <= 0 && lower.inclusive))
-                    return false;
+//                int cmp = validator.compare(lower.value, value);
+//                if ((cmp > 0 && !lower.inclusive) || (cmp >= 0 && lower.inclusive))
+//                    return false;
             }
 
             if (upper != null)
@@ -796,9 +870,9 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
                     return false;
 
                 // range - mainly for numeric values
-                int cmp = validator.compare(upper.value, value);
-                if ((cmp < 0 && !upper.inclusive) || (cmp <= 0 && upper.inclusive))
-                    return false;
+//                int cmp = validator.compare(upper.value, value);
+//                if ((cmp < 0 && !upper.inclusive) || (cmp <= 0 && upper.inclusive))
+//                    return false;
             }
 
             return true;
@@ -817,32 +891,42 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
         }
     }
 
-    private static class SuffixIterator extends AbstractIterator<RoaringBitmap> implements Closeable
+    private class SuffixIterator extends AbstractIterator<RoaringBitmap> implements Closeable
     {
-        private final OnDiskSA sa;
-        private final String indexFile;
         private final Expression exp;
+        private final Iterator<SSTableReader> sstables;
         private final AbstractType<?> validator;
-        private final Iterator<DataSuffix> suffixes;
         private final IteratorOrder order;
+        private final ByteBuffer indexedColumn;
+        private final String columnName;
 
-        public SuffixIterator(String indexFile, Expression exp, AbstractType<?> validator) throws IOException
+        private OnDiskSA sa;
+        private Iterator<DataSuffix> suffixes;
+        private SSTableReader curSstable;
+
+        public SuffixIterator(Iterator<SSTableReader> ssTables, ByteBuffer indexedColumn, Expression exp, AbstractType<?> validator)
         {
-            this.indexFile = indexFile;
+            this.indexedColumn = indexedColumn;
+            this.sstables = ssTables;
             this.validator = validator;
             this.exp = exp;
-            this.sa = new OnDiskSA(new File(indexFile), validator);
-            this.suffixes = (exp.lower == null) // in case query is col <(=) x
-                                    ? sa.iteratorAt(exp.upper.value, (order = IteratorOrder.ASC), exp.upper.inclusive)
-                                    : sa.iteratorAt(exp.lower.value, (order = IteratorOrder.DESC), exp.lower.inclusive);
+            order = exp.lower == null ? IteratorOrder.ASC : IteratorOrder.DESC;
+
+            ColumnDefinition columnDef = getColumnDefinition(indexedColumn);
+            assert columnDef != null;
+            columnName = (String) baseCfs.getComparator().compose(columnDef.name);
 
         }
 
         @Override
         protected RoaringBitmap computeNext()
         {
-            if (!suffixes.hasNext())
-                return endOfData();
+            if (sa == null || !suffixes.hasNext())
+            {
+                loadNext();
+                if (sa == null)
+                    return endOfData();
+            }
 
             DataSuffix suffix = suffixes.next();
 
@@ -853,7 +937,10 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
 
                 int cmp = validator.compare(s, exp.upper.value);
                 if ((cmp > 0 && exp.upper.inclusive) || (cmp >= 0 && !exp.upper.inclusive))
-                    return endOfData();
+                {
+                    Iterators.advance(suffixes, Integer.MAX_VALUE);
+                    return computeNext();
+                }
             }
 
             try
@@ -862,9 +949,46 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
             }
             catch (IOException e)
             {
-                logger.error("Failed to get positions from the one data suffixes (" + indexFile + ").", e);
+                logger.error("Failed to get positions from the one data suffixes", e);
                 return endOfData();
             }
+        }
+
+        private void loadNext()
+        {
+            FileUtils.closeQuietly(sa);
+            while (sstables.hasNext())
+            {
+                SSTableReader ssTable = sstables.next();
+                System.out.println("** loadNext() sstable = " + ssTable + "/" + columnName);
+                String indexFile = ssTable.descriptor.filenameFor(String.format(FILE_NAME_FORMAT, columnName));
+                try
+                {
+                    File f = new File(indexFile);
+                    if (f.exists())
+                    {
+                        sa = new OnDiskSA(f, validator);
+                        curSstable = ssTable;
+                        suffixes = (exp.lower == null) // in case query is col <(=) x
+                                   ? sa.iteratorAt(exp.upper.value, order, exp.upper.inclusive)
+                                   : sa.iteratorAt(exp.lower.value, order, exp.lower.inclusive);
+                        return;
+                    }
+                }
+                catch (IOException e)
+                {
+                    logger.info("failed to open suffix array file {}, skipping", indexFile, e);
+                }
+            }
+            // if no more sstables, clear out the sa field
+            sa = null;
+            curSstable = null;
+            suffixes = null;
+        }
+
+        public SSTableReader getCurrentReader()
+        {
+            return curSstable;
         }
 
         @Override

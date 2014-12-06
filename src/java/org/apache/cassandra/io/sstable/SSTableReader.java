@@ -1223,7 +1223,7 @@ public class SSTableReader extends SSTable implements Closeable
         }
     }
 
-    public ByteBuffer keyAt(long position) throws IOException
+    public DecoratedKey keyAt(long position) throws IOException
     {
         try (FileDataInput in = dfile.getSegment(position))
         {
@@ -1231,12 +1231,12 @@ public class SSTableReader extends SSTable implements Closeable
                 return null;
 
             ByteBuffer key = ByteBufferUtil.readWithShortLength(in);
-
+            DecoratedKey decoratedKey = partitioner.decorateKey(key);
             // give a hit to subsequent reads from the SSTable where the key
             // is in the data file, this is (for now) only exploited by SuffixArraySecondaryIndex.
-            cacheKey(partitioner.decorateKey(key), new RowIndexEntry(position));
+            //cacheKey(decoratedKey, new RowIndexEntry(position));
 
-            return key;
+            return decoratedKey;
         }
     }
 
