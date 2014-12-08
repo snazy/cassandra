@@ -107,23 +107,16 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
 
     private final Map<ByteBuffer, Component> columnDefComponents;
 
-    // TODO: maybe switch away from Guava table (and opening indices when sstable loads)
-    // and use LoadingCache to load only when requested
-    private final Table<SSTableReader, ByteBuffer, OnDiskSA> suffixArrays;
-    private volatile boolean hasInited;
-
     public SuffixArraySecondaryIndex()
     {
         openListeners = new ConcurrentHashMap<>();
         columnDefComponents = new ConcurrentHashMap<>();
-        suffixArrays = HashBasedTable.create();
     }
 
     public void init()
     {
         // init() is called by SIM only on the instance that it will keep around, but will call addColumnDef on any instance
         // that it happens to create (and subsequently/immediately throw away)
-        hasInited = true;
         addComponent(columnDefs);
     }
 
@@ -139,47 +132,13 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
             columnDefComponents.put(def.name, new Component(Component.Type.SECONDARY_INDEX, indexName));
         }
 
-        if (!hasInited)
-            return;
-
         executor.setCorePoolSize(columnDefs.size());
-
-        for (SSTableReader reader : baseCfs.getDataTracker().getSSTables())
-            add(reader, defs);
     }
 
     void addColumnDef(ColumnDefinition columnDef)
     {
         super.addColumnDef(columnDef);
         addComponent(Collections.singleton(columnDef));
-    }
-
-    public void add(SSTableReader reader, Collection<ColumnDefinition> toAdd)
-    {
-//        Descriptor desc = reader.descriptor;
-//        for (Component component : reader.getComponents(Component.Type.SECONDARY_INDEX))
-//        {
-//            String fileName = desc.filenameFor(component);
-//            OnDiskSA onDiskSA = null;
-//            try
-//            {
-//                ColumnDefinition cDef = getColumnDef(component);
-//                if (cDef == null || !toAdd.contains(cDef))
-//                    continue;
-//                //because of the truly whacked out way in which 2I instances get the column defs passed in vs. init,
-//                // we have this insane check so we don't open the file numerous times .. <sigh>
-//                onDiskSA = new OnDiskSA(new File(fileName), cDef.getValidator());
-//            }
-//            catch (IOException e)
-//            {
-//                logger.error("problem opening suffix array index {} for sstable {}", fileName, this, e);
-//            }
-//
-//            int start = fileName.indexOf("_") + 1;
-//            int end = fileName.lastIndexOf(".");
-//            ByteBuffer name = ByteBufferUtil.bytes(fileName.substring(start, end));
-//            suffixArrays.put(reader, name, onDiskSA);
-//        }
     }
 
     private ColumnDefinition getColumnDef(Component component)
@@ -191,32 +150,6 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
                 return getColumnDefinition(e.getKey());
         }
         return null;
-    }
-
-    public void add(SSTableReader reader)
-    {
-        assert hasInited : "trying to add an sstable to this secondary index before it's been init'ed";
-        add(reader, columnDefs);
-    }
-
-    public void remove(SSTableReader reader)
-    {
-        // this ConcurrentModificationException catching is because the suffixArrays as a guava table
-        // returns only a HashMap, not anything more concurrency-safe
-        while (true)
-        {
-            try
-            {
-                for (Map.Entry<ByteBuffer, OnDiskSA> entry : suffixArrays.row(reader).entrySet())
-                {
-                    suffixArrays.remove(reader, entry.getKey());
-                    FileUtils.closeQuietly(entry.getValue());
-                }
-                break;
-            }
-            catch (ConcurrentModificationException cme)
-            {}
-        }
     }
 
     public boolean isIndexBuilt(ByteBuffer columnName)
@@ -252,7 +185,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
 
     public void index(ByteBuffer rowKey, ColumnFamily cf)
     {
-        //TODO:JEB this will index a whole row, or at least, what is passed in
+        // this will index a whole row, or at least, what is passed in
         // called from memtable path, as well as in index rebuild path
         // need to be able to distinguish between the two
         // should be reasonably easy to distinguish is the write is coming form memtable path
@@ -282,7 +215,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
 
     public void delete(DecoratedKey key)
     {
-        //TODO:JEB called during 'nodetool cleanup' - can punt on impl'ing this for now
+        // called during 'nodetool cleanup' - can punt on impl'ing this
     }
 
     public void removeIndex(ByteBuffer columnName)
@@ -292,7 +225,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
 
     public void invalidate()
     {
-        //TODO:JEB according to CFS.invalidate(), "call when dropping or renaming a CF" - so punting on impl'ing
+        // according to CFS.invalidate(), "call when dropping or renaming a CF" - so punting on impl'ing
     }
 
     public void truncateBlocking(long truncatedAt)
@@ -745,7 +678,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
 
         public boolean isIndexing(List<IndexExpression> clause)
         {
-            //TODO:JEB this is a bit weak, currently just checks for the success of one column, not all
+            // this is a bit weak, currently just checks for the success of one column, not all
             // however, parent SIS.isIndexing only cares if one predicate is covered ... grrrr!!
             for (IndexExpression expression : clause)
             {
