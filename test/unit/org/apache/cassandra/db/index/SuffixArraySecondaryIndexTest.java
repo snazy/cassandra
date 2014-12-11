@@ -258,6 +258,31 @@ public class SuffixArraySecondaryIndexTest extends SchemaLoader
                           new IndexExpression(age, IndexOperator.LT, Int32Type.instance.decompose(32)));
 
         Assert.assertTrue(rows.toString(), Arrays.equals(new String[] { "key14" }, rows.toArray(new String[rows.size()])));
+
+        Map<String, Pair<String, Integer>> part4 = new HashMap<String, Pair<String, Integer>>()
+        {{
+                put("key12", Pair.create((String)null, 12));
+                put("key14", Pair.create("Demario", 42));
+                put("key2", Pair.create("Frank", -1));
+        }};
+
+        store = loadData(part4);
+        rows = getIndexed(store, 10,
+                          new IndexExpression(firstName, IndexOperator.EQ, UTF8Type.instance.decompose("Susana")),
+                          new IndexExpression(age, IndexOperator.LTE, Int32Type.instance.decompose(13)),
+                          new IndexExpression(age, IndexOperator.GT, Int32Type.instance.decompose(10)));
+        Assert.assertTrue(rows.toString(), Arrays.equals(new String[] { "key12" }, rows.toArray(new String[rows.size()])));
+
+        rows = getIndexed(store, 10,
+                          new IndexExpression(firstName, IndexOperator.EQ, UTF8Type.instance.decompose("Demario")),
+                          new IndexExpression(age, IndexOperator.LTE, Int32Type.instance.decompose(30)));
+        Assert.assertTrue(rows.toString(), rows.size() == 0);
+
+        rows = getIndexed(store, 10,
+                          new IndexExpression(firstName, IndexOperator.EQ, UTF8Type.instance.decompose("Josephine")));
+        Assert.assertTrue(rows.toString(), rows.size() == 0);
+
+
     }
 
     private static ColumnFamilyStore loadData(Map<String, Pair<String, Integer>> data)
