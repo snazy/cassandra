@@ -509,7 +509,7 @@ public class DataTracker
     {
         private static final SSTableIntervalTree EMPTY = new SSTableIntervalTree(null);
 
-        private SSTableIntervalTree(Collection<Interval<RowPosition, SSTableReader>> intervals)
+        public SSTableIntervalTree(Collection<Interval<RowPosition, SSTableReader>> intervals)
         {
             super(intervals, null);
         }
@@ -525,7 +525,7 @@ public class DataTracker
      * flush, the sstables for a column family, and the sstables that are active
      * in compaction (a subset of the sstables).
      */
-    static class View
+    public static class View
     {
         public final Memtable memtable;
         public final Set<Memtable> memtablesPendingFlush;
@@ -533,7 +533,7 @@ public class DataTracker
         public final Set<SSTableReader> sstables;
         public final SSTableIntervalTree intervalTree;
 
-        View(Memtable memtable, Set<Memtable> pendingFlush, Set<SSTableReader> sstables, Set<SSTableReader> compacting, SSTableIntervalTree intervalTree)
+        public View(Memtable memtable, Set<Memtable> pendingFlush, Set<SSTableReader> sstables, Set<SSTableReader> compacting, SSTableIntervalTree intervalTree)
         {
             assert memtable != null;
             assert pendingFlush != null;
