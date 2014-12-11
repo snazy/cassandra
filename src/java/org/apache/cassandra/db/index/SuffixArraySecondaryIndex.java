@@ -71,6 +71,7 @@ import org.apache.cassandra.notifications.INotificationConsumer;
 import org.apache.cassandra.notifications.SSTableAddedNotification;
 import org.apache.cassandra.notifications.SSTableDeletingNotification;
 import org.apache.cassandra.notifications.SSTableListChangedNotification;
+import org.apache.cassandra.thrift.ColumnDef;
 import org.apache.cassandra.thrift.IndexExpression;
 import org.apache.cassandra.thrift.IndexOperator;
 import org.apache.cassandra.utils.ByteBufferUtil;
@@ -784,9 +785,10 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
                 }
 
                 if (exp == null)
-                    //TODO:JEB actually get the validator to pass in
-                    expList.add(Pair.create(name, exp = new Expression(null)));
-
+                {
+                    exp = new Expression(getColumnDefinition(name).getValidator());
+                    expList.add(Pair.create(name, exp));
+                }
                 exp.add(e.op, e.bufferForValue());
             }
 
@@ -798,11 +800,13 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
     private static class Expression
     {
         private final AbstractType<?> validator;
+        private final boolean isSuffix;
         private Bound lower, upper;
 
         private Expression(AbstractType<?> validator)
         {
             this.validator = validator;
+            isSuffix = validator instanceof AsciiType || validator instanceof UTF8Type;
         }
 
         public void add(IndexOperator op, ByteBuffer value)
@@ -835,31 +839,39 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
 
         public boolean contains(ByteBuffer value)
         {
-            //TODO:JEB fix the comparison checks!!!
             if (lower != null)
             {
                 // suffix check
-                if (!ByteBufferUtil.contains(lower.value, value))
-                    return false;
-
-                // range - mainly for numeric values
-//                int cmp = validator.compare(lower.value, value);
-//                if ((cmp > 0 && !lower.inclusive) || (cmp >= 0 && lower.inclusive))
-//                    return false;
+                if (isSuffix)
+                {
+                    if (!ByteBufferUtil.contains(value, lower.value))
+                        return false;
+                }
+                else
+                {
+                    // range - (mainly) for numeric values
+                    int cmp = validator.compare(lower.value, value);
+                    if (cmp > 0 || (cmp == 0 && !lower.inclusive))
+                        return false;
+                }
             }
 
-            if (upper != null)
+            if (upper != null && lower != upper)
             {
                 // suffix check
-                if (!ByteBufferUtil.contains(upper.value, value))
-                    return false;
-
-                // range - mainly for numeric values
-//                int cmp = validator.compare(upper.value, value);
-//                if ((cmp < 0 && !upper.inclusive) || (cmp <= 0 && upper.inclusive))
-//                    return false;
+                if (isSuffix)
+                {
+                    if (!ByteBufferUtil.contains(value, upper.value))
+                        return false;
+                }
+                else
+                {
+                    // range - mainly for numeric values
+                    int cmp = validator.compare(upper.value, value);
+                    if (cmp < 0 || (cmp == 0 && !upper.inclusive))
+                        return false;
+                }
             }
-
             return true;
         }
     }
