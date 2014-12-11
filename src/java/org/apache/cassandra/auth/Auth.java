@@ -17,6 +17,7 @@
  */
 package org.apache.cassandra.auth;
 
+import java.util.List;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
@@ -41,6 +42,7 @@ import org.apache.cassandra.cql3.statements.CFStatement;
 import org.apache.cassandra.cql3.statements.CreateTableStatement;
 import org.apache.cassandra.cql3.statements.SelectStatement;
 import org.apache.cassandra.db.ConsistencyLevel;
+import org.apache.cassandra.db.marshal.AbstractType;
 import org.apache.cassandra.exceptions.RequestExecutionException;
 import org.apache.cassandra.exceptions.RequestValidationException;
 import org.apache.cassandra.locator.SimpleStrategy;
@@ -336,11 +338,11 @@ public class Auth implements AuthMBean
         {
         }
 
-        public void onDropFunction(String ksName, String functionName)
+        public void onDropFunction(String ksName, String functionName, AbstractType<?> returnType, List<AbstractType<?>> argTypes)
         {
         }
 
-        public void onDropAggregate(String ksName, String aggregateName)
+        public void onDropAggregate(String ksName, String aggregateName, AbstractType<?> returnType, List<AbstractType<?>> argTypes)
         {
         }
 
@@ -356,11 +358,11 @@ public class Auth implements AuthMBean
         {
         }
 
-        public void onCreateFunction(String ksName, String functionName)
+        public void onCreateFunction(String ksName, String functionName, AbstractType<?> returnType, List<AbstractType<?>> argTypes)
         {
         }
 
-        public void onCreateAggregate(String ksName, String aggregateName)
+        public void onCreateAggregate(String ksName, String aggregateName, AbstractType<?> returnType, List<AbstractType<?>> argTypes)
         {
         }
 
@@ -376,11 +378,11 @@ public class Auth implements AuthMBean
         {
         }
 
-        public void onUpdateFunction(String ksName, String functionName)
+        public void onUpdateFunction(String ksName, String functionName, AbstractType<?> returnType, List<AbstractType<?>> argTypes)
         {
         }
 
-        public void onUpdateAggregate(String ksName, String aggregateName)
+        public void onUpdateAggregate(String ksName, String aggregateName, AbstractType<?> returnType, List<AbstractType<?>> argTypes)
         {
         }
     }

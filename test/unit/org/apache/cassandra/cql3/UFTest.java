@@ -27,13 +27,61 @@ import org.junit.Test;
 import com.datastax.driver.core.*;
 import org.apache.cassandra.cql3.functions.FunctionName;
 import org.apache.cassandra.cql3.functions.Functions;
+import org.apache.cassandra.db.marshal.DoubleType;
+import org.apache.cassandra.db.marshal.Int32Type;
 import org.apache.cassandra.exceptions.InvalidRequestException;
 import org.apache.cassandra.service.ClientState;
+import org.apache.cassandra.transport.Event;
 import org.apache.cassandra.transport.Server;
 import org.apache.cassandra.transport.messages.ResultMessage;
 
 public class UFTest extends CQLTester
 {
+
+    @Test
+    public void testSchemaChange() throws Throwable
+    {
+        String f = createFunction(KEYSPACE,
+                                  "double, double",
+                                  "CREATE OR REPLACE FUNCTION %s(state double, val double) " +
+                                  "RETURNS double " +
+                                  "LANGUAGE javascript " +
+                                  "AS '\"string\";';");
+
+        assertLastSchemaChange(Event.SchemaChange.Change.CREATED, Event.SchemaChange.Target.FUNCTION,
+                               KEYSPACE, parseFunctionName(f).name,
+                               DoubleType.instance,
+                               DoubleType.instance, DoubleType.instance);
+
+        createFunctionOverload(f,
+                               "double, double",
+                               "CREATE OR REPLACE FUNCTION %s(state int, val int) " +
+                               "RETURNS int " +
+                               "LANGUAGE javascript " +
+                               "AS '\"string\";';");
+
+        assertLastSchemaChange(Event.SchemaChange.Change.CREATED, Event.SchemaChange.Target.FUNCTION,
+                               KEYSPACE, parseFunctionName(f).name,
+                               Int32Type.instance,
+                               Int32Type.instance, Int32Type.instance);
+
+        schemaChange("CREATE OR REPLACE FUNCTION " + f + "(state int, val int) " +
+                     "RETURNS int " +
+                     "LANGUAGE javascript " +
+                     "AS '\"string\";';");
+
+        assertLastSchemaChange(Event.SchemaChange.Change.UPDATED, Event.SchemaChange.Target.FUNCTION,
+                               KEYSPACE, parseFunctionName(f).name,
+                               Int32Type.instance,
+                               Int32Type.instance, Int32Type.instance);
+
+        schemaChange("DROP FUNCTION " + f + "(double, double)");
+
+        assertLastSchemaChange(Event.SchemaChange.Change.DROPPED, Event.SchemaChange.Target.FUNCTION,
+                               KEYSPACE, parseFunctionName(f).name,
+                               DoubleType.instance,
+                               DoubleType.instance, DoubleType.instance);
+    }
 
     @Test
     public void testFunctionDropOnKeyspaceDrop() throws Throwable
@@ -245,7 +293,7 @@ public class UFTest extends CQLTester
         // single-int-overload must still work
         assertRows(execute("SELECT v FROM %s WHERE k = " + fOverload + "((int)?)", 3), row(1));
         // overloaded has just one overload now - so the following DROP FUNCTION is not ambigious (CASSANDRA-7812)
-        execute("DROP FUNCTION " + fOverload + "");
+        execute("DROP FUNCTION " + fOverload);
     }
 
     @Test

@@ -179,37 +179,37 @@ public class MigrationManager
     public void notifyCreateFunction(UDFunction udf)
     {
         for (IMigrationListener listener : listeners)
-            listener.onCreateFunction(udf.name().keyspace, udf.name().name);
+            listener.onCreateFunction(udf.name().keyspace, udf.name().name, udf.returnType(), udf.argTypes());
     }
 
     public void notifyUpdateFunction(UDFunction udf)
     {
         for (IMigrationListener listener : listeners)
-            listener.onUpdateFunction(udf.name().keyspace, udf.name().name);
+            listener.onUpdateFunction(udf.name().keyspace, udf.name().name, udf.returnType(), udf.argTypes());
     }
 
     public void notifyDropFunction(UDFunction udf)
     {
         for (IMigrationListener listener : listeners)
-            listener.onDropFunction(udf.name().keyspace, udf.name().name);
+            listener.onDropFunction(udf.name().keyspace, udf.name().name, udf.returnType(), udf.argTypes());
     }
 
     public void notifyCreateAggregate(UDAggregate udf)
     {
         for (IMigrationListener listener : listeners)
-            listener.onCreateAggregate(udf.name().keyspace, udf.name().name);
+            listener.onCreateAggregate(udf.name().keyspace, udf.name().name, udf.returnType(), udf.argTypes());
     }
 
     public void notifyUpdateAggregate(UDAggregate udf)
     {
         for (IMigrationListener listener : listeners)
-            listener.onUpdateAggregate(udf.name().keyspace, udf.name().name);
+            listener.onUpdateAggregate(udf.name().keyspace, udf.name().name, udf.returnType(), udf.argTypes());
     }
 
     public void notifyDropAggregate(UDAggregate udf)
     {
         for (IMigrationListener listener : listeners)
-            listener.onDropAggregate(udf.name().keyspace, udf.name().name);
+            listener.onDropAggregate(udf.name().keyspace, udf.name().name, udf.returnType(), udf.argTypes());
     }
 
     public void notifyUpdateKeyspace(KSMetaData ksm)

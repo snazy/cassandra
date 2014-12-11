@@ -94,6 +94,7 @@ public class SerDeserTest
     {
         eventSerDeserTest(2);
         eventSerDeserTest(3);
+        eventSerDeserTest(4);
     }
 
     public void eventSerDeserTest(int version) throws Exception
@@ -120,6 +121,19 @@ public class SerDeserTest
             events.add(new SchemaChange(SchemaChange.Change.CREATED, SchemaChange.Target.TYPE, "ks", "type"));
             events.add(new SchemaChange(SchemaChange.Change.UPDATED, SchemaChange.Target.TYPE, "ks", "type"));
             events.add(new SchemaChange(SchemaChange.Change.DROPPED, SchemaChange.Target.TYPE, "ks", "type"));
+        }
+
+        if (version >= 4)
+        {
+            List<AbstractType<?>> moreTypes = Arrays.<AbstractType<?>>asList(UTF8Type.instance, LongType.instance);
+
+            events.add(new SchemaChange(SchemaChange.Change.CREATED, SchemaChange.Target.FUNCTION, "ks", "func", Int32Type.instance, Collections.<AbstractType<?>>emptyList()));
+            events.add(new SchemaChange(SchemaChange.Change.UPDATED, SchemaChange.Target.FUNCTION, "ks", "func", Int32Type.instance, moreTypes));
+            events.add(new SchemaChange(SchemaChange.Change.DROPPED, SchemaChange.Target.FUNCTION, "ks", "func", new TupleType(moreTypes), moreTypes));
+
+            events.add(new SchemaChange(SchemaChange.Change.CREATED, SchemaChange.Target.AGGREGATE, "ks", "aggr", Int32Type.instance, Collections.<AbstractType<?>>emptyList()));
+            events.add(new SchemaChange(SchemaChange.Change.UPDATED, SchemaChange.Target.AGGREGATE, "ks", "aggr", Int32Type.instance, moreTypes));
+            events.add(new SchemaChange(SchemaChange.Change.DROPPED, SchemaChange.Target.AGGREGATE, "ks", "aggr", new TupleType(moreTypes), moreTypes));
         }
 
         for (Event ev : events)

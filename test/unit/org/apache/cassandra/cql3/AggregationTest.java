@@ -19,15 +19,21 @@ package org.apache.cassandra.cql3;
 
 import java.math.BigDecimal;
 import java.text.SimpleDateFormat;
+import java.util.Arrays;
 import java.util.Calendar;
 import java.util.Date;
+import java.util.List;
 import java.util.TimeZone;
 
 import org.apache.commons.lang3.time.DateUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import org.apache.cassandra.db.marshal.AbstractType;
+import org.apache.cassandra.db.marshal.DoubleType;
+import org.apache.cassandra.db.marshal.Int32Type;
 import org.apache.cassandra.service.ClientState;
+import org.apache.cassandra.transport.Event;
 import org.apache.cassandra.transport.messages.ResultMessage;
 
 public class AggregationTest extends CQLTester
@@ -41,7 +47,7 @@ public class AggregationTest extends CQLTester
         assertColumnNames(execute("SELECT COUNT(*) FROM %s"), "count");
         assertRows(execute("SELECT COUNT(*) FROM %s"), row(0L));
         assertColumnNames(execute("SELECT max(b), min(b), sum(b), avg(b) , max(c), sum(c), avg(c), sum(d), avg(d) FROM %s"),
-                          "system.max(b)", "system.min(b)", "system.sum(b)", "system.avg(b)" , "system.max(c)", "system.sum(c)", "system.avg(c)", "system.sum(d)", "system.avg(d)");
+                          "system.max(b)", "system.min(b)", "system.sum(b)", "system.avg(b)", "system.max(c)", "system.sum(c)", "system.avg(c)", "system.sum(d)", "system.avg(d)");
         assertRows(execute("SELECT max(b), min(b), sum(b), avg(b) , max(c), sum(c), avg(c), sum(d), avg(d) FROM %s"),
                    row(null, null, 0, 0, null, 0.0, 0.0, new BigDecimal("0"), new BigDecimal("0")));
 
@@ -133,6 +139,62 @@ public class AggregationTest extends CQLTester
     }
 
     @Test
+    public void testSchemaChange() throws Throwable
+    {
+        String f = createFunction(KEYSPACE,
+                                  "double, double",
+                                  "CREATE OR REPLACE FUNCTION %s(state double, val double) " +
+                                  "RETURNS double " +
+                                  "LANGUAGE javascript " +
+                                  "AS '\"string\";';");
+
+        createFunctionOverload(f,
+                               "double, double",
+                               "CREATE OR REPLACE FUNCTION %s(state int, val int) " +
+                               "RETURNS int " +
+                               "LANGUAGE javascript " +
+                               "AS '\"string\";';");
+
+        String a = createAggregate(KEYSPACE,
+                                   "double",
+                                   "CREATE OR REPLACE AGGREGATE %s(double) " +
+                                   "SFUNC " + shortFunctionName(f) + " " +
+                                   "STYPE double");
+
+        assertLastSchemaChange(Event.SchemaChange.Change.CREATED, Event.SchemaChange.Target.AGGREGATE,
+                               KEYSPACE, parseFunctionName(a).name,
+                               DoubleType.instance,
+                               DoubleType.instance);
+
+        schemaChange("CREATE OR REPLACE AGGREGATE " + a + "(double) " +
+                     "SFUNC " + shortFunctionName(f) + " " +
+                     "STYPE double");
+
+        assertLastSchemaChange(Event.SchemaChange.Change.UPDATED, Event.SchemaChange.Target.AGGREGATE,
+                               KEYSPACE, parseFunctionName(a).name,
+                               DoubleType.instance,
+                               DoubleType.instance);
+
+        createAggregateOverload(a,
+                                "int",
+                                "CREATE OR REPLACE AGGREGATE %s(int) " +
+                                "SFUNC " + shortFunctionName(f) + " " +
+                                "STYPE int");
+
+        assertLastSchemaChange(Event.SchemaChange.Change.CREATED, Event.SchemaChange.Target.AGGREGATE,
+                               KEYSPACE, parseFunctionName(a).name,
+                               Int32Type.instance,
+                               Int32Type.instance);
+
+        schemaChange("DROP AGGREGATE " + a + "(double)");
+
+        assertLastSchemaChange(Event.SchemaChange.Change.DROPPED, Event.SchemaChange.Target.AGGREGATE,
+                               KEYSPACE, parseFunctionName(a).name,
+                               DoubleType.instance,
+                               DoubleType.instance);
+    }
+
+    @Test
     public void testDropStatements() throws Throwable
     {
         String f = createFunction(KEYSPACE,
@@ -141,12 +203,13 @@ public class AggregationTest extends CQLTester
                                   "RETURNS double " +
                                   "LANGUAGE javascript " +
                                   "AS '\"string\";';");
+
         createFunctionOverload(f,
-                                  "double, double",
-                                  "CREATE OR REPLACE FUNCTION %s(state int, val int) " +
-                                  "RETURNS int " +
-                                  "LANGUAGE javascript " +
-                                  "AS '\"string\";';");
+                               "double, double",
+                               "CREATE OR REPLACE FUNCTION %s(state int, val int) " +
+                               "RETURNS int " +
+                               "LANGUAGE javascript " +
+                               "AS '\"string\";';");
 
         // DROP AGGREGATE must not succeed against a scalar
         assertInvalid("DROP AGGREGATE " + f);
