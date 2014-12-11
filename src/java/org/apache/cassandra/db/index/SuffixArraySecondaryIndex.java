@@ -34,6 +34,7 @@ import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.Iterators;
 import com.google.common.util.concurrent.Futures;
+import com.google.common.util.concurrent.Uninterruptibles;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -618,22 +619,22 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
                             continue keys_loop;
                         }
 
-                        // if we got here, all the predicates have been satisfied
-                        loadingRows.add(submitRow(key.key, filter, expressionsImmutable));
-                        // read exactly up until all results are found and break main loop
+                        // if we got here, all the predicates have been satisfied.
+                        // now, read exactly up until all results are found and break main loop
                         // otherwise we are going to read a lot more keys from the index then actually required.
-                        if (rows.size() + loadingRows.size() >= maxRows)
+                        while (rows.size() + loadingRows.size() >= maxRows)
                         {
-                            // check up on loading rows to see who is loaded
                             harvest(rows, loadingRows, maxRows, -1);
                             if (rows.size() >= maxRows)
                                 break outermost;
+                            awaitUninterupted(10);
                         }
+                        loadingRows.add(submitRow(key.key, filter, expressionsImmutable));
                     }
                 }
             }
 
-            // last call to here in case we didn't max out the row count above (and exited early)
+            // last call to here in case we didn't max out the row count above (and exited early).
             // if we did hit the max, harvest will clean up/close the rows to be loaded
             harvest(rows, loadingRows, maxRows, startTime);
             return rows;
@@ -646,6 +647,19 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
                 return null;
             return new SuffixIterator(sstables, indexedColumn, predicate, columnDef.getValidator());
 
+        }
+
+        private void awaitUninterupted(long millis)
+        {
+            try
+            {
+                // TODO: not sure if we need to phaser.arrive() here... or if the main thread even needs to register at all
+                phaserPhase = phaser.awaitAdvanceInterruptibly(phaserPhase, millis, TimeUnit.MILLISECONDS);
+            }
+            catch (InterruptedException | TimeoutException e)
+            {
+                // nop
+            }
         }
 
         private void harvest(List<Row> rows, List<Future<Row>> futures, int maxRows, long startTime)
@@ -661,23 +675,15 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
                 return;
             }
 
-            // TODO:JEB there's some clean up work to do here
             boolean lastTime = startTime > 0;
             if (lastTime)
             {
-                try
+                long elapsed = System.currentTimeMillis() - startTime;
+                long remainingTime = executionTimeLimit - elapsed;
+                if (remainingTime > 0)
                 {
-                    long elapsed = System.currentTimeMillis() - startTime;
-                    long remainingTime = executionTimeLimit - elapsed;
-                    if (remainingTime > 0)
-                    {
-                        phaser.arrive();
-                        phaserPhase = phaser.awaitAdvanceInterruptibly(phaserPhase, remainingTime, TimeUnit.MILLISECONDS);
-                    }
-                }
-                catch (InterruptedException | TimeoutException e)
-                {
-                    //nop
+                    phaser.arrive();
+                    awaitUninterupted(remainingTime);
                 }
             }
 
