@@ -3,7 +3,6 @@ package org.apache.cassandra.db.index;
 import java.nio.ByteBuffer;
 import java.util.*;
 
-import junit.framework.Assert;
 import org.apache.cassandra.SchemaLoader;
 import org.apache.cassandra.db.*;
 import org.apache.cassandra.db.filter.ExtendedFilter;
@@ -13,9 +12,9 @@ import org.apache.cassandra.db.marshal.UTF8Type;
 import org.apache.cassandra.service.StorageService;
 import org.apache.cassandra.thrift.IndexExpression;
 import org.apache.cassandra.thrift.IndexOperator;
-import org.apache.cassandra.utils.ByteBufferUtil;
-import org.apache.cassandra.utils.Pair;
+import org.apache.cassandra.utils.*;
 
+import junit.framework.Assert;
 import org.junit.After;
 import org.junit.Test;
 
@@ -177,7 +176,6 @@ public class SuffixArraySecondaryIndexTest extends SchemaLoader
                           new IndexExpression(age, IndexOperator.LT, Int32Type.instance.decompose(32)));
 
         Assert.assertTrue(rows.toString(), Arrays.equals(new String[] { "key14" }, rows.toArray(new String[rows.size()])));
-
     }
 
     @Test
@@ -190,7 +188,7 @@ public class SuffixArraySecondaryIndexTest extends SchemaLoader
                 put("key2", Pair.create((String)null, 43));
                 put("key3", Pair.create("Shanna", 27));
                 put("key4", Pair.create("Amiya", 36));
-            }};
+        }};
 
         loadData(part1); // first sstable
 
@@ -202,7 +200,7 @@ public class SuffixArraySecondaryIndexTest extends SchemaLoader
                 put("key8", Pair.create("Charley", 21));
                 put("key9", Pair.create("Amely", 40));
                 put("key14", Pair.create((String)null, 28));
-            }};
+        }};
 
         loadData(part2);
 
@@ -283,6 +281,65 @@ public class SuffixArraySecondaryIndexTest extends SchemaLoader
         Assert.assertTrue(rows.toString(), rows.size() == 0);
 
 
+    }
+
+    /*
+    @Test
+    public void testRangeLookup() throws Exception
+    {
+        KeyContainerBuilder keys1 = new KeyContainerBuilder();
+        KeyContainerBuilder keys2 = new KeyContainerBuilder();
+
+        keys1.add(decoratedKey(ByteBuffer.wrap("key1".getBytes())), 12);
+        keys1.add(decoratedKey(ByteBuffer.wrap("key2".getBytes())), 24);
+        keys1.add(decoratedKey(ByteBuffer.wrap("key3".getBytes())), 82);
+
+        keys2.add(decoratedKey(ByteBuffer.wrap("key1".getBytes())), 9);
+        keys2.add(decoratedKey(ByteBuffer.wrap("key4".getBytes())), 12);
+        keys2.add(decoratedKey(ByteBuffer.wrap("key5".getBytes())), 14);
+        keys2.add(decoratedKey(ByteBuffer.wrap("key7".getBytes())), 17);
+        keys2.add(decoratedKey(ByteBuffer.wrap("key3".getBytes())), 21);
+
+        keys1.finish();
+        keys2.finish();
+
+        File f1 = File.createTempFile("key-container-1", ".db");
+        File f2 = File.createTempFile("key-container-2", ".db");
+
+        SequentialWriter keys1Out = new SequentialWriter(f1, 4096, false);
+        SequentialWriter keys2Out = new SequentialWriter(f2, 4096, false);
+
+        keys1.serialize(keys1Out);
+        keys2.serialize(keys2Out);
+
+        Assert.assertEquals(keys1.serializedSize(), keys1Out.length());
+        Assert.assertEquals(keys2.serializedSize(), keys2Out.length());
+
+        keys1Out.close();
+        keys2Out.close();
+
+        KeyContainer onDisk1 = new KeyContainer(RandomAccessReader.open(f1));
+        KeyContainer onDisk2 = new KeyContainer(RandomAccessReader.open(f2));
+
+        if (!onDisk1.getRange().intersects(onDisk2.getRange()))
+            return;
+
+        for (KeyContainer.Bucket a : onDisk1)
+        {
+            for (KeyContainer.Bucket b : onDisk2)
+            {
+                if (!a.intersects(b))
+                    continue;
+
+                System.out.println("a.offsets => " + a.getPositions() + ", b.offsets => " + b.getPositions());
+            }
+        }
+    }
+    */
+
+    private static DecoratedKey decoratedKey(ByteBuffer key)
+    {
+        return new DecoratedKey(StorageService.getPartitioner().getToken(key.duplicate()), key);
     }
 
     private static ColumnFamilyStore loadData(Map<String, Pair<String, Integer>> data)

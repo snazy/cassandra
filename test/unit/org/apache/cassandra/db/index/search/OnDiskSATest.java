@@ -5,12 +5,15 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.*;
 
-import com.google.common.collect.Iterators;
-import junit.framework.Assert;
-
+import org.apache.cassandra.db.DecoratedKey;
+import org.apache.cassandra.db.index.search.container.KeyContainer;
 import org.apache.cassandra.db.marshal.Int32Type;
 import org.apache.cassandra.db.marshal.UTF8Type;
+import org.apache.cassandra.service.StorageService;
+import org.apache.cassandra.utils.MurmurHash;
 
+import com.google.common.collect.Iterators;
+import junit.framework.Assert;
 import org.junit.Test;
 import org.roaringbitmap.RoaringBitmap;
 
@@ -19,21 +22,21 @@ public class OnDiskSATest
     @Test
     public void testStringSAConstruction() throws Exception
     {
-        Map<ByteBuffer, RoaringBitmap> data = new HashMap<ByteBuffer, RoaringBitmap>()
+        Map<ByteBuffer, NavigableMap<DecoratedKey, Integer>> data = new HashMap<ByteBuffer, NavigableMap<DecoratedKey, Integer>>()
         {{
-                put(UTF8Type.instance.decompose("scat"), bitMapOf(1));
-                put(UTF8Type.instance.decompose("mat"), bitMapOf(2));
-                put(UTF8Type.instance.decompose("fat"), bitMapOf(3));
-                put(UTF8Type.instance.decompose("cat"), bitMapOf(1, 4));
-                put(UTF8Type.instance.decompose("till"), bitMapOf(2, 6));
-                put(UTF8Type.instance.decompose("bill"), bitMapOf(5));
-                put(UTF8Type.instance.decompose("foo"), bitMapOf(7));
-                put(UTF8Type.instance.decompose("bar"), bitMapOf(9, 10));
-                put(UTF8Type.instance.decompose("michael"), bitMapOf(11, 12, 1));
+                put(UTF8Type.instance.decompose("scat"), keyBuilder(1));
+                put(UTF8Type.instance.decompose("mat"),  keyBuilder(2));
+                put(UTF8Type.instance.decompose("fat"),  keyBuilder(3));
+                put(UTF8Type.instance.decompose("cat"),  keyBuilder(1, 4));
+                put(UTF8Type.instance.decompose("till"), keyBuilder(2, 6));
+                put(UTF8Type.instance.decompose("bill"), keyBuilder(5));
+                put(UTF8Type.instance.decompose("foo"),  keyBuilder(7));
+                put(UTF8Type.instance.decompose("bar"),  keyBuilder(9, 10));
+                put(UTF8Type.instance.decompose("michael"), keyBuilder(11, 12, 1));
         }};
 
         OnDiskSABuilder builder = new OnDiskSABuilder(UTF8Type.instance, OnDiskSABuilder.Mode.SUFFIX);
-        for (Map.Entry<ByteBuffer, RoaringBitmap> e : data.entrySet())
+        for (Map.Entry<ByteBuffer, NavigableMap<DecoratedKey, Integer>> e : data.entrySet())
             builder.add(e.getKey(), e.getValue());
 
         File index = File.createTempFile("on-disk-sa-string", "db");
@@ -44,12 +47,12 @@ public class OnDiskSATest
         OnDiskSA onDisk = new OnDiskSA(index, UTF8Type.instance);
 
         // first check if we can find exact matches
-        for (Map.Entry<ByteBuffer, RoaringBitmap> e : data.entrySet())
+        for (Map.Entry<ByteBuffer, NavigableMap<DecoratedKey, Integer>> e : data.entrySet())
         {
             if (UTF8Type.instance.getString(e.getKey()).equals("cat"))
                 continue; // cat is embedded into scat, we'll test it in next section
 
-            Assert.assertEquals("Key was: " + UTF8Type.instance.compose(e.getKey()), e.getValue(), onDisk.search(e.getKey()));
+            Assert.assertEquals("Key was: " + UTF8Type.instance.compose(e.getKey()), convert(e.getValue()), onDisk.search(e.getKey()));
         }
 
         // check that cat returns positions for scat & cat
@@ -74,21 +77,21 @@ public class OnDiskSATest
     @Test
     public void testIntegerSAConstruction() throws Exception
     {
-        final Map<ByteBuffer, RoaringBitmap> data = new HashMap<ByteBuffer, RoaringBitmap>()
+        final Map<ByteBuffer, NavigableMap<DecoratedKey, Integer>> data = new HashMap<ByteBuffer, NavigableMap<DecoratedKey, Integer>>()
         {{
-                put(Int32Type.instance.decompose(5),  bitMapOf(1));
-                put(Int32Type.instance.decompose(7),  bitMapOf(2));
-                put(Int32Type.instance.decompose(1),  bitMapOf(3));
-                put(Int32Type.instance.decompose(3),  bitMapOf(1, 4));
-                put(Int32Type.instance.decompose(8),  bitMapOf(2, 6));
-                put(Int32Type.instance.decompose(10), bitMapOf(5));
-                put(Int32Type.instance.decompose(6),  bitMapOf(7));
-                put(Int32Type.instance.decompose(4),  bitMapOf(9, 10));
-                put(Int32Type.instance.decompose(0),  bitMapOf(11, 12, 1));
+                put(Int32Type.instance.decompose(5),  keyBuilder(1));
+                put(Int32Type.instance.decompose(7),  keyBuilder(2));
+                put(Int32Type.instance.decompose(1),  keyBuilder(3));
+                put(Int32Type.instance.decompose(3),  keyBuilder(1, 4));
+                put(Int32Type.instance.decompose(8),  keyBuilder(2, 6));
+                put(Int32Type.instance.decompose(10), keyBuilder(5));
+                put(Int32Type.instance.decompose(6),  keyBuilder(7));
+                put(Int32Type.instance.decompose(4),  keyBuilder(9, 10));
+                put(Int32Type.instance.decompose(0),  keyBuilder(11, 12, 1));
         }};
 
         OnDiskSABuilder builder = new OnDiskSABuilder(Int32Type.instance, OnDiskSABuilder.Mode.ORIGINAL);
-        for (Map.Entry<ByteBuffer, RoaringBitmap> e : data.entrySet())
+        for (Map.Entry<ByteBuffer, NavigableMap<DecoratedKey, Integer>> e : data.entrySet())
             builder.add(e.getKey(), e.getValue());
 
         File index = File.createTempFile("on-disk-sa-int", "db");
@@ -98,8 +101,10 @@ public class OnDiskSATest
 
         OnDiskSA onDisk = new OnDiskSA(index, Int32Type.instance);
 
-        for (Map.Entry<ByteBuffer, RoaringBitmap> e : data.entrySet())
-            Assert.assertEquals(e.getValue(), onDisk.search(e.getKey()));
+        for (Map.Entry<ByteBuffer, NavigableMap<DecoratedKey, Integer>> e : data.entrySet())
+        {
+            Assert.assertEquals(convert(e.getValue()), onDisk.search(e.getKey()));
+        }
 
         List<ByteBuffer> sortedNumbers = new ArrayList<ByteBuffer>()
         {{
@@ -122,7 +127,7 @@ public class OnDiskSATest
         {
             ByteBuffer number = sortedNumbers.get(idx++);
             Assert.assertEquals(number, suffix.getSuffix());
-            Assert.assertEquals(data.get(number), suffix.getKeys());
+            Assert.assertEquals(convert(data.get(number)), convert(suffix.getKeys()));
         }
 
         // test partial iteration (descending)
@@ -134,7 +139,7 @@ public class OnDiskSATest
             ByteBuffer number = sortedNumbers.get(idx++);
 
             Assert.assertEquals(number, suffix.getSuffix());
-            Assert.assertEquals(data.get(number), suffix.getKeys());
+            Assert.assertEquals(convert(data.get(number)), convert(suffix.getKeys()));
         }
 
         idx = 3; // start from the 3rd element exclusive
@@ -145,7 +150,7 @@ public class OnDiskSATest
             ByteBuffer number = sortedNumbers.get(idx++);
 
             Assert.assertEquals(number, suffix.getSuffix());
-            Assert.assertEquals(data.get(number), suffix.getKeys());
+            Assert.assertEquals(convert(data.get(number)), convert(suffix.getKeys()));
         }
 
         // test partial iteration (ascending)
@@ -157,7 +162,7 @@ public class OnDiskSATest
             ByteBuffer number = sortedNumbers.get(idx--);
 
             Assert.assertEquals(number, suffix.getSuffix());
-            Assert.assertEquals(data.get(number), suffix.getKeys());
+            Assert.assertEquals(convert(data.get(number)), convert(suffix.getKeys()));
         }
 
         idx = 6; // start from the 6rd element exclusive
@@ -168,7 +173,7 @@ public class OnDiskSATest
             ByteBuffer number = sortedNumbers.get(idx--);
 
             Assert.assertEquals(number, suffix.getSuffix());
-            Assert.assertEquals(data.get(number), suffix.getKeys());
+            Assert.assertEquals(convert(data.get(number)), convert(suffix.getKeys()));
         }
 
         onDisk.close();
@@ -182,7 +187,7 @@ public class OnDiskSATest
 
         OnDiskSABuilder iterTest = new OnDiskSABuilder(Int32Type.instance, OnDiskSABuilder.Mode.ORIGINAL);
         for (int i = 0; i < iterCheckNums.size(); i++)
-            iterTest.add(iterCheckNums.get(i), bitMapOf(i));
+            iterTest.add(iterCheckNums.get(i), keyBuilder(i));
 
         File iterIndex = File.createTempFile("sa-iter", ".db");
         iterIndex.deleteOnExit();
@@ -229,11 +234,11 @@ public class OnDiskSATest
     {
         OnDiskSABuilder builder = new OnDiskSABuilder(UTF8Type.instance, OnDiskSABuilder.Mode.SUFFIX)
         {{
-                add(UTF8Type.instance.decompose("Eliza"), bitMapOf(1, 2));
-                add(UTF8Type.instance.decompose("Elizabeth"), bitMapOf(3, 4));
-                add(UTF8Type.instance.decompose("Aliza"), bitMapOf(5, 6));
-                add(UTF8Type.instance.decompose("Taylor"), bitMapOf(7, 8));
-                add(UTF8Type.instance.decompose("Pavel"), bitMapOf(9, 10));
+                add(UTF8Type.instance.decompose("Eliza"), keyBuilder(1, 2));
+                add(UTF8Type.instance.decompose("Elizabeth"), keyBuilder(3, 4));
+                add(UTF8Type.instance.decompose("Aliza"), keyBuilder(5, 6));
+                add(UTF8Type.instance.decompose("Taylor"), keyBuilder(7, 8));
+                add(UTF8Type.instance.decompose("Pavel"), keyBuilder(9, 10));
         }};
 
         File index = File.createTempFile("on-disk-sa-multi-suffix-match", ".db");
@@ -310,6 +315,46 @@ public class OnDiskSATest
         onDisk.close();
     }
     */
+
+    private static RoaringBitmap convert(NavigableMap<DecoratedKey, Integer> keys)
+    {
+        RoaringBitmap bitmap = new RoaringBitmap();
+        for (Integer offset : keys.values())
+            bitmap.add(offset);
+
+        return bitmap;
+    }
+
+    private static RoaringBitmap convert(KeyContainer container)
+    {
+        RoaringBitmap bitmap = new RoaringBitmap();
+        for (KeyContainer.Bucket bucket : container)
+        {
+            bitmap.or(bucket.getPositions());
+        }
+
+        return bitmap;
+    }
+
+    private static NavigableMap<DecoratedKey, Integer> keyBuilder(Integer... keys)
+    {
+        NavigableMap<DecoratedKey, Integer> builder = new TreeMap<>(new Comparator<DecoratedKey>()
+        {
+            @Override
+            public int compare(DecoratedKey a, DecoratedKey b)
+            {
+                long tokenA = MurmurHash.hash2_64(a.key, a.key.position(), a.key.remaining(), 0);
+                long tokenB = MurmurHash.hash2_64(b.key, b.key.position(), b.key.remaining(), 0);
+
+                return Long.compare(tokenA, tokenB);
+            }
+        });
+
+        for (Integer key : keys)
+            builder.put(StorageService.getPartitioner().decorateKey(ByteBuffer.wrap(("key" + key).getBytes())), key);
+
+        return builder;
+    }
 
     private static RoaringBitmap bitMapOf(int... values)
     {
