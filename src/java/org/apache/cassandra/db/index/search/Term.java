@@ -1,16 +1,17 @@
 package org.apache.cassandra.db.index.search;
 
 import java.nio.ByteBuffer;
+import java.util.NavigableMap;
 
-import org.roaringbitmap.RoaringBitmap;
+import org.apache.cassandra.db.DecoratedKey;
 
 public class Term
 {
     public final int position;
     public final ByteBuffer value;
-    public final RoaringBitmap keys;
+    public final NavigableMap<DecoratedKey, Integer> keys;
 
-    public Term(int position, ByteBuffer value, RoaringBitmap keys)
+    public Term(int position, ByteBuffer value, NavigableMap<DecoratedKey, Integer> keys)
     {
         this.position = position;
         this.value = value;

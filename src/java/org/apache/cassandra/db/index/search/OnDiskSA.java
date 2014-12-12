@@ -9,14 +9,10 @@ import java.util.Iterator;
 
 import com.google.common.collect.AbstractIterator;
 
-import org.apache.cassandra.db.marshal.AbstractType;
-import org.apache.cassandra.io.FSReadError;
-import org.apache.cassandra.utils.ByteBufferDataInput;
+import org.apache.cassandra.db.index.search.container.KeyContainer;
 import org.apache.cassandra.db.marshal.AbstractType;
 import org.apache.cassandra.io.FSReadError;
 import org.apache.cassandra.io.util.RandomAccessReader;
-
-import com.google.common.collect.AbstractIterator;
 import org.roaringbitmap.RoaringBitmap;
 
 import static org.apache.cassandra.db.index.search.OnDiskBlock.SearchResult;
@@ -80,7 +76,6 @@ public class OnDiskSA implements Iterable<OnDiskSA.DataSuffix>, Closeable
         dataLevel = new DataLevel(file.getFilePointer(), blockCount);
     }
 
-
     public RoaringBitmap search(ByteBuffer query) throws IOException
     {
         RoaringBitmap keys = null;
@@ -89,13 +84,17 @@ public class OnDiskSA implements Iterable<OnDiskSA.DataSuffix>, Closeable
         while (suffixes.hasNext())
         {
             DataSuffix suffix = suffixes.next();
+
             if (suffix.compareTo(comparator, query, false) != 0)
                 break;
 
-            if (keys == null)
-                keys = suffix.getKeys();
-            else
-                keys.or(suffix.getKeys());
+            for (KeyContainer.Bucket bucket : suffix.getKeys())
+            {
+                if (keys == null)
+                    keys = bucket.getPositions();
+                else
+                    keys.or(bucket.getPositions());
+            }
         }
 
         return keys;
@@ -273,6 +272,7 @@ public class OnDiskSA implements Iterable<OnDiskSA.DataSuffix>, Closeable
             super(content);
             this.file = file;
             this.auxSectionOffset = auxSectionOffset;
+
         }
 
         public int getOffset()
@@ -281,14 +281,10 @@ public class OnDiskSA implements Iterable<OnDiskSA.DataSuffix>, Closeable
             return content.getInt(position + 2 + content.getShort(position));
         }
 
-        public RoaringBitmap getKeys() throws IOException
+        public KeyContainer getKeys()
         {
-            RoaringBitmap keys = new RoaringBitmap();
-
             file.seek(auxSectionOffset + getOffset());
-            keys.deserialize(file);
-
-            return keys;
+            return new KeyContainer(file);
         }
     }
 
