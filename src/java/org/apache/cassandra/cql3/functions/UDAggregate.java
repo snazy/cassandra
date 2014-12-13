@@ -151,7 +151,7 @@ public class UDAggregate extends AbstractFunction implements AggregateFunction
         UntypedResultSet results = QueryProcessor.resultify("SELECT * FROM system." + SystemKeyspace.SCHEMA_AGGREGATES_TABLE, row);
         Map<Composite, UDAggregate> udfs = new HashMap<>(results.size());
         for (UntypedResultSet.Row result : results)
-            udfs.put(SystemKeyspace.SchemaAggregatesTable.comparator.make(result.getString("aggregate_name"), result.getBlob("signature")),
+            udfs.put(SystemKeyspace.SchemaAggregatesTable.comparator.make(result.getString("aggregate_name"), result.getList("signature", UTF8Type.instance)),
                      fromSchema(result));
         return udfs;
     }

@@ -99,7 +99,7 @@ public final class SystemKeyspace
                       SCHEMA_FUNCTIONS_TABLE,
                       SCHEMA_AGGREGATES_TABLE);
 
-    private static int WEEK = (int) TimeUnit.DAYS.toSeconds(7);
+    private static final int WEEK = (int) TimeUnit.DAYS.toSeconds(7);
 
     public static final CFMetaData SchemaKeyspacesTable =
         compile(SCHEMA_KEYSPACES_TABLE, "keyspace definitions",
@@ -184,7 +184,7 @@ public final class SystemKeyspace
                 "CREATE TABLE %s ("
                 + "keyspace_name text,"
                 + "function_name text,"
-                + "signature blob,"
+                + "signature frozen<list<text>>,"
                 + "argument_names list<text>,"
                 + "argument_types list<text>,"
                 + "body text,"
@@ -199,7 +199,7 @@ public final class SystemKeyspace
                 "CREATE TABLE %s ("
                 + "keyspace_name text,"
                 + "aggregate_name text,"
-                + "signature blob,"
+                + "signature frozen<list<text>>,"
                 + "argument_types list<text>,"
                 + "return_type text,"
                 + "state_func text,"

@@ -192,7 +192,7 @@ public abstract class UDFunction extends AbstractFunction implements ScalarFunct
         UntypedResultSet results = QueryProcessor.resultify("SELECT * FROM system." + SystemKeyspace.SCHEMA_FUNCTIONS_TABLE, row);
         Map<Composite, UDFunction> udfs = new HashMap<>(results.size());
         for (UntypedResultSet.Row result : results)
-            udfs.put(SystemKeyspace.SchemaFunctionsTable.comparator.make(result.getString("function_name"), result.getBlob("signature")),
+            udfs.put(SystemKeyspace.SchemaFunctionsTable.comparator.make(result.getString("function_name"), result.getList("signature", UTF8Type.instance)),
                      fromSchema(result));
         return udfs;
     }
