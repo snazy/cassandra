@@ -27,8 +27,6 @@ import org.junit.Test;
 import com.datastax.driver.core.*;
 import org.apache.cassandra.cql3.functions.FunctionName;
 import org.apache.cassandra.cql3.functions.Functions;
-import org.apache.cassandra.db.marshal.DoubleType;
-import org.apache.cassandra.db.marshal.Int32Type;
 import org.apache.cassandra.exceptions.InvalidRequestException;
 import org.apache.cassandra.service.ClientState;
 import org.apache.cassandra.transport.Event;
@@ -50,8 +48,7 @@ public class UFTest extends CQLTester
 
         assertLastSchemaChange(Event.SchemaChange.Change.CREATED, Event.SchemaChange.Target.FUNCTION,
                                KEYSPACE, parseFunctionName(f).name,
-                               DoubleType.instance,
-                               DoubleType.instance, DoubleType.instance);
+                               "double", "double");
 
         createFunctionOverload(f,
                                "double, double",
@@ -62,8 +59,7 @@ public class UFTest extends CQLTester
 
         assertLastSchemaChange(Event.SchemaChange.Change.CREATED, Event.SchemaChange.Target.FUNCTION,
                                KEYSPACE, parseFunctionName(f).name,
-                               Int32Type.instance,
-                               Int32Type.instance, Int32Type.instance);
+                               "int", "int");
 
         schemaChange("CREATE OR REPLACE FUNCTION " + f + "(state int, val int) " +
                      "RETURNS int " +
@@ -72,15 +68,13 @@ public class UFTest extends CQLTester
 
         assertLastSchemaChange(Event.SchemaChange.Change.UPDATED, Event.SchemaChange.Target.FUNCTION,
                                KEYSPACE, parseFunctionName(f).name,
-                               Int32Type.instance,
-                               Int32Type.instance, Int32Type.instance);
+                               "int", "int");
 
         schemaChange("DROP FUNCTION " + f + "(double, double)");
 
         assertLastSchemaChange(Event.SchemaChange.Change.DROPPED, Event.SchemaChange.Target.FUNCTION,
                                KEYSPACE, parseFunctionName(f).name,
-                               DoubleType.instance,
-                               DoubleType.instance, DoubleType.instance);
+                               "double", "double");
     }
 
     @Test

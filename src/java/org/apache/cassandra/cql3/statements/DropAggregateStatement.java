@@ -80,8 +80,7 @@ public final class DropAggregateStatement extends SchemaAlteringStatement
     public Event.SchemaChange changeEvent()
     {
         return new Event.SchemaChange(Event.SchemaChange.Change.DROPPED, Event.SchemaChange.Target.AGGREGATE,
-                                      old.name().keyspace, old.name().name,
-                                      old.returnType(), old.argTypes());
+                                      old.name().keyspace, old.name().name, AbstractType.asCQLTypeStringList(old.argTypes()));
     }
 
     public boolean announceMigration(boolean isLocalOnly) throws RequestValidationException

@@ -685,8 +685,7 @@ Table of Contents
           - If <target> is "FUNCTION" or "AGGREGATE", multiple arguments follow:
             - [string] keyspace containing the user defined function / aggregate
             - [string] the function/aggregate name
-            - [string] function return type
-            - [string list] one string for each argument type
+            - [string list] one string for each argument type (as CQL type)
 
   All EVENT message have a streamId of -1 (Section 2.3).
 

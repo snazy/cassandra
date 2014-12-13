@@ -106,8 +106,7 @@ public final class CreateFunctionStatement extends SchemaAlteringStatement
     {
         return new Event.SchemaChange(replaced ? Event.SchemaChange.Change.UPDATED : Event.SchemaChange.Change.CREATED,
                                       Event.SchemaChange.Target.FUNCTION,
-                                      udFunction.name().keyspace, udFunction.name().name,
-                                      udFunction.returnType(), udFunction.argTypes());
+                                      udFunction.name().keyspace, udFunction.name().name, AbstractType.asCQLTypeStringList(udFunction.argTypes()));
     }
 
     public boolean announceMigration(boolean isLocalOnly) throws RequestValidationException

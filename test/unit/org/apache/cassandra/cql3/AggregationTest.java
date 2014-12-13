@@ -19,19 +19,14 @@ package org.apache.cassandra.cql3;
 
 import java.math.BigDecimal;
 import java.text.SimpleDateFormat;
-import java.util.Arrays;
 import java.util.Calendar;
 import java.util.Date;
-import java.util.List;
 import java.util.TimeZone;
 
 import org.apache.commons.lang3.time.DateUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-import org.apache.cassandra.db.marshal.AbstractType;
-import org.apache.cassandra.db.marshal.DoubleType;
-import org.apache.cassandra.db.marshal.Int32Type;
 import org.apache.cassandra.service.ClientState;
 import org.apache.cassandra.transport.Event;
 import org.apache.cassandra.transport.messages.ResultMessage;
@@ -163,8 +158,7 @@ public class AggregationTest extends CQLTester
 
         assertLastSchemaChange(Event.SchemaChange.Change.CREATED, Event.SchemaChange.Target.AGGREGATE,
                                KEYSPACE, parseFunctionName(a).name,
-                               DoubleType.instance,
-                               DoubleType.instance);
+                               "double");
 
         schemaChange("CREATE OR REPLACE AGGREGATE " + a + "(double) " +
                      "SFUNC " + shortFunctionName(f) + " " +
@@ -172,8 +166,7 @@ public class AggregationTest extends CQLTester
 
         assertLastSchemaChange(Event.SchemaChange.Change.UPDATED, Event.SchemaChange.Target.AGGREGATE,
                                KEYSPACE, parseFunctionName(a).name,
-                               DoubleType.instance,
-                               DoubleType.instance);
+                               "double");
 
         createAggregateOverload(a,
                                 "int",
@@ -183,15 +176,13 @@ public class AggregationTest extends CQLTester
 
         assertLastSchemaChange(Event.SchemaChange.Change.CREATED, Event.SchemaChange.Target.AGGREGATE,
                                KEYSPACE, parseFunctionName(a).name,
-                               Int32Type.instance,
-                               Int32Type.instance);
+                               "int");
 
         schemaChange("DROP AGGREGATE " + a + "(double)");
 
         assertLastSchemaChange(Event.SchemaChange.Change.DROPPED, Event.SchemaChange.Target.AGGREGATE,
                                KEYSPACE, parseFunctionName(a).name,
-                               DoubleType.instance,
-                               DoubleType.instance);
+                               "double");
     }
 
     @Test

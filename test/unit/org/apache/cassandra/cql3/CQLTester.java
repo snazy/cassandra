@@ -414,7 +414,7 @@ public abstract class CQLTester
 
     protected void assertLastSchemaChange(Event.SchemaChange.Change change, Event.SchemaChange.Target target,
                                           String keyspace, String name,
-                                          AbstractType<?> returnType, AbstractType<?>... argTypes)
+                                          String... argTypes)
     {
         Assert.assertTrue(lastSchemaChangeResult instanceof ResultMessage.SchemaChange);
         ResultMessage.SchemaChange schemaChange = (ResultMessage.SchemaChange) lastSchemaChangeResult;
@@ -422,7 +422,6 @@ public abstract class CQLTester
         Assert.assertSame(target, schemaChange.change.target);
         Assert.assertEquals(keyspace, schemaChange.change.keyspace);
         Assert.assertEquals(name, schemaChange.change.name);
-        Assert.assertEquals(returnType, schemaChange.change.returnType);
         Assert.assertEquals(argTypes != null ? Arrays.asList(argTypes) : null, schemaChange.change.argTypes);
     }
 

@@ -412,14 +412,16 @@ public class Server implements CassandraDaemon.Server
             server.connectionTracker.send(new Event.SchemaChange(Event.SchemaChange.Change.CREATED, Event.SchemaChange.Target.TYPE, ksName, typeName));
         }
 
-        public void onCreateFunction(String ksName, String functionName, AbstractType<?> returnType, List<AbstractType<?>> argTypes)
+        public void onCreateFunction(String ksName, String functionName, List<AbstractType<?>> argTypes)
         {
-            server.connectionTracker.send(new Event.SchemaChange(Event.SchemaChange.Change.CREATED, Event.SchemaChange.Target.FUNCTION, ksName, functionName, returnType, argTypes));
+            server.connectionTracker.send(new Event.SchemaChange(Event.SchemaChange.Change.CREATED, Event.SchemaChange.Target.FUNCTION,
+                                                                 ksName, functionName, AbstractType.asCQLTypeStringList(argTypes)));
         }
 
-        public void onCreateAggregate(String ksName, String aggregateName, AbstractType<?> returnType, List<AbstractType<?>> argTypes)
+        public void onCreateAggregate(String ksName, String aggregateName, List<AbstractType<?>> argTypes)
         {
-            server.connectionTracker.send(new Event.SchemaChange(Event.SchemaChange.Change.CREATED, Event.SchemaChange.Target.AGGREGATE, ksName, aggregateName, returnType, argTypes));
+            server.connectionTracker.send(new Event.SchemaChange(Event.SchemaChange.Change.CREATED, Event.SchemaChange.Target.AGGREGATE,
+                                                                 ksName, aggregateName, AbstractType.asCQLTypeStringList(argTypes)));
         }
 
         public void onUpdateKeyspace(String ksName)
@@ -437,14 +439,16 @@ public class Server implements CassandraDaemon.Server
             server.connectionTracker.send(new Event.SchemaChange(Event.SchemaChange.Change.UPDATED, Event.SchemaChange.Target.TYPE, ksName, typeName));
         }
 
-        public void onUpdateFunction(String ksName, String functionName, AbstractType<?> returnType, List<AbstractType<?>> argTypes)
+        public void onUpdateFunction(String ksName, String functionName, List<AbstractType<?>> argTypes)
         {
-            server.connectionTracker.send(new Event.SchemaChange(Event.SchemaChange.Change.UPDATED, Event.SchemaChange.Target.FUNCTION, ksName, functionName, returnType, argTypes));
+            server.connectionTracker.send(new Event.SchemaChange(Event.SchemaChange.Change.UPDATED, Event.SchemaChange.Target.FUNCTION,
+                                                                 ksName, functionName, AbstractType.asCQLTypeStringList(argTypes)));
         }
 
-        public void onUpdateAggregate(String ksName, String aggregateName, AbstractType<?> returnType, List<AbstractType<?>> argTypes)
+        public void onUpdateAggregate(String ksName, String aggregateName, List<AbstractType<?>> argTypes)
         {
-            server.connectionTracker.send(new Event.SchemaChange(Event.SchemaChange.Change.UPDATED, Event.SchemaChange.Target.AGGREGATE, ksName, aggregateName, returnType, argTypes));
+            server.connectionTracker.send(new Event.SchemaChange(Event.SchemaChange.Change.UPDATED, Event.SchemaChange.Target.AGGREGATE,
+                                                                 ksName, aggregateName, AbstractType.asCQLTypeStringList(argTypes)));
         }
 
         public void onDropKeyspace(String ksName)
@@ -462,14 +466,16 @@ public class Server implements CassandraDaemon.Server
             server.connectionTracker.send(new Event.SchemaChange(Event.SchemaChange.Change.DROPPED, Event.SchemaChange.Target.TYPE, ksName, typeName));
         }
 
-        public void onDropFunction(String ksName, String functionName, AbstractType<?> returnType, List<AbstractType<?>> argTypes)
+        public void onDropFunction(String ksName, String functionName, List<AbstractType<?>> argTypes)
         {
-            server.connectionTracker.send(new Event.SchemaChange(Event.SchemaChange.Change.DROPPED, Event.SchemaChange.Target.FUNCTION, ksName, functionName, returnType, argTypes));
+            server.connectionTracker.send(new Event.SchemaChange(Event.SchemaChange.Change.DROPPED, Event.SchemaChange.Target.FUNCTION,
+                                                                 ksName, functionName, AbstractType.asCQLTypeStringList(argTypes)));
         }
 
-        public void onDropAggregate(String ksName, String aggregateName, AbstractType<?> returnType, List<AbstractType<?>> argTypes)
+        public void onDropAggregate(String ksName, String aggregateName, List<AbstractType<?>> argTypes)
         {
-            server.connectionTracker.send(new Event.SchemaChange(Event.SchemaChange.Change.DROPPED, Event.SchemaChange.Target.AGGREGATE, ksName, aggregateName, returnType, argTypes));
+            server.connectionTracker.send(new Event.SchemaChange(Event.SchemaChange.Change.DROPPED, Event.SchemaChange.Target.AGGREGATE,
+                                                                 ksName, aggregateName, AbstractType.asCQLTypeStringList(argTypes)));
         }
     }
 }

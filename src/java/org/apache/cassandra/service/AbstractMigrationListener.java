@@ -25,7 +25,7 @@ import org.apache.cassandra.db.marshal.AbstractType;
  * Just an empty implementation of {@link org.apache.cassandra.service.IMigrationListener} to ease overriding
  * of it.
  */
-public class AbstractMigrationListener implements IMigrationListener
+public abstract class AbstractMigrationListener implements IMigrationListener
 {
     public void onCreateKeyspace(String ksName)
     {
@@ -39,11 +39,11 @@ public class AbstractMigrationListener implements IMigrationListener
     {
     }
 
-    public void onCreateFunction(String ksName, String functionName, AbstractType<?> returnType, List<AbstractType<?>> argTypes)
+    public void onCreateFunction(String ksName, String functionName, List<AbstractType<?>> argTypes)
     {
     }
 
-    public void onCreateAggregate(String ksName, String aggregateName, AbstractType<?> returnType, List<AbstractType<?>> argTypes)
+    public void onCreateAggregate(String ksName, String aggregateName, List<AbstractType<?>> argTypes)
     {
     }
 
@@ -59,11 +59,11 @@ public class AbstractMigrationListener implements IMigrationListener
     {
     }
 
-    public void onUpdateFunction(String ksName, String functionName, AbstractType<?> returnType, List<AbstractType<?>> argTypes)
+    public void onUpdateFunction(String ksName, String functionName, List<AbstractType<?>> argTypes)
     {
     }
 
-    public void onUpdateAggregate(String ksName, String aggregateName, AbstractType<?> returnType, List<AbstractType<?>> argTypes)
+    public void onUpdateAggregate(String ksName, String aggregateName, List<AbstractType<?>> argTypes)
     {
     }
 
@@ -79,11 +79,11 @@ public class AbstractMigrationListener implements IMigrationListener
     {
     }
 
-    public void onDropFunction(String ksName, String functionName, AbstractType<?> returnType, List<AbstractType<?>> argTypes)
+    public void onDropFunction(String ksName, String functionName, List<AbstractType<?>> argTypes)
     {
     }
 
-    public void onDropAggregate(String ksName, String aggregateName, AbstractType<?> returnType, List<AbstractType<?>> argTypes)
+    public void onDropAggregate(String ksName, String aggregateName, List<AbstractType<?>> argTypes)
     {
     }
 }

@@ -601,7 +601,7 @@ public class QueryProcessor implements QueryHandler
             return ksName.equals(statementKsName) && (cfName == null || cfName.equals(statementCfName));
         }
 
-        public void onCreateFunction(String ksName, String functionName, AbstractType<?> returnType, List<AbstractType<?>> argTypes) {
+        public void onCreateFunction(String ksName, String functionName, List<AbstractType<?>> argTypes) {
             if (Functions.getOverloadCount(new FunctionName(ksName, functionName)) > 1)
             {
                 // in case there are other overloads, we have to remove all overloads since argument type
@@ -610,7 +610,7 @@ public class QueryProcessor implements QueryHandler
                 removeInvalidPreparedStatementsForFunction(thriftPreparedStatements.values().iterator(), ksName, functionName);
             }
         }
-        public void onCreateAggregate(String ksName, String aggregateName, AbstractType<?> returnType, List<AbstractType<?>> argTypes) {
+        public void onCreateAggregate(String ksName, String aggregateName, List<AbstractType<?>> argTypes) {
             if (Functions.getOverloadCount(new FunctionName(ksName, aggregateName)) > 1)
             {
                 // in case there are other overloads, we have to remove all overloads since argument type
@@ -630,11 +630,11 @@ public class QueryProcessor implements QueryHandler
             removeInvalidPreparedStatements(ksName, cfName);
         }
 
-        public void onDropFunction(String ksName, String functionName, AbstractType<?> returnType, List<AbstractType<?>> argTypes) {
+        public void onDropFunction(String ksName, String functionName, List<AbstractType<?>> argTypes) {
             removeInvalidPreparedStatementsForFunction(preparedStatements.values().iterator(), ksName, functionName);
             removeInvalidPreparedStatementsForFunction(thriftPreparedStatements.values().iterator(), ksName, functionName);
         }
-        public void onDropAggregate(String ksName, String aggregateName, AbstractType<?> returnType, List<AbstractType<?>> argTypes)
+        public void onDropAggregate(String ksName, String aggregateName, List<AbstractType<?>> argTypes)
         {
             removeInvalidPreparedStatementsForFunction(preparedStatements.values().iterator(), ksName, aggregateName);
             removeInvalidPreparedStatementsForFunction(thriftPreparedStatements.values().iterator(), ksName, aggregateName);
