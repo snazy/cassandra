@@ -17,7 +17,6 @@
  */
 package org.apache.cassandra.auth;
 
-import java.util.List;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
@@ -42,7 +41,6 @@ import org.apache.cassandra.cql3.statements.CFStatement;
 import org.apache.cassandra.cql3.statements.CreateTableStatement;
 import org.apache.cassandra.cql3.statements.SelectStatement;
 import org.apache.cassandra.db.ConsistencyLevel;
-import org.apache.cassandra.db.marshal.AbstractType;
 import org.apache.cassandra.exceptions.RequestExecutionException;
 import org.apache.cassandra.exceptions.RequestValidationException;
 import org.apache.cassandra.locator.SimpleStrategy;
@@ -322,7 +320,7 @@ public class Auth implements AuthMBean
     /**
      * IMigrationListener implementation that cleans up permissions on dropped resources.
      */
-    public static class MigrationListener implements IMigrationListener
+    public static class MigrationListener extends AbstractMigrationListener
     {
         public void onDropKeyspace(String ksName)
         {
@@ -332,58 +330,6 @@ public class Auth implements AuthMBean
         public void onDropColumnFamily(String ksName, String cfName)
         {
             DatabaseDescriptor.getAuthorizer().revokeAll(DataResource.columnFamily(ksName, cfName));
-        }
-
-        public void onDropUserType(String ksName, String userType)
-        {
-        }
-
-        public void onDropFunction(String ksName, String functionName, AbstractType<?> returnType, List<AbstractType<?>> argTypes)
-        {
-        }
-
-        public void onDropAggregate(String ksName, String aggregateName, AbstractType<?> returnType, List<AbstractType<?>> argTypes)
-        {
-        }
-
-        public void onCreateKeyspace(String ksName)
-        {
-        }
-
-        public void onCreateColumnFamily(String ksName, String cfName)
-        {
-        }
-
-        public void onCreateUserType(String ksName, String userType)
-        {
-        }
-
-        public void onCreateFunction(String ksName, String functionName, AbstractType<?> returnType, List<AbstractType<?>> argTypes)
-        {
-        }
-
-        public void onCreateAggregate(String ksName, String aggregateName, AbstractType<?> returnType, List<AbstractType<?>> argTypes)
-        {
-        }
-
-        public void onUpdateKeyspace(String ksName)
-        {
-        }
-
-        public void onUpdateColumnFamily(String ksName, String cfName)
-        {
-        }
-
-        public void onUpdateUserType(String ksName, String userType)
-        {
-        }
-
-        public void onUpdateFunction(String ksName, String functionName, AbstractType<?> returnType, List<AbstractType<?>> argTypes)
-        {
-        }
-
-        public void onUpdateAggregate(String ksName, String aggregateName, AbstractType<?> returnType, List<AbstractType<?>> argTypes)
-        {
         }
     }
 }

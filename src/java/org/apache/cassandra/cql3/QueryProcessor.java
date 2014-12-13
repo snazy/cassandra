@@ -49,8 +49,8 @@ import org.apache.cassandra.exceptions.RequestExecutionException;
 import org.apache.cassandra.exceptions.RequestValidationException;
 import org.apache.cassandra.exceptions.SyntaxException;
 import org.apache.cassandra.metrics.CQLMetrics;
+import org.apache.cassandra.service.AbstractMigrationListener;
 import org.apache.cassandra.service.ClientState;
-import org.apache.cassandra.service.IMigrationListener;
 import org.apache.cassandra.service.MigrationManager;
 import org.apache.cassandra.service.QueryState;
 import org.apache.cassandra.service.pager.QueryPager;
@@ -559,7 +559,7 @@ public class QueryProcessor implements QueryHandler
         return meter.measureDeep(key);
     }
 
-    private static class MigrationSubscriber implements IMigrationListener
+    private static class MigrationSubscriber extends AbstractMigrationListener
     {
         private void removeInvalidPreparedStatements(String ksName, String cfName)
         {
@@ -601,9 +601,6 @@ public class QueryProcessor implements QueryHandler
             return ksName.equals(statementKsName) && (cfName == null || cfName.equals(statementCfName));
         }
 
-        public void onCreateKeyspace(String ksName) { }
-        public void onCreateColumnFamily(String ksName, String cfName) { }
-        public void onCreateUserType(String ksName, String typeName) { }
         public void onCreateFunction(String ksName, String functionName, AbstractType<?> returnType, List<AbstractType<?>> argTypes) {
             if (Functions.getOverloadCount(new FunctionName(ksName, functionName)) > 1)
             {
@@ -623,12 +620,6 @@ public class QueryProcessor implements QueryHandler
             }
         }
 
-        public void onUpdateKeyspace(String ksName) { }
-        public void onUpdateColumnFamily(String ksName, String cfName) { }
-        public void onUpdateUserType(String ksName, String typeName) { }
-        public void onUpdateFunction(String ksName, String functionName, AbstractType<?> returnType, List<AbstractType<?>> argTypes) { }
-        public void onUpdateAggregate(String ksName, String aggregateName, AbstractType<?> returnType, List<AbstractType<?>> argTypes) { }
-
         public void onDropKeyspace(String ksName)
         {
             removeInvalidPreparedStatements(ksName, null);
@@ -639,7 +630,6 @@ public class QueryProcessor implements QueryHandler
             removeInvalidPreparedStatements(ksName, cfName);
         }
 
-        public void onDropUserType(String ksName, String typeName) { }
         public void onDropFunction(String ksName, String functionName, AbstractType<?> returnType, List<AbstractType<?>> argTypes) {
             removeInvalidPreparedStatementsForFunction(preparedStatements.values().iterator(), ksName, functionName);
             removeInvalidPreparedStatementsForFunction(thriftPreparedStatements.values().iterator(), ksName, functionName);
