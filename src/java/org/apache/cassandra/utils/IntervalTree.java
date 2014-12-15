@@ -309,28 +309,40 @@ public class IntervalTree<C, D, I extends Interval<C, D>> implements Iterable<I>
             {
                 // Adds intervals i in intersects right as long as i.max >= searchInterval.min
                 // then search right
-                for (Interval<C, D> interval : intersectsRight)
-                {
-                    if (comparePoints(interval.max, searchInterval.min) >= 0)
-                        results.add(interval.data);
-                    else
-                        break;
+                int low = 0;
+                int high = intersectsRight.size() - 1;
+                while (low <= high) {
+                    int middle = low + (high - low) / 2;
+                    Interval<C, D> middleInterval = intersectsRight.get(middle);
+                    if (comparePoints(middleInterval.max, searchInterval.min) >= 0) {
+                        for (int i = low; i <= middle; i++) results.add(intersectsRight.get(i).data);
+                        low = middle + 1;
+                    } else {
+                        high = middle - 1;
+                    }
                 }
+
                 if (right != null)
                     right.searchInternal(searchInterval, results);
             }
             else
             {
                 assert comparePoints(center, searchInterval.max) > 0;
-                // Adds intervals i in intersects left as long as i.min >= searchInterval.max
+                // Adds intervals i in intersects left as long as i.min <= searchInterval.max
                 // then search left
-                for (Interval<C, D> interval : intersectsLeft)
-                {
-                    if (comparePoints(interval.min, searchInterval.max) <= 0)
-                        results.add(interval.data);
-                    else
-                        break;
+                int low = 0;
+                int high = intersectsLeft.size() - 1;
+                while (low <= high) {
+                    int middle = low + (high - low) / 2;
+                    Interval<C, D> middleInterval = intersectsLeft.get(middle);
+                    if (comparePoints(middleInterval.min, searchInterval.max) <= 0) {
+                        for (int i = low; i <= middle; i++) results.add(intersectsLeft.get(i).data);
+                        low = middle + 1;
+                    } else {
+                        high = middle - 1;
+                    }
                 }
+
                 if (left != null)
                     left.searchInternal(searchInterval, results);
             }
