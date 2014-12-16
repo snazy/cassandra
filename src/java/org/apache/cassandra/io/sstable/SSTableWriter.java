@@ -164,12 +164,14 @@ public class SSTableWriter extends SSTable
     /**
      * Perform sanity checks on @param decoratedKey and @return the position in the data file before any data is written
      */
-    private long beforeAppend(DecoratedKey decoratedKey)
+    private Pair<Long, Long> beforeAppend(DecoratedKey decoratedKey)
     {
         assert decoratedKey != null : "Keys must not be null"; // empty keys ARE allowed b/c of indexed column values
         if (lastWrittenKey != null && lastWrittenKey.compareTo(decoratedKey) >= 0)
             throw new RuntimeException("Last written key " + lastWrittenKey + " >= current key " + decoratedKey + " writing into " + getFilename());
-        return (lastWrittenKey == null) ? 0 : dataFile.getFilePointer();
+        long dataPosition = (lastWrittenKey == null) ? 0 : dataFile.getFilePointer();
+        long indexPosition = (lastWrittenKey == null) ? 0 : iwriter.getFilePointer();
+        return Pair.create(indexPosition, dataPosition);
     }
 
     private void afterAppend(DecoratedKey decoratedKey, long dataPosition, RowIndexEntry index)
@@ -191,11 +193,11 @@ public class SSTableWriter extends SSTable
      */
     public RowIndexEntry append(AbstractCompactedRow row)
     {
-        long currentPosition = beforeAppend(row.key);
+        Pair<Long, Long> currentPositions = beforeAppend(row.key);
         RowIndexEntry entry;
         try
         {
-            entry = row.write(currentPosition, dataFile.stream, listeners);
+            entry = row.write(currentPositions, dataFile.stream, listeners);
             if (entry == null)
                 return null;
         }
@@ -203,8 +205,8 @@ public class SSTableWriter extends SSTable
         {
             throw new FSWriteError(e, dataFile.getPath());
         }
-        sstableMetadataCollector.update(dataFile.getFilePointer() - currentPosition, row.columnStats());
-        afterAppend(row.key, currentPosition, entry);
+        sstableMetadataCollector.update(dataFile.getFilePointer() - currentPositions.right, row.columnStats());
+        afterAppend(row.key, currentPositions.right, entry);
         return entry;
     }
 
@@ -219,7 +221,7 @@ public class SSTableWriter extends SSTable
      */
     public long appendFromStream(DecoratedKey key, CFMetaData metadata, DataInput in, Descriptor.Version version) throws IOException
     {
-        long currentPosition = beforeAppend(key);
+        Pair<Long, Long> currentPositions = beforeAppend(key);
 
         // deserialize each column to obtain maxTimestamp and immediately serialize it.
         long minTimestamp = Long.MAX_VALUE;
@@ -237,7 +239,7 @@ public class SSTableWriter extends SSTable
         cf.delete(DeletionTime.serializer.deserialize(in));
 
         for (SSTableWriterListener listener : listeners)
-            listener.startRow(key, currentPosition);
+            listener.startRow(key, currentPositions.left);
         ColumnIndex.Builder columnIndexer = new ColumnIndex.Builder(cf, key.key, dataFile.stream, listeners);
 
         // read column count for version < ja
@@ -298,13 +300,13 @@ public class SSTableWriter extends SSTable
         sstableMetadataCollector.updateMinTimestamp(minTimestamp);
         sstableMetadataCollector.updateMaxTimestamp(maxTimestamp);
         sstableMetadataCollector.updateMaxLocalDeletionTime(maxLocalDeletionTime);
-        sstableMetadataCollector.addRowSize(dataFile.getFilePointer() - currentPosition);
+        sstableMetadataCollector.addRowSize(dataFile.getFilePointer() - currentPositions.right);
         sstableMetadataCollector.addColumnCount(columnIndexer.writtenAtomCount());
         sstableMetadataCollector.mergeTombstoneHistogram(tombstones);
         sstableMetadataCollector.updateMinColumnNames(minColumnNames);
         sstableMetadataCollector.updateMaxColumnNames(maxColumnNames);
-        afterAppend(key, currentPosition, RowIndexEntry.create(currentPosition, cf.deletionInfo().getTopLevelDeletion(), columnIndexer.build()));
-        return currentPosition;
+        afterAppend(key, currentPositions.right, RowIndexEntry.create(currentPositions.right, cf.deletionInfo().getTopLevelDeletion(), columnIndexer.build()));
+        return currentPositions.right;
     }
 
     /**
@@ -512,6 +514,11 @@ public class SSTableWriter extends SSTable
             // we can't reset dbuilder either, but that is the last thing called in afterappend so
             // we assume that if that worked then we won't be trying to reset.
             indexFile.resetAndTruncate(mark);
+        }
+
+        public long getFilePointer()
+        {
+            return indexFile.getFilePointer();
         }
 
         @Override
