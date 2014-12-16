@@ -27,6 +27,7 @@ import org.apache.cassandra.db.DecoratedKey;
 import org.apache.cassandra.db.RowIndexEntry;
 import org.apache.cassandra.io.sstable.ColumnStats;
 import org.apache.cassandra.io.sstable.SSTableWriterListener;
+import org.apache.cassandra.utils.Pair;
 
 /**
  * a CompactedRow is an object that takes a bunch of rows (keys + columnfamilies)
@@ -49,11 +50,11 @@ public abstract class AbstractCompactedRow implements Closeable
      *
      * @return index information for the written row, or null if the compaction resulted in only expired tombstones.
      */
-    public RowIndexEntry write(long currentPosition, DataOutput out, Collection<SSTableWriterListener> listeners) throws IOException
+    public RowIndexEntry write(Pair<Long, Long> currentPositions, DataOutput out, Collection<SSTableWriterListener> listeners) throws IOException
     {
         for (SSTableWriterListener listener : listeners)
-            listener.startRow(key, currentPosition);
-        return writeInternal(currentPosition, out, listeners);
+            listener.startRow(key, currentPositions.left);
+        return writeInternal(currentPositions.right, out, listeners);
     }
 
     protected abstract RowIndexEntry writeInternal(long currentPosition, DataOutput out, Collection<SSTableWriterListener> listeners) throws IOException;

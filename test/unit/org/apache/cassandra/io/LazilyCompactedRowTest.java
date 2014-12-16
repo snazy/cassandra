@@ -41,6 +41,7 @@ import org.apache.cassandra.io.util.MappedFileDataInput;
 import org.apache.cassandra.net.MessagingService;
 import org.apache.cassandra.utils.ByteBufferUtil;
 import org.apache.cassandra.utils.CloseableIterator;
+import org.apache.cassandra.utils.Pair;
 
 import static org.junit.Assert.assertEquals;
 
@@ -89,8 +90,8 @@ public class LazilyCompactedRowTest extends SchemaLoader
             AbstractCompactedRow row2 = iter2.next();
             DataOutputBuffer out1 = new DataOutputBuffer();
             DataOutputBuffer out2 = new DataOutputBuffer();
-            row1.write(-1, out1, null);
-            row2.write(-1, out2, null);
+            row1.write(Pair.create(-1l, -1l), out1, null);
+            row2.write(Pair.create(-1l, -1l), out2, null);
 
             File tmpFile1 = File.createTempFile("lcrt1", null);
             File tmpFile2 = File.createTempFile("lcrt2", null);
