@@ -577,7 +577,7 @@ public class ByteBufferUtil
             {
                 int j = i + 1;
                 int end = j + len - 1;
-                for (int k = 1; j < end && buffer.get(j) == subBuffer.get(k); j++, k++)
+                for (int k = 1 + subBuffer.position(); j < end && buffer.get(j) == subBuffer.get(k); j++, k++)
                 {}
 
                 if (j == end)
