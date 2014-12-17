@@ -502,6 +502,8 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
                                 if (!evaluatedKeys.add(key))
                                     continue;
 
+                                List<Pair<SSTableReader, Long>> indexPositions = new ArrayList<>();
+                                indexPositions.add(Pair.create(primarySuffixes.currentSSTable, (long)keyOffset));
                                 predicate_loop:
                                 for (Pair<ByteBuffer, Expression> predicate : expressions)
                                 {
@@ -540,7 +542,10 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
 
                                                         int cmp = suffixIterator.currentSSTable.keyAt(offsets[middle]).compareTo(key);
                                                         if (cmp == 0)
+                                                        {
+                                                            indexPositions.add(Pair.create(suffixIterator.currentSSTable, (long)offsets[middle]));
                                                             continue predicate_loop;
+                                                        }
 
                                                         if (cmp < 0)
                                                             start = middle + 1;
@@ -567,7 +572,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
                                         break outermost;
                                     awaitUninterupted(10);
                                 }
-                                loadingRows.add(submitRow(key.key, filter, expressionsImmutable));
+                                loadingRows.add(submitRow(key, indexPositions, filter, expressionsImmutable));
                             }
                         }
                     }
@@ -649,26 +654,30 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
             }
         }
 
-        private Future<Row> submitRow(ByteBuffer key, ExtendedFilter filter, List<Pair<ByteBuffer, Expression>> expressions)
+        private Future<Row> submitRow(DecoratedKey key, List<Pair<SSTableReader, Long>> indexPositions, ExtendedFilter filter, List<Pair<ByteBuffer, Expression>> expressions)
         {
             ExecutorService readStage = StageManager.getStage(Stage.READ);
             ReadCommand cmd = ReadCommand.create(baseCfs.keyspace.getName(),
-                                                 key,
+                                                 key.key,
                                                  baseCfs.getColumnFamilyName(),
                                                  System.currentTimeMillis(),
-                                                 filter.columnFilter(key));
+                                                 filter.columnFilter(key.key));
 
-            return readStage.submit(new RowReader(cmd, expressions));
+            return readStage.submit(new RowReader(key, cmd, indexPositions, expressions));
         }
 
         private class RowReader implements Callable<Row>
         {
+            private final DecoratedKey key;
             private final ReadCommand command;
+            private final List<Pair<SSTableReader, Long>> indexPositions;
             private final List<Pair<ByteBuffer, Expression>> expressions;
 
-            public RowReader(ReadCommand command, List<Pair<ByteBuffer, Expression>> expressions)
+            public RowReader(DecoratedKey key, ReadCommand command, List<Pair<SSTableReader, Long>> indexPositions, List<Pair<ByteBuffer, Expression>> expressions)
             {
+                this.key = key;
                 this.command = command;
+                this.indexPositions = indexPositions;
                 this.expressions = expressions;
                 phaser.register();
             }
@@ -677,6 +686,8 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
             {
                 try
                 {
+                    for (Pair<SSTableReader, Long> pair : indexPositions)
+                        pair.left.readAndCacheIndex(key, pair.right);
                     Row row = command.getRow(Keyspace.open(command.ksName));
                     return satisfiesPredicates(row) ? row : null;
                 }
