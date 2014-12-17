@@ -496,7 +496,8 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
                             keys_loop:
                             while (primaryOffsets.hasNext())
                             {
-                                DecoratedKey key = primarySuffixes.currentSSTable.keyAt(primaryOffsets.next());
+                                final int keyOffset = primaryOffsets.next();
+                                DecoratedKey key = primarySuffixes.currentSSTable.keyAt(keyOffset);
 
                                 if (!evaluatedKeys.add(key))
                                     continue;
@@ -521,21 +522,31 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
 
                                             for (KeyContainer.Bucket candidate : candidates.intersect(key.key))
                                             {
-                                                int[] offsets = candidate.getPositions().toArray();
-
-                                                int start = 0, end = offsets.length - 1;
-                                                while (start <= end)
+                                                // if it's the same SSTable we can avoid reading actual keys
+                                                // from the index file and match key offsets bitmap directly.
+                                                if (primarySuffixes.currentSSTable.equals(suffixIterator.currentSSTable))
                                                 {
-                                                    int middle = start + ((end - start) >> 1);
-
-                                                    int cmp = suffixIterator.currentSSTable.keyAt(offsets[middle]).compareTo(key);
-                                                    if (cmp == 0)
+                                                    if (candidate.getPositions().contains(keyOffset))
                                                         continue predicate_loop;
+                                                }
+                                                else // otherwise do a binary search in the external offsets, matching keys
+                                                {
+                                                    int[] offsets = candidate.getPositions().toArray();
 
-                                                    if (cmp < 0)
-                                                        start = middle + 1;
-                                                    else
-                                                        end = middle - 1;
+                                                    int start = 0, end = offsets.length - 1;
+                                                    while (start <= end)
+                                                    {
+                                                        int middle = start + ((end - start) >> 1);
+
+                                                        int cmp = suffixIterator.currentSSTable.keyAt(offsets[middle]).compareTo(key);
+                                                        if (cmp == 0)
+                                                            continue predicate_loop;
+
+                                                        if (cmp < 0)
+                                                            start = middle + 1;
+                                                        else
+                                                            end = middle - 1;
+                                                    }
                                                 }
                                             }
                                         }
