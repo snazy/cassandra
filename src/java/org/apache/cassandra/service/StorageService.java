@@ -2475,7 +2475,7 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
                                 boolean fullRepair,
                                 String... columnFamilies)
     {
-        if (!FBUtilities.isUnix() && parallelismDegree != RepairParallelism.PARALLEL)
+        if (FBUtilities.isWindows() && parallelismDegree != RepairParallelism.PARALLEL)
         {
             logger.warn("Snapshot-based repair is not yet supported on Windows.  Reverting to parallel repair.");
             parallelismDegree = RepairParallelism.PARALLEL;
@@ -2536,7 +2536,7 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
                                      boolean fullRepair,
                                      String... columnFamilies)
     {
-        if (!FBUtilities.isUnix() && parallelismDegree != RepairParallelism.PARALLEL)
+        if (FBUtilities.isWindows() && parallelismDegree != RepairParallelism.PARALLEL)
         {
             logger.warn("Snapshot-based repair is not yet supported on Windows.  Reverting to parallel repair.");
             parallelismDegree = RepairParallelism.PARALLEL;
@@ -3259,7 +3259,7 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
     private Future<StreamState> streamHints()
     {
         // StreamPlan will not fail if there are zero files to transfer, so flush anyway (need to get any in-memory hints, as well)
-        ColumnFamilyStore hintsCF = Keyspace.open(SystemKeyspace.NAME).getColumnFamilyStore(SystemKeyspace.HINTS_TABLE);
+        ColumnFamilyStore hintsCF = Keyspace.open(SystemKeyspace.NAME).getColumnFamilyStore(SystemKeyspace.HINTS);
         FBUtilities.waitOnFuture(hintsCF.forceFlush());
 
         // gather all live nodes in the cluster that aren't also leaving
@@ -3292,7 +3292,7 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
                                                           preferred,
                                                           SystemKeyspace.NAME,
                                                           ranges,
-                                                          SystemKeyspace.HINTS_TABLE)
+                                                          SystemKeyspace.HINTS)
                                           .execute();
         }
     }

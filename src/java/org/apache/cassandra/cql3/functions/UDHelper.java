@@ -33,7 +33,7 @@ import org.apache.cassandra.db.marshal.*;
 /**
  * Helper class for User Defined Functions + Aggregates.
  */
-final class UDHelper
+public final class UDHelper
 {
     protected static final Logger logger = LoggerFactory.getLogger(UDHelper.class);
 
@@ -109,12 +109,12 @@ final class UDHelper
     // we use a "signature" which is just a list of it's CQL argument types (we could replace that by
     // using a "signature" UDT that would be comprised of the function name and argument types,
     // which we could then use as clustering column. But as we haven't yet used UDT in system tables,
-    // We'll left that decision to #6717).
-    protected static ByteBuffer computeSignature(List<AbstractType<?>> argTypes)
+    // We'll leave that decision to #6717).
+    public static ByteBuffer calculateSignature(AbstractFunction fun)
     {
         ListType<String> list = ListType.getInstance(UTF8Type.instance, false);
-        List<String> cqlArgTypes = new ArrayList<>(argTypes.size());
-        for (AbstractType<?> argType : argTypes)
+        List<String> cqlArgTypes = new ArrayList<>(fun.argTypes.size());
+        for (AbstractType<?> argType : fun.argTypes)
             cqlArgTypes.add(argType.asCQL3Type().toString());
         return list.decompose(cqlArgTypes);
     }

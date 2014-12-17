@@ -43,7 +43,6 @@ import org.apache.cassandra.config.*;
 import org.apache.cassandra.db.*;
 import org.apache.cassandra.db.columniterator.OnDiskAtomIterator;
 import org.apache.cassandra.db.commitlog.ReplayPosition;
-import org.apache.cassandra.db.compaction.ICompactionScanner;
 import org.apache.cassandra.db.composites.CellName;
 import org.apache.cassandra.db.filter.ColumnSlice;
 import org.apache.cassandra.db.index.SecondaryIndex;
@@ -1292,20 +1291,29 @@ public abstract class SSTableReader extends SSTable
         List<Pair<Long,Long>> positions = new ArrayList<>();
         for (Range<Token> range : Range.normalize(ranges))
         {
-            AbstractBounds<RowPosition> keyRange = range.toRowBounds();
-            RowIndexEntry idxLeft = getPosition(keyRange.left, Operator.GT);
-            long left = idxLeft == null ? -1 : idxLeft.position;
-            if (left == -1)
-                // left is past the end of the file
+            assert !range.isWrapAround() || range.right.isMinimum();
+            // truncate the range so it at most covers the sstable
+            AbstractBounds<RowPosition> bounds = range.toRowBounds();
+            RowPosition leftBound = bounds.left.compareTo(first) > 0 ? bounds.left : first.getToken().minKeyBound();
+            RowPosition rightBound = bounds.right.isMinimum() ? last.getToken().maxKeyBound() : bounds.right;
+
+            if (leftBound.compareTo(last) > 0 || rightBound.compareTo(first) < 0)
                 continue;
-            RowIndexEntry idxRight = getPosition(keyRange.right, Operator.GT);
-            long right = idxRight == null ? -1 : idxRight.position;
-            if (right == -1 || Range.isWrapAround(range.left, range.right))
-                // right is past the end of the file, or it wraps
-                right = uncompressedLength();
+
+            long left = getPosition(leftBound, Operator.GT).position;
+            long right = (rightBound.compareTo(last) > 0)
+                         ? (openReason == OpenReason.EARLY
+                            // if opened early, we overlap with the old sstables by one key, so we know that the last
+                            // (and further) key(s) will be streamed from these if necessary
+                            ? getPosition(last.getToken().maxKeyBound(), Operator.GT).position
+                            : uncompressedLength())
+                         : getPosition(rightBound, Operator.GT).position;
+
             if (left == right)
                 // empty range
                 continue;
+
+            assert left < right : String.format("Range=%s openReason=%s first=%s last=%s left=%d right=%d", range, openReason, first, last, left, right);
             positions.add(Pair.create(left, right));
         }
         return positions;
@@ -1516,12 +1524,12 @@ public abstract class SSTableReader extends SSTable
      * I/O SSTableScanner
      * @return A Scanner for seeking over the rows of the SSTable.
      */
-    public ICompactionScanner getScanner()
+    public ISSTableScanner getScanner()
     {
         return getScanner((RateLimiter) null);
     }
 
-    public ICompactionScanner getScanner(RateLimiter limiter)
+    public ISSTableScanner getScanner(RateLimiter limiter)
     {
         return getScanner(DataRange.allData(partitioner), limiter);
     }
@@ -1531,7 +1539,7 @@ public abstract class SSTableReader extends SSTable
      * @param dataRange filter to use when reading the columns
      * @return A Scanner for seeking over the rows of the SSTable.
      */
-    public ICompactionScanner getScanner(DataRange dataRange)
+    public ISSTableScanner getScanner(DataRange dataRange)
     {
         return getScanner(dataRange, null);
     }
@@ -1542,7 +1550,7 @@ public abstract class SSTableReader extends SSTable
      * @param range the range of keys to cover
      * @return A Scanner for seeking over the rows of the SSTable.
      */
-    public ICompactionScanner getScanner(Range<Token> range, RateLimiter limiter)
+    public ISSTableScanner getScanner(Range<Token> range, RateLimiter limiter)
     {
         if (range == null)
             return getScanner(limiter);
@@ -1555,14 +1563,14 @@ public abstract class SSTableReader extends SSTable
      * @param ranges the range of keys to cover
      * @return A Scanner for seeking over the rows of the SSTable.
      */
-    public abstract ICompactionScanner getScanner(Collection<Range<Token>> ranges, RateLimiter limiter);
+    public abstract ISSTableScanner getScanner(Collection<Range<Token>> ranges, RateLimiter limiter);
 
     /**
      *
      * @param dataRange filter to use when reading the columns
      * @return A Scanner for seeking over the rows of the SSTable.
      */
-    public abstract ICompactionScanner getScanner(DataRange dataRange, RateLimiter limiter);
+    public abstract ISSTableScanner getScanner(DataRange dataRange, RateLimiter limiter);
 
 
 
@@ -1868,45 +1876,6 @@ public abstract class SSTableReader extends SSTable
     {
         if (readMeter != null)
             readMeter.mark();
-    }
-
-    protected class EmptyCompactionScanner implements ICompactionScanner
-    {
-        private final String filename;
-
-        public EmptyCompactionScanner(String filename)
-        {
-            this.filename = filename;
-        }
-
-        public long getLengthInBytes()
-        {
-            return 0;
-        }
-
-        public long getCurrentPosition()
-        {
-            return 0;
-        }
-
-        public String getBackingFiles()
-        {
-            return filename;
-        }
-
-        public boolean hasNext()
-        {
-            return false;
-        }
-
-        public OnDiskAtomIterator next()
-        {
-            return null;
-        }
-
-        public void close() throws IOException { }
-
-        public void remove() { }
     }
 
     public static class SizeComparator implements Comparator<SSTableReader>
