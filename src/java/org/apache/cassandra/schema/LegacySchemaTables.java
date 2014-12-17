@@ -172,7 +172,7 @@ public class LegacySchemaTables
                 "CREATE TABLE %s ("
                 + "keyspace_name text,"
                 + "aggregate_name text,"
-                + "signature blob,"
+                + "signature frozen<list<text>>,"
                 + "argument_types list<text>,"
                 + "final_func text,"
                 + "initcond blob,"
