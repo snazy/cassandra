@@ -17,7 +17,10 @@ import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
+import com.google.common.collect.*;
+import org.apache.cassandra.db.*;
 import org.apache.cassandra.db.index.search.container.KeyContainer;
+import org.apache.cassandra.dht.AbstractBounds;
 import org.apache.cassandra.utils.MurmurHash;
 import org.apache.cassandra.concurrent.JMXEnabledThreadPoolExecutor;
 import org.apache.cassandra.concurrent.NamedThreadFactory;
@@ -25,13 +28,6 @@ import org.apache.cassandra.concurrent.Stage;
 import org.apache.cassandra.concurrent.StageManager;
 import org.apache.cassandra.config.ColumnDefinition;
 import org.apache.cassandra.config.DatabaseDescriptor;
-import org.apache.cassandra.db.Column;
-import org.apache.cassandra.db.ColumnFamily;
-import org.apache.cassandra.db.ColumnFamilyStore;
-import org.apache.cassandra.db.DecoratedKey;
-import org.apache.cassandra.db.Keyspace;
-import org.apache.cassandra.db.ReadCommand;
-import org.apache.cassandra.db.Row;
 import org.apache.cassandra.db.columniterator.OnDiskAtomIterator;
 import org.apache.cassandra.db.filter.ExtendedFilter;
 import org.apache.cassandra.db.index.search.OnDiskSA;
@@ -52,11 +48,6 @@ import org.apache.cassandra.utils.ByteBufferUtil;
 import org.apache.cassandra.utils.Pair;
 
 import com.google.common.base.Predicate;
-import com.google.common.collect.AbstractIterator;
-import com.google.common.collect.BiMap;
-import com.google.common.collect.HashBiMap;
-import com.google.common.collect.ImmutableList;
-import com.google.common.collect.Iterators;
 import com.google.common.util.concurrent.Futures;
 import org.roaringbitmap.IntIterator;
 
@@ -461,6 +452,8 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
             if (filter.getClause().isEmpty()) // not sure how this could happen in the real world, but ...
                 return Collections.emptyList();
 
+            AbstractBounds<RowPosition> requestedRange = filter.dataRange.keyRange();
+
             final int maxRows = Math.min(MAX_ROWS, filter.maxRows());
             List<Row> rows = new ArrayList<>(maxRows);
             List<Future<Row>> loadingRows = new ArrayList<>(maxRows);
@@ -485,6 +478,10 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
                 while (primarySuffixes.hasNext())
                 {
                     KeyContainer container = primarySuffixes.next().getKeys();
+
+                    if (!container.intersects(requestedRange))
+                        continue;
+
                     ColumnFamilyStore.ViewFragment view = baseCfs.markReferenced(container.getRange());
 
                     try
@@ -499,7 +496,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
                                 final int keyOffset = primaryOffsets.next();
                                 DecoratedKey key = primarySuffixes.currentSSTable.keyAt(keyOffset);
 
-                                if (!evaluatedKeys.add(key))
+                                if (!requestedRange.contains(key) || !evaluatedKeys.add(key))
                                     continue;
 
                                 predicate_loop:
