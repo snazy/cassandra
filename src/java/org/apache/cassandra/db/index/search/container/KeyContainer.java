@@ -10,6 +10,7 @@ import java.util.List;
 import com.google.common.base.Predicate;
 import com.google.common.collect.Iterables;
 import org.apache.cassandra.db.RowPosition;
+import org.apache.cassandra.dht.AbstractBounds;
 import org.apache.cassandra.dht.Bounds;
 import org.apache.cassandra.io.FSReadError;
 import org.apache.cassandra.io.util.RandomAccessReader;
@@ -23,7 +24,7 @@ public class KeyContainer implements Iterable<KeyContainer.Bucket>
     protected final RowPosition min, max;
 
     protected final RandomAccessReader in;
-    public final IntervalTree<Long, Bucket, Interval<Long, Bucket>> buckets;
+    protected final IntervalTree<Long, Bucket, Interval<Long, Bucket>> buckets;
     protected final long containerStart;
 
     public KeyContainer(RandomAccessReader file) throws FSReadError
@@ -55,6 +56,11 @@ public class KeyContainer implements Iterable<KeyContainer.Bucket>
         {
             throw new FSReadError(e, file.getPath());
         }
+    }
+
+    public boolean intersects(AbstractBounds<RowPosition> bounds)
+    {
+        return max.compareTo(bounds.left) >= 0 || min.compareTo(bounds.right) <= 0;
     }
 
     public Iterable<Bucket> intersect(final ByteBuffer key)
