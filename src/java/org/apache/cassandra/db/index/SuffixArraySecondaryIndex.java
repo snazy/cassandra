@@ -134,7 +134,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
             columnDefComponents.put(def.name, new Component(Component.Type.SECONDARY_INDEX, indexName));
         }
 
-        executor.setCorePoolSize(columnDefs.size());
+        executor.setCorePoolSize(columnDefs.size() * 2);
     }
 
     private ColumnDefinition getColumnDef(Component component)
@@ -477,7 +477,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
 
             Pair<ByteBuffer, Expression> primary = expressions.remove(0);
             outermost:
-            try (SuffixIterator primarySuffixes = getSuffixIterator(sstables.iterator(), primary.left, primary.right))
+            try (ParallelSuffixIterator primarySuffixes = getSuffixIterator(sstables.iterator(), primary.left, primary.right))
             {
                 if (primarySuffixes == null)
                     return Collections.emptyList();
@@ -497,26 +497,25 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
                             while (primaryOffsets.hasNext())
                             {
                                 final int keyOffset = primaryOffsets.next();
-                                DecoratedKey key = primarySuffixes.currentSSTable.keyAt(keyOffset);
+                                DecoratedKey key = primarySuffixes.currentSstable().keyAt(keyOffset);
 
                                 if (!evaluatedKeys.add(key))
                                     continue;
 
                                 List<Pair<SSTableReader, Long>> indexPositions = new ArrayList<>();
-                                indexPositions.add(Pair.create(primarySuffixes.currentSSTable, (long)keyOffset));
+                                indexPositions.add(Pair.create(primarySuffixes.currentSstable(), (long)keyOffset));
                                 predicate_loop:
                                 for (Pair<ByteBuffer, Expression> predicate : expressions)
                                 {
                                     Iterator<SSTableReader> candidateSSTables = Iterators.filter(view.sstables.iterator(), new BloomFilterPredicate(key.key));
-                                    try
+                                    try (ParallelSuffixIterator suffixIterator = getSuffixIterator(candidateSSTables, predicate.left, predicate.right))
                                     {
-                                        SuffixIterator suffixIterator = getSuffixIterator(candidateSSTables, predicate.left, predicate.right);
-
+                                        if (suffixIterator == null)
+                                            continue keys_loop; //it's arguable that we should just bail on the whole query if there's no index for the predicate's column
                                         while (suffixIterator.hasNext())
                                         {
                                             DataSuffix suffix = suffixIterator.next();
-
-                                            Pair<Descriptor, ByteBuffer> cachedKey = Pair.create(suffixIterator.currentSSTable.descriptor, suffix.getSuffix());
+                                            Pair<Descriptor, ByteBuffer> cachedKey = Pair.create(suffixIterator.currentSstable().descriptor, suffix.getSuffix());
                                             KeyContainer candidates = lookAsideCache.get(cachedKey);
 
                                             if (candidates == null)
@@ -526,7 +525,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
                                             {
                                                 // if it's the same SSTable we can avoid reading actual keys
                                                 // from the index file and match key offsets bitmap directly.
-                                                if (primarySuffixes.currentSSTable.equals(suffixIterator.currentSSTable))
+                                                if (primarySuffixes.currentSstable().equals(suffixIterator.currentSstable()))
                                                 {
                                                     if (candidate.getPositions().contains(keyOffset))
                                                         continue predicate_loop;
@@ -540,10 +539,10 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
                                                     {
                                                         int middle = start + ((end - start) >> 1);
 
-                                                        int cmp = suffixIterator.currentSSTable.keyAt(offsets[middle]).compareTo(key);
+                                                        int cmp = suffixIterator.currentSstable().keyAt(offsets[middle]).compareTo(key);
                                                         if (cmp == 0)
                                                         {
-                                                            indexPositions.add(Pair.create(suffixIterator.currentSSTable, (long)offsets[middle]));
+                                                            indexPositions.add(Pair.create(suffixIterator.currentSstable(), (long)offsets[middle]));
                                                             continue predicate_loop;
                                                         }
 
@@ -589,13 +588,10 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
             return rows;
         }
 
-        private SuffixIterator getSuffixIterator(Iterator<SSTableReader> sstables, ByteBuffer indexedColumn, Expression predicate)
+        private ParallelSuffixIterator getSuffixIterator(Iterator<SSTableReader> sstables, ByteBuffer indexedColumn, Expression predicate)
         {
             ColumnDefinition columnDef = getColumnDefinition(indexedColumn);
-            if (columnDef == null)
-                return null;
-            return new SuffixIterator(sstables, indexedColumn, predicate, columnDef.getValidator());
-
+            return columnDef != null ? new ParallelSuffixIterator(sstables, columnDef, predicate, columnDef.getValidator()) : null;
         }
 
         private void awaitUninterupted(long millis)
@@ -849,40 +845,84 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
         }
     }
 
+    private class ParallelSuffixIterator extends AbstractIterator<DataSuffix> implements Closeable
+    {
+        private final List<SuffixIterator> iterators;
+        private Iterator<SuffixIterator> curIterator;
+        private SuffixIterator suffixIterator;
+
+        public ParallelSuffixIterator(Iterator<SSTableReader> sstables, ColumnDefinition columnDef, Expression exp, AbstractType<?> validator)
+        {
+            iterators = new ArrayList<>();
+            while (sstables.hasNext())
+                iterators.add(new SuffixIterator(sstables.next(), columnDef, exp, validator));
+            curIterator = iterators.iterator();
+        }
+
+        protected DataSuffix computeNext()
+        {
+            if (!curIterator.hasNext())
+            {
+                if (iterators.isEmpty())
+                    return endOfData();
+                curIterator = iterators.iterator();
+            }
+
+            suffixIterator = curIterator.next();
+            while (!suffixIterator.hasNext())
+            {
+                suffixIterator.close();
+                curIterator.remove();
+                if (!curIterator.hasNext())
+                    return computeNext();
+                suffixIterator = curIterator.next();
+            }
+            return suffixIterator.next();
+        }
+
+        public SSTableReader currentSstable()
+        {
+            return suffixIterator.sstable;
+        }
+
+        public void close() throws IOException
+        {
+            for (SuffixIterator iter : iterators)
+                iter.close();
+        }
+    }
+
     private class SuffixIterator extends AbstractIterator<DataSuffix> implements Closeable
     {
         private final Expression exp;
-        private final Iterator<SSTableReader> sstables;
+        private final SSTableReader sstable;
         private final AbstractType<?> validator;
         private final IteratorOrder order;
-        private final ByteBuffer indexedColumn;
         private final String columnName;
 
         private OnDiskSA sa;
         private Iterator<DataSuffix> suffixes;
-        private SSTableReader currentSSTable;
 
-        public SuffixIterator(Iterator<SSTableReader> ssTables, ByteBuffer indexedColumn, Expression exp, AbstractType<?> validator)
+        public SuffixIterator(SSTableReader ssTables, ColumnDefinition columnDef, Expression exp, AbstractType<?> validator)
         {
-            this.indexedColumn = indexedColumn;
-            this.sstables = ssTables;
+            this.sstable = ssTables;
             this.validator = validator;
             this.exp = exp;
             order = exp.lower == null ? IteratorOrder.ASC : IteratorOrder.DESC;
-
-            ColumnDefinition columnDef = getColumnDefinition(indexedColumn);
-            assert columnDef != null;
             columnName = (String) baseCfs.getComparator().compose(columnDef.name);
         }
 
         @Override
         protected DataSuffix computeNext()
         {
-            if (sa == null || !suffixes.hasNext())
+            //lazily load the index file
+            if (sa == null)
             {
-                if (!loadNext())
+                if (!load())
                     return endOfData();
             }
+            if (!suffixes.hasNext())
+                return endOfData();
 
             DataSuffix suffix = suffixes.next();
 
@@ -893,58 +933,41 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
 
                 int cmp = validator.compare(s, exp.upper.value);
                 if ((cmp > 0 && exp.upper.inclusive) || (cmp >= 0 && !exp.upper.inclusive))
-                {
-                    Iterators.advance(suffixes, Integer.MAX_VALUE);
-                    return computeNext();
-                }
+                    return endOfData();
             }
 
             return suffix;
         }
 
-        private boolean loadNext()
+        private boolean load()
         {
-            // close exhausted iterator and move to the new file
-            //TODO: FileUtils.closeQuietly(sa);
+            String indexFile = sstable.descriptor.filenameFor(String.format(FILE_NAME_FORMAT, columnName));
 
-            while (sstables.hasNext())
+            try
             {
-                SSTableReader ssTable = sstables.next();
-                String indexFile = ssTable.descriptor.filenameFor(String.format(FILE_NAME_FORMAT, columnName));
-
-                try
+                File f = new File(indexFile);
+                if (f.exists())
                 {
-                    File f = new File(indexFile);
-                    if (f.exists())
-                    {
-                        sa = new OnDiskSA(f, validator);
-                        currentSSTable = ssTable;
-                        suffixes = (exp.lower == null) // in case query is col <(=) x
-                                   ? sa.iteratorAt(exp.upper.value, order, exp.upper.inclusive)
-                                   : sa.iteratorAt(exp.lower.value, order, exp.lower.inclusive);
+                    sa = new OnDiskSA(f, validator);
+                    suffixes = (exp.lower == null) // in case query is col <(=) x
+                               ? sa.iteratorAt(exp.upper.value, order, exp.upper.inclusive)
+                               : sa.iteratorAt(exp.lower.value, order, exp.lower.inclusive);
 
-                        if (suffixes.hasNext())
-                            return true;
-                    }
-                }
-                catch (IOException e)
-                {
-                    logger.info("failed to open suffix array file {}, skipping", indexFile, e);
+                    if (suffixes.hasNext())
+                        return true;
                 }
             }
-
-            // if there are no more SSTables to check, clear out the currentSSTable and suffixes
-            // but leave "sa" in tact so it can be closed by close() method, otherwise there is going to be FB leak.
-            currentSSTable = null;
-            suffixes = null;
-
+            catch (IOException e)
+            {
+                logger.info("failed to open suffix array file {}, skipping", indexFile, e);
+            }
             return false;
         }
 
         @Override
         public void close()
         {
-            FileUtils.closeQuietly(sa);
+            //FileUtils.closeQuietly(sa);
         }
     }
 
