@@ -6,9 +6,13 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.*;
 
+import com.google.common.collect.BiMap;
+import com.google.common.collect.HashBiMap;
 import org.apache.cassandra.db.DecoratedKey;
+import org.apache.cassandra.db.index.search.container.KeyContainer;
 import org.apache.cassandra.db.index.search.container.KeyContainerBuilder;
 import org.apache.cassandra.db.marshal.AbstractType;
+import org.apache.cassandra.db.marshal.UTF8Type;
 import org.apache.cassandra.io.FSWriteError;
 import org.apache.cassandra.io.util.FileUtils;
 import org.apache.cassandra.io.util.SequentialWriter;
@@ -434,14 +438,7 @@ public class OnDiskSABuilder
         private final Mode mode;
         // we need a sorted map based on offsets here because it's required to write KeyContainerBuilder in "offset" order.
         // This map helps to find containers much quicker than iterating over whole set as we'd have to do with list.
-        private final NavigableMap<KeysWithOffset, Integer> containers = new TreeMap<>(new Comparator<KeysWithOffset>()
-        {
-            @Override
-            public int compare(KeysWithOffset a, KeysWithOffset b)
-            {
-                return Integer.compare(a.offset, b.offset);
-            }
-        });
+        private final BiMap<KeyContainerBuilder, Integer> containers = HashBiMap.create();
 
         private int offset = 0;
 
@@ -460,7 +457,7 @@ public class OnDiskSABuilder
             // suffixes share keys from the original word which could be optimized.
             if (mode == Mode.SUFFIX)
             {
-                Integer existingOffset = containers.get(new KeysWithOffset(suffix.keys, -1));
+                Integer existingOffset = containers.get(suffix.keys);
                 if (existingOffset != null)
                 {
                     writeSuffix(suffix, existingOffset);
@@ -468,7 +465,7 @@ public class OnDiskSABuilder
                 }
             }
 
-            containers.put(new KeysWithOffset(suffix.keys, offset), offset);
+            containers.put(suffix.keys, offset);
             writeSuffix(suffix, offset);
             offset += suffix.keys.serializedSize();
         }
@@ -484,8 +481,19 @@ public class OnDiskSABuilder
         {
             super.flushAndClear(out);
 
-            for (KeysWithOffset p : containers.keySet())
-                p.keys.serialize(out);
+            Set<Integer> offsets = new TreeSet<>(new Comparator<Integer>()
+            {
+                @Override
+                public int compare(Integer a, Integer b)
+                {
+                    return Integer.compare(a, b);
+                }
+            });
+            offsets.addAll(containers.values());
+
+            BiMap<Integer, KeyContainerBuilder> inverse = containers.inverse();
+            for (Integer offset : offsets)
+                inverse.get(offset).serialize(out);
 
             super.alignToBlock(out);
             containers.clear();

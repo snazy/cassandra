@@ -12,8 +12,7 @@ import org.apache.cassandra.utils.FilterFactory;
 import org.apache.cassandra.utils.IFilter;
 import org.apache.cassandra.utils.MurmurHash;
 
-import com.carrotsearch.hppc.IntObjectOpenHashMap;
-import com.carrotsearch.hppc.cursors.IntObjectCursor;
+import org.apache.commons.lang.builder.HashCodeBuilder;
 import org.roaringbitmap.RoaringBitmap;
 
 public class KeyContainerBuilder
@@ -102,6 +101,16 @@ public class KeyContainerBuilder
     }
 
     @Override
+    public int hashCode()
+    {
+        HashCodeBuilder builder = new HashCodeBuilder().append(min).append(max);
+        for (Bucket bucket : buckets)
+            builder.append(bucket.hashCode());
+
+        return builder.toHashCode();
+    }
+
+    @Override
     public boolean equals(Object o)
     {
         if (!(o instanceof KeyContainerBuilder))
@@ -150,6 +159,12 @@ public class KeyContainerBuilder
         {
             FilterFactory.serialize(bf, out);
             offsets.serialize(out);
+        }
+
+        @Override
+        public int hashCode()
+        {
+            return new HashCodeBuilder().append(offsets.hashCode()).toHashCode();
         }
 
         @Override
