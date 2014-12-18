@@ -103,30 +103,4 @@ public final class UDHelper
             throw new RuntimeException("cannot parse driver type " + cqlType.getType().toString(), e);
         }
     }
-
-    // We allow method overloads, so a function is not uniquely identified by its name only, but
-    // also by its argument types. To distinguish overloads of given function name in the schema
-    // we use a "signature" which is just a list of it's CQL argument types (we could replace that by
-    // using a "signature" UDT that would be comprised of the function name and argument types,
-    // which we could then use as clustering column. But as we haven't yet used UDT in system tables,
-    // We'll leave that decision to #6717).
-    public static ByteBuffer calculateSignature(AbstractFunction fun)
-    {
-        ListType<String> list = ListType.getInstance(UTF8Type.instance, false);
-        List<String> strList = new ArrayList<>(fun.argTypes.size());
-        for (AbstractType<?> argType : fun.argTypes)
-            strList.add(argType.asCQL3Type().toString());
-        return list.decompose(strList);
-    }
-
-    public static ByteBuffer calculateSignatureWithName(AbstractFunction fun)
-    {
-        ListType<String> list = ListType.getInstance(UTF8Type.instance, false);
-        List<String> strList = new ArrayList<>(fun.argTypes.size() + 2);
-        strList.add(fun.name.keyspace);
-        strList.add(fun.name.name);
-        for (AbstractType<?> argType : fun.argTypes)
-            strList.add(argType.asCQL3Type().toString());
-        return list.decompose(strList);
-    }
 }
