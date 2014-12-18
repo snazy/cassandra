@@ -402,7 +402,7 @@ public class UFTest extends CQLTester
         createTable("CREATE TABLE %s (key int primary key, val bigint)");
 
         String fName = createFunction(KEYSPACE, "double",
-                                      "CREATE OR REPLACE FUNCTION " + KEYSPACE + ".jft(val double)" +
+                                      "CREATE OR REPLACE FUNCTION %s(val double)" +
                                       "RETURNS double LANGUAGE JAVA " +
                                       "AS 'return val;';");
 

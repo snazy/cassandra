@@ -1332,7 +1332,7 @@ public class LegacySchemaTables
         for (UntypedResultSet.Row row : QueryProcessor.resultify(query, partition))
         {
             UDFunction function = createFunctionFromFunctionRow(row);
-            functions.put(UDHelper.calculateSignature(function), function);
+            functions.put(UDHelper.calculateSignatureWithName(function), function);
         }
         return functions;
     }
@@ -1409,7 +1409,7 @@ public class LegacySchemaTables
         for (UntypedResultSet.Row row : QueryProcessor.resultify(query, partition))
         {
             UDAggregate aggregate = createAggregateFromAggregateRow(row);
-            aggregates.put(UDHelper.calculateSignature(aggregate), aggregate);
+            aggregates.put(UDHelper.calculateSignatureWithName(aggregate), aggregate);
         }
         return aggregates;
     }

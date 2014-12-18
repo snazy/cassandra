@@ -113,9 +113,20 @@ public final class UDHelper
     public static ByteBuffer calculateSignature(AbstractFunction fun)
     {
         ListType<String> list = ListType.getInstance(UTF8Type.instance, false);
-        List<String> cqlArgTypes = new ArrayList<>(fun.argTypes.size());
+        List<String> strList = new ArrayList<>(fun.argTypes.size());
         for (AbstractType<?> argType : fun.argTypes)
-            cqlArgTypes.add(argType.asCQL3Type().toString());
-        return list.decompose(cqlArgTypes);
+            strList.add(argType.asCQL3Type().toString());
+        return list.decompose(strList);
+    }
+
+    public static ByteBuffer calculateSignatureWithName(AbstractFunction fun)
+    {
+        ListType<String> list = ListType.getInstance(UTF8Type.instance, false);
+        List<String> strList = new ArrayList<>(fun.argTypes.size() + 2);
+        strList.add(fun.name.keyspace);
+        strList.add(fun.name.name);
+        for (AbstractType<?> argType : fun.argTypes)
+            strList.add(argType.asCQL3Type().toString());
+        return list.decompose(strList);
     }
 }
