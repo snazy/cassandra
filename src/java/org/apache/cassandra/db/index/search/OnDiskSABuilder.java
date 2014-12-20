@@ -6,13 +6,9 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.*;
 
-import com.google.common.collect.BiMap;
-import com.google.common.collect.HashBiMap;
 import org.apache.cassandra.db.DecoratedKey;
-import org.apache.cassandra.db.index.search.container.KeyContainer;
 import org.apache.cassandra.db.index.search.container.KeyContainerBuilder;
 import org.apache.cassandra.db.marshal.AbstractType;
-import org.apache.cassandra.db.marshal.UTF8Type;
 import org.apache.cassandra.io.FSWriteError;
 import org.apache.cassandra.io.util.FileUtils;
 import org.apache.cassandra.io.util.SequentialWriter;
@@ -23,6 +19,8 @@ import org.apache.cassandra.utils.Pair;
 import com.carrotsearch.hppc.LongArrayList;
 import com.carrotsearch.hppc.ShortArrayList;
 import com.google.common.collect.AbstractIterator;
+import com.google.common.collect.BiMap;
+import com.google.common.collect.HashBiMap;
 import net.mintern.primitive.Primitive;
 import net.mintern.primitive.comparators.LongComparator;
 
@@ -504,24 +502,6 @@ public class OnDiskSABuilder
         {
             suffix.serialize(buffer);
             buffer.writeInt(offset);
-        }
-
-        private static class KeysWithOffset
-        {
-            private final KeyContainerBuilder keys;
-            private final int offset;
-
-            public KeysWithOffset(KeyContainerBuilder keys, int offset)
-            {
-                this.keys = keys;
-                this.offset = offset;
-            }
-
-            @Override
-            public boolean equals(Object o)
-            {
-                return o instanceof KeysWithOffset && keys.equals(((KeysWithOffset) o).keys);
-            }
         }
     }
 
