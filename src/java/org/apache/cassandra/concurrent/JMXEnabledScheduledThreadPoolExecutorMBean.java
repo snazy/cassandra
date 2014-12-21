@@ -15,27 +15,12 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.apache.cassandra.service.pager;
-
-import java.util.List;
-
-import org.apache.cassandra.db.ReadCommand;
+package org.apache.cassandra.concurrent;
 
 /**
- * Marker interface for commands that can be paged.
+ * @see org.apache.cassandra.metrics.ThreadPoolMetrics
  */
-public interface Pageable
+@Deprecated
+public interface JMXEnabledScheduledThreadPoolExecutorMBean extends JMXEnabledThreadPoolExecutorMBean
 {
-    public static class ReadCommands implements Pageable
-    {
-        public final List<ReadCommand> commands;
-
-        public final int limitForQuery;
-
-        public ReadCommands(List<ReadCommand> commands, int limitForQuery)
-        {
-            this.commands = commands;
-            this.limitForQuery = limitForQuery;
-        }
-    }
 }
