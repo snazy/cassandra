@@ -8,9 +8,7 @@ import java.nio.ByteBuffer;
 import java.util.*;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Future;
-import java.util.concurrent.FutureTask;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.Phaser;
 import java.util.concurrent.ThreadPoolExecutor;
@@ -28,7 +26,6 @@ import org.apache.cassandra.concurrent.Stage;
 import org.apache.cassandra.concurrent.StageManager;
 import org.apache.cassandra.config.ColumnDefinition;
 import org.apache.cassandra.config.DatabaseDescriptor;
-import org.apache.cassandra.db.columniterator.OnDiskAtomIterator;
 import org.apache.cassandra.db.filter.ExtendedFilter;
 import org.apache.cassandra.db.index.search.OnDiskSA;
 import org.apache.cassandra.db.index.search.OnDiskSABuilder;
@@ -41,7 +38,6 @@ import org.apache.cassandra.io.sstable.Descriptor;
 import org.apache.cassandra.io.sstable.SSTableReader;
 import org.apache.cassandra.io.sstable.SSTableWriterListenable;
 import org.apache.cassandra.io.sstable.SSTableWriterListener;
-import org.apache.cassandra.io.util.FileUtils;
 import org.apache.cassandra.thrift.IndexExpression;
 import org.apache.cassandra.thrift.IndexOperator;
 import org.apache.cassandra.utils.ByteBufferUtil;
@@ -159,20 +155,10 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
 
     public long getLiveSize()
     {
-        long size = 0;
-        for (SSTableReader reader : baseCfs.getSSTables())
-        {
-            // get file size for each SA file
-            for (ColumnDefinition def : getColumnDefs())
-            {
-                String columnName = baseCfs.getComparator().compose(def.name).toString();
-                String indexFile = reader.descriptor.filenameFor(String.format(FILE_NAME_FORMAT, columnName));
-                File f = new File(indexFile);
-                if (f.exists())
-                    size += f.length();
-            }
-        }
-        return size;
+        // Live size means how many bytes from the memtable (or outside Memtable but not yet flushed) is used by index,
+        // as we write indexes at the point when Memtable has already been written to disk, we should return 0 from this
+        // method to avoid miscalculation of Memtable live size and spurious flushes.
+        return 0;
     }
 
     public void reload()
@@ -200,14 +186,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
      */
     public Future<?> buildIndexAsync()
     {
-        Runnable runnable = new Runnable()
-        {
-            public void run()
-            {
-                //nop
-            }
-        };
-        return new FutureTask<Object>(runnable, null);
+        return Futures.immediateCheckedFuture(null);
     }
 
     public void delete(DecoratedKey key)
@@ -252,7 +231,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
         private final Descriptor descriptor;
 
         // need one entry for each term we index
-        private final Map<ByteBuffer, Pair<Component, TreeMap<DecoratedKey, Integer>>> termBitmaps;
+        private final Map<ByteBuffer, Pair<Component, TreeMap<DecoratedKey, Integer>>> indexPerValue;
 
         private DecoratedKey curKey;
         private long curFilePosition;
@@ -260,12 +239,12 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
         public LocalSSTableWriterListener(Descriptor descriptor)
         {
             this.descriptor = descriptor;
-            termBitmaps = new ConcurrentHashMap<>();
+            this.indexPerValue = new ConcurrentHashMap<>();
         }
 
         public void begin()
         {
-            //nop
+            // nop
         }
 
         public void startRow(DecoratedKey key, long curPosition)
@@ -281,7 +260,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
                 return;
 
             ByteBuffer term = column.value().slice();
-            Pair<Component, TreeMap<DecoratedKey, Integer>> pair = termBitmaps.get(term);
+            Pair<Component, TreeMap<DecoratedKey, Integer>> pair = indexPerValue.get(term);
             if (pair == null)
             {
                 pair = Pair.create(columnDefComponents.get(indexedCol), new TreeMap<DecoratedKey, Integer>(new Comparator<DecoratedKey>()
@@ -295,7 +274,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
                         return Long.compare(tokenA, tokenB);
                     }
                 }));
-                termBitmaps.put(term, pair);
+                indexPerValue.put(term, pair);
             }
 
             pair.right.put(curKey, (int) curFilePosition);
@@ -308,7 +287,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
             {
                 // first, build up a listing per-component (per-index)
                 Map<Component, OnDiskSABuilder> componentBuilders = new HashMap<>(columnDefComponents.size());
-                for (Map.Entry<ByteBuffer, Pair<Component, TreeMap<DecoratedKey, Integer>>> entry : termBitmaps.entrySet())
+                for (Map.Entry<ByteBuffer, Pair<Component, TreeMap<DecoratedKey, Integer>>> entry : indexPerValue.entrySet())
                 {
                     Component component = entry.getValue().left;
                     assert columnDefComponents.values().contains(component);
@@ -325,7 +304,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
 
                     builder.add(entry.getKey(), entry.getValue().right);
                 }
-                termBitmaps.clear();
+                indexPerValue.clear();
 
                 // now do the writing
                 logger.info("about to submit for concurrent SA'ing");
@@ -358,7 +337,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
             {
                 openListeners.remove(descriptor.generation);
                 // drop this data asap
-                termBitmaps.clear();
+                indexPerValue.clear();
             }
         }
 
@@ -407,14 +386,6 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
 
     protected class LocalSecondaryIndexSearcher extends SecondaryIndexSearcher
     {
-        private final Comparator<OnDiskAtomIterator> comparator = new Comparator<OnDiskAtomIterator>()
-        {
-            public int compare(OnDiskAtomIterator i1, OnDiskAtomIterator i2)
-            {
-                return i1.getKey().compareTo(i2.getKey());
-            }
-        };
-
         private final long executionTimeLimit;
         private final Phaser phaser;
         private int phaserPhase;
@@ -494,13 +465,13 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
                             while (primaryOffsets.hasNext())
                             {
                                 final int keyOffset = primaryOffsets.next();
-                                DecoratedKey key = primarySuffixes.currentSstable().keyAt(keyOffset);
+                                DecoratedKey key = primarySuffixes.currentSSTable().keyAt(keyOffset);
 
                                 if (!requestedRange.contains(key) || !evaluatedKeys.add(key))
                                     continue;
 
                                 List<Pair<SSTableReader, Long>> indexPositions = new ArrayList<>();
-                                indexPositions.add(Pair.create(primarySuffixes.currentSstable(), (long)keyOffset));
+                                indexPositions.add(Pair.create(primarySuffixes.currentSSTable(), (long) keyOffset));
                                 predicate_loop:
                                 for (Pair<ByteBuffer, Expression> predicate : expressions)
                                 {
@@ -509,10 +480,13 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
                                     {
                                         if (suffixIterator == null)
                                             continue keys_loop; //it's arguable that we should just bail on the whole query if there's no index for the predicate's column
+
                                         while (suffixIterator.hasNext())
                                         {
                                             DataSuffix suffix = suffixIterator.next();
-                                            Pair<Descriptor, ByteBuffer> cachedKey = Pair.create(suffixIterator.currentSstable().descriptor, suffix.getSuffix());
+                                            SSTableReader currentSSTable = suffixIterator.currentSSTable();
+
+                                            Pair<Descriptor, ByteBuffer> cachedKey = Pair.create(currentSSTable.descriptor, suffix.getSuffix());
                                             KeyContainer candidates = lookAsideCache.get(cachedKey);
 
                                             if (candidates == null)
@@ -522,7 +496,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
                                             {
                                                 // if it's the same SSTable we can avoid reading actual keys
                                                 // from the index file and match key offsets bitmap directly.
-                                                if (primarySuffixes.currentSstable().equals(suffixIterator.currentSstable()))
+                                                if (primarySuffixes.currentSSTable().equals(currentSSTable))
                                                 {
                                                     if (candidate.getPositions().contains(keyOffset))
                                                         continue predicate_loop;
@@ -536,10 +510,10 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
                                                     {
                                                         int middle = start + ((end - start) >> 1);
 
-                                                        int cmp = suffixIterator.currentSstable().keyAt(offsets[middle]).compareTo(key);
+                                                        int cmp = currentSSTable.keyAt(offsets[middle]).compareTo(key);
                                                         if (cmp == 0)
                                                         {
-                                                            indexPositions.add(Pair.create(suffixIterator.currentSstable(), (long)offsets[middle]));
+                                                            indexPositions.add(Pair.create(currentSSTable, (long) offsets[middle]));
                                                             continue predicate_loop;
                                                         }
 
@@ -588,7 +562,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
         private ParallelSuffixIterator getSuffixIterator(Iterator<SSTableReader> sstables, ByteBuffer indexedColumn, Expression predicate)
         {
             ColumnDefinition columnDef = getColumnDefinition(indexedColumn);
-            return columnDef != null ? new ParallelSuffixIterator(sstables, columnDef, predicate, columnDef.getValidator()) : null;
+            return columnDef != null ? new ParallelSuffixIterator(sstables, columnDef.name, predicate, columnDef.getValidator()) : null;
         }
 
         private void awaitUninterupted(long millis)
@@ -649,14 +623,13 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
 
         private Future<Row> submitRow(DecoratedKey key, List<Pair<SSTableReader, Long>> indexPositions, ExtendedFilter filter, List<Pair<ByteBuffer, Expression>> expressions)
         {
-            ExecutorService readStage = StageManager.getStage(Stage.READ);
             ReadCommand cmd = ReadCommand.create(baseCfs.keyspace.getName(),
                                                  key.key,
                                                  baseCfs.getColumnFamilyName(),
                                                  System.currentTimeMillis(),
                                                  filter.columnFilter(key.key));
 
-            return readStage.submit(new RowReader(key, cmd, indexPositions, expressions));
+            return StageManager.getStage(Stage.READ).submit(new RowReader(key, cmd, indexPositions, expressions));
         }
 
         private class RowReader implements Callable<Row>
@@ -848,11 +821,11 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
         private Iterator<SuffixIterator> curIterator;
         private SuffixIterator suffixIterator;
 
-        public ParallelSuffixIterator(Iterator<SSTableReader> sstables, ColumnDefinition columnDef, Expression exp, AbstractType<?> validator)
+        public ParallelSuffixIterator(Iterator<SSTableReader> sstables, ByteBuffer columnName, Expression exp, AbstractType<?> validator)
         {
             iterators = new ArrayList<>();
             while (sstables.hasNext())
-                iterators.add(new SuffixIterator(sstables.next(), columnDef, exp, validator));
+                iterators.add(new SuffixIterator(sstables.next(), columnName, exp, validator));
             curIterator = iterators.iterator();
         }
 
@@ -877,7 +850,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
             return suffixIterator.next();
         }
 
-        public SSTableReader currentSstable()
+        public SSTableReader currentSSTable()
         {
             return suffixIterator.sstable;
         }
@@ -895,29 +868,32 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
         private final SSTableReader sstable;
         private final AbstractType<?> validator;
         private final IteratorOrder order;
-        private final String columnName;
+        private final String indexFile;
 
         private OnDiskSA sa;
         private Iterator<DataSuffix> suffixes;
 
-        public SuffixIterator(SSTableReader ssTables, ColumnDefinition columnDef, Expression exp, AbstractType<?> validator)
+        public SuffixIterator(SSTableReader ssTables, ByteBuffer columnName, Expression exp, AbstractType<?> validator)
         {
             this.sstable = ssTables;
             this.validator = validator;
             this.exp = exp;
-            order = exp.lower == null ? IteratorOrder.ASC : IteratorOrder.DESC;
-            columnName = (String) baseCfs.getComparator().compose(columnDef.name);
+            this.order = exp.lower == null ? IteratorOrder.ASC : IteratorOrder.DESC;
+
+            String name = (String) baseCfs.getComparator().compose(columnName);
+            this.indexFile = sstable.descriptor.filenameFor(String.format(FILE_NAME_FORMAT, name));
         }
 
         @Override
         protected DataSuffix computeNext()
         {
-            //lazily load the index file
+            // lazily load the index file
             if (sa == null)
             {
                 if (!load())
                     return endOfData();
             }
+
             if (!suffixes.hasNext())
                 return endOfData();
 
@@ -938,8 +914,6 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
 
         private boolean load()
         {
-            String indexFile = sstable.descriptor.filenameFor(String.format(FILE_NAME_FORMAT, columnName));
-
             try
             {
                 File f = new File(indexFile);
