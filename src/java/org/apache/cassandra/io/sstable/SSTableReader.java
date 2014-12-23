@@ -1271,23 +1271,18 @@ public class SSTableReader extends SSTable implements Closeable
     {
         try (FileDataInput in = ifile.getSegment(indexPosition))
         {
-            if (in.isEOF())
-                return null;
-
-            ByteBuffer key = ByteBufferUtil.readWithShortLength(in);
-            DecoratedKey decoratedKey = partitioner.decorateKey(key);
-            return decoratedKey;
+            return (in.isEOF()) ? null : partitioner.decorateKey(ByteBufferUtil.readWithShortLength(in));
         }
     }
 
     public void readAndCacheIndex(DecoratedKey key, long indexPosition) throws IOException
     {
-        try (FileDataInput in = ifile.getSegment(indexPosition))
+        long rowIndexPosition = indexPosition + 2 + key.key.remaining();
+        try (FileDataInput in = ifile.getSegment(rowIndexPosition))
         {
             if (in.isEOF())
                 return;
 
-            in.seek(in.getFilePointer() + 2 + key.key.remaining());
             cacheKey(key, RowIndexEntry.serializer.deserialize(in, descriptor.version));
         }
     }
