@@ -20,17 +20,13 @@ public class KeyContainerBuilder
     private static final int MAX_PER_BUCKET = 1024;
 
     private final List<Bucket> buckets;
-
-    private int offset = 0;
+    private final Map<ByteBuffer, Integer> buffer = new HashMap<>();
 
     private RowPosition min, max;
 
     public KeyContainerBuilder()
     {
-        buckets = new ArrayList<Bucket>()
-        {{
-            add(new Bucket());
-        }};
+        buckets = new ArrayList<>();
     }
 
     public KeyContainerBuilder(NavigableMap<DecoratedKey, Integer> keys)
@@ -48,17 +44,26 @@ public class KeyContainerBuilder
         }
     }
 
-    private void addInternal(ByteBuffer key, int keyOffset)
+    private void addInternal(ByteBuffer key, Integer keyOffset)
     {
-        Bucket current = buckets.get(offset);
+        if (buffer.size() == MAX_PER_BUCKET)
+            flush();
 
-        if (current.isFull())
-        {
-            buckets.add((current = new Bucket()));
-            offset++;
-        }
+        buffer.put(key, keyOffset);
+    }
 
-        current.add(key, keyOffset);
+    private void flush()
+    {
+        buckets.add(new Bucket(buffer));
+        buffer.clear();
+    }
+
+    public KeyContainerBuilder finish()
+    {
+        if (buffer.size() > 0)
+            flush();
+
+        return this;
     }
 
     public void serialize(DataOutput out) throws IOException
@@ -137,13 +142,16 @@ public class KeyContainerBuilder
         private final IFilter bf;
         private final RoaringBitmap offsets;
 
-        public Bucket()
+        public Bucket(Map<ByteBuffer, Integer> keys)
         {
-            bf = FilterFactory.getFilter(MAX_PER_BUCKET, 0.01, true);
+            bf = FilterFactory.getFilter(keys.size(), 0.01, true);
             offsets = new RoaringBitmap();
+
+            for (Map.Entry<ByteBuffer, Integer> key : keys.entrySet())
+                add(key.getKey(), key.getValue());
         }
 
-        public void add(ByteBuffer key, int keyOffset)
+        private void add(ByteBuffer key, Integer keyOffset)
         {
             bf.add(key);
             offsets.add(keyOffset);
