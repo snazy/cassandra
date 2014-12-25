@@ -13,25 +13,21 @@ import org.apache.cassandra.utils.IFilter;
 import org.apache.cassandra.utils.MurmurHash;
 
 import org.apache.commons.lang.builder.HashCodeBuilder;
+import com.carrotsearch.hppc.ObjectIntOpenHashMap;
+import com.carrotsearch.hppc.cursors.ObjectIntCursor;
 import org.roaringbitmap.RoaringBitmap;
 
 public class KeyContainerBuilder
 {
     private static final int MAX_PER_BUCKET = 1024;
 
-    private final List<Bucket> buckets;
-    private final Map<ByteBuffer, Integer> buffer = new HashMap<>();
+    private final List<Bucket> buckets = new ArrayList<>();
+    private final ObjectIntOpenHashMap<ByteBuffer> buffer = new ObjectIntOpenHashMap<>();
 
     private RowPosition min, max;
 
-    public KeyContainerBuilder()
-    {
-        buckets = new ArrayList<>();
-    }
-
     public KeyContainerBuilder(NavigableMap<DecoratedKey, Integer> keys)
     {
-        this();
         add(keys);
     }
 
@@ -142,25 +138,20 @@ public class KeyContainerBuilder
         private final IFilter bf;
         private final RoaringBitmap offsets;
 
-        public Bucket(Map<ByteBuffer, Integer> keys)
+        public Bucket(ObjectIntOpenHashMap<ByteBuffer> keys)
         {
             bf = FilterFactory.getFilter(keys.size(), 0.01, true);
             offsets = new RoaringBitmap();
 
-            for (Map.Entry<ByteBuffer, Integer> key : keys.entrySet())
-                add(key.getKey(), key.getValue());
+            for (ObjectIntCursor<ByteBuffer> key : keys)
+                add(key.key, key.value);
         }
 
-        private void add(ByteBuffer key, Integer keyOffset)
+        private void add(ByteBuffer key, int keyOffset)
         {
             bf.add(key);
             offsets.add(keyOffset);
             updateRange(MurmurHash.hash2_64(key, key.position(), key.remaining(), 0));
-        }
-
-        public boolean isFull()
-        {
-            return offsets.getCardinality() >= MAX_PER_BUCKET;
         }
 
         public void serialize(DataOutput out) throws IOException
