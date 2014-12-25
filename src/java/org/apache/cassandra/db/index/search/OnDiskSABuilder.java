@@ -22,6 +22,7 @@ import com.google.common.collect.AbstractIterator;
 import com.google.common.collect.BiMap;
 import com.google.common.collect.HashBiMap;
 import net.mintern.primitive.Primitive;
+import net.mintern.primitive.comparators.IntComparator;
 import net.mintern.primitive.comparators.LongComparator;
 
 /**
@@ -265,7 +266,8 @@ public class OnDiskSABuilder
                             if (lastSuffix == null)
                                 return endOfData();
 
-                            Pair<ByteBuffer, KeyContainerBuilder> result = Pair.create(lastSuffix, container);
+                            Pair<ByteBuffer, KeyContainerBuilder> result = finishSuffix();
+
                             lastSuffix = null;
                             return result;
                         }
@@ -287,7 +289,7 @@ public class OnDiskSABuilder
                         }
                         else
                         {
-                            Pair<ByteBuffer, KeyContainerBuilder> result = Pair.create(lastSuffix, container);
+                            Pair<ByteBuffer, KeyContainerBuilder> result = finishSuffix();
 
                             lastSuffix = suffix;
                             container = new KeyContainerBuilder(term.keys);
@@ -295,6 +297,11 @@ public class OnDiskSABuilder
                             return result;
                         }
                     }
+                }
+
+                private Pair<ByteBuffer, KeyContainerBuilder> finishSuffix()
+                {
+                    return Pair.create(lastSuffix, container.finish());
                 }
             };
         }
@@ -321,7 +328,7 @@ public class OnDiskSABuilder
                         return endOfData();
 
                     Term term = termIterator.next();
-                    return Pair.create(term.value, new KeyContainerBuilder(term.keys));
+                    return Pair.create(term.value, new KeyContainerBuilder(term.keys).finish());
                 }
             };
         }
@@ -479,19 +486,24 @@ public class OnDiskSABuilder
         {
             super.flushAndClear(out);
 
-            Set<Integer> offsets = new TreeSet<>(new Comparator<Integer>()
+            BiMap<Integer, KeyContainerBuilder> inverse = containers.inverse();
+
+            int pos = 0;
+            int[] offsets = new int[inverse.size()];
+            for (int offset : inverse.keySet())
+                offsets[pos++] = offset;
+
+            Primitive.sort(offsets, new IntComparator()
             {
                 @Override
-                public int compare(Integer a, Integer b)
+                public int compare(int a, int b)
                 {
                     return Integer.compare(a, b);
                 }
             });
-            offsets.addAll(containers.values());
 
-            BiMap<Integer, KeyContainerBuilder> inverse = containers.inverse();
-            for (Integer offset : offsets)
-                inverse.get(offset).serialize(out);
+            for (int off : offsets)
+                inverse.get(off).serialize(out);
 
             super.alignToBlock(out);
             containers.clear();
