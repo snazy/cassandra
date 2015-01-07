@@ -12,9 +12,9 @@ import org.apache.cassandra.utils.FilterFactory;
 import org.apache.cassandra.utils.IFilter;
 import org.apache.cassandra.utils.MurmurHash;
 
-import org.apache.commons.lang.builder.HashCodeBuilder;
 import com.carrotsearch.hppc.ObjectIntOpenHashMap;
 import com.carrotsearch.hppc.cursors.ObjectIntCursor;
+import org.apache.commons.lang3.builder.HashCodeBuilder;
 import org.roaringbitmap.RoaringBitmap;
 
 public class KeyContainerBuilder
