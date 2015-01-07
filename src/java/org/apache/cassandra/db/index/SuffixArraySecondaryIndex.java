@@ -1,9 +1,6 @@
 package org.apache.cassandra.db.index;
 
-import java.io.Closeable;
-import java.io.File;
-import java.io.IOError;
-import java.io.IOException;
+import java.io.*;
 import java.nio.ByteBuffer;
 import java.util.*;
 import java.util.concurrent.Callable;
@@ -19,13 +16,12 @@ import com.google.common.collect.*;
 import org.apache.cassandra.db.*;
 import org.apache.cassandra.db.index.search.container.KeyContainer;
 import org.apache.cassandra.dht.AbstractBounds;
-import org.apache.cassandra.utils.MurmurHash;
+import org.apache.cassandra.io.sstable.*;
+import org.apache.cassandra.io.util.FileUtils;
+import org.apache.cassandra.utils.*;
 import org.apache.cassandra.concurrent.JMXEnabledThreadPoolExecutor;
 import org.apache.cassandra.concurrent.NamedThreadFactory;
-import org.apache.cassandra.concurrent.Stage;
-import org.apache.cassandra.concurrent.StageManager;
 import org.apache.cassandra.config.ColumnDefinition;
-import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.db.filter.ExtendedFilter;
 import org.apache.cassandra.db.index.search.OnDiskSA;
 import org.apache.cassandra.db.index.search.OnDiskSABuilder;
@@ -33,15 +29,8 @@ import org.apache.cassandra.db.marshal.AbstractType;
 import org.apache.cassandra.db.marshal.AsciiType;
 import org.apache.cassandra.db.marshal.UTF8Type;
 import org.apache.cassandra.exceptions.ConfigurationException;
-import org.apache.cassandra.io.sstable.Component;
-import org.apache.cassandra.io.sstable.Descriptor;
-import org.apache.cassandra.io.sstable.SSTableReader;
-import org.apache.cassandra.io.sstable.SSTableWriterListenable;
-import org.apache.cassandra.io.sstable.SSTableWriterListener;
 import org.apache.cassandra.thrift.IndexExpression;
 import org.apache.cassandra.thrift.IndexOperator;
-import org.apache.cassandra.utils.ByteBufferUtil;
-import org.apache.cassandra.utils.Pair;
 
 import com.google.common.base.Predicate;
 import com.google.common.util.concurrent.Futures;
@@ -87,6 +76,8 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
 
     private final BiMap<ByteBuffer, Component> columnDefComponents;
 
+    private AbstractType<?> keyComparator;
+
     public SuffixArraySecondaryIndex()
     {
         openListeners = new ConcurrentHashMap<>();
@@ -98,6 +89,8 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
         // init() is called by SIM only on the instance that it will keep around, but will call addColumnDef on any instance
         // that it happens to create (and subsequently/immediately throw away)
         addComponent(columnDefs);
+
+        keyComparator = baseCfs.metadata.getKeyValidator();
     }
 
     void addColumnDef(ColumnDefinition columnDef)
@@ -231,7 +224,8 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
         private final Descriptor descriptor;
 
         // need one entry for each term we index
-        private final Map<ByteBuffer, Pair<Component, TreeMap<DecoratedKey, Integer>>> indexPerValue;
+        private final Map<ByteBuffer, IndexInfo> indexPerTerm;
+        private final Map<Component, Pair<DecoratedKey, DecoratedKey>> ranges;
 
         private DecoratedKey curKey;
         private long curFilePosition;
@@ -239,7 +233,8 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
         public LocalSSTableWriterListener(Descriptor descriptor)
         {
             this.descriptor = descriptor;
-            this.indexPerValue = new ConcurrentHashMap<>();
+            this.indexPerTerm = new ConcurrentHashMap<>();
+            this.ranges = new ConcurrentHashMap<>();
         }
 
         public void begin()
@@ -249,35 +244,34 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
 
         public void startRow(DecoratedKey key, long curPosition)
         {
-            this.curKey = key;
-            this.curFilePosition = curPosition;
+            curKey = key;
+            curFilePosition = curPosition;
         }
 
         public void nextColumn(Column column)
         {
-            ByteBuffer indexedCol = column.name();
-            if (!columnDefComponents.keySet().contains(indexedCol))
+            Component component = columnDefComponents.get(column.name());
+            if (component == null)
                 return;
 
             ByteBuffer term = column.value().slice();
-            Pair<Component, TreeMap<DecoratedKey, Integer>> pair = indexPerValue.get(term);
-            if (pair == null)
-            {
-                pair = Pair.create(columnDefComponents.get(indexedCol), new TreeMap<DecoratedKey, Integer>(new Comparator<DecoratedKey>()
-                {
-                    @Override
-                    public int compare(DecoratedKey a, DecoratedKey b)
-                    {
-                        long tokenA = MurmurHash.hash2_64(a.key, a.key.position(), a.key.remaining(), 0);
-                        long tokenB = MurmurHash.hash2_64(b.key, b.key.position(), b.key.remaining(), 0);
+            IndexInfo indexInfo = indexPerTerm.get(term);
+            if (indexInfo == null)
+                indexPerTerm.put(term, (indexInfo = new IndexInfo(component)));
 
-                        return Long.compare(tokenA, tokenB);
-                    }
-                }));
-                indexPerValue.put(term, pair);
+            indexInfo.add(curKey, (int) curFilePosition);
+
+            Pair<DecoratedKey, DecoratedKey> range = ranges.get(component);
+            if (range == null)
+            {
+                ranges.put(component, Pair.create(curKey, curKey));
+                return;
             }
 
-            pair.right.put(curKey, (int) curFilePosition);
+            DecoratedKey min = range.left, max = range.right;
+            min = (min == null || keyComparator.compare(min.key, curKey.key) > 0) ? curKey : min;
+            max = (max == null || keyComparator.compare(max.key, curKey.key) < 0) ? curKey : max;
+            ranges.put(component, Pair.create(min, max));
         }
 
         public void complete()
@@ -287,24 +281,27 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
             {
                 // first, build up a listing per-component (per-index)
                 Map<Component, OnDiskSABuilder> componentBuilders = new HashMap<>(columnDefComponents.size());
-                for (Map.Entry<ByteBuffer, Pair<Component, TreeMap<DecoratedKey, Integer>>> entry : indexPerValue.entrySet())
+                for (Map.Entry<ByteBuffer, IndexInfo> entry : indexPerTerm.entrySet())
                 {
-                    Component component = entry.getValue().left;
-                    assert columnDefComponents.values().contains(component);
+                    IndexInfo indexInfo = entry.getValue();
+                    assert columnDefComponents.values().contains(indexInfo.component);
 
-                    OnDiskSABuilder builder = componentBuilders.get(component);
+                    OnDiskSABuilder builder = componentBuilders.get(indexInfo.component);
                     if (builder == null)
                     {
-                        AbstractType<?> validator = getColumnDef(component).getValidator();
-                        OnDiskSABuilder.Mode mode = (validator instanceof AsciiType || validator instanceof UTF8Type) ?
-                               OnDiskSABuilder.Mode.SUFFIX : OnDiskSABuilder.Mode.ORIGINAL;
-                        builder = new OnDiskSABuilder(validator, mode);
-                        componentBuilders.put(component, builder);
+                        AbstractType<?> validator = getColumnDef(indexInfo.component).getValidator();
+                        OnDiskSABuilder.Mode mode = (validator instanceof AsciiType || validator instanceof UTF8Type)
+                                                     ? OnDiskSABuilder.Mode.SUFFIX
+                                                     : OnDiskSABuilder.Mode.ORIGINAL;
+
+                        builder = new OnDiskSABuilder(keyComparator, validator, mode);
+                        componentBuilders.put(indexInfo.component, builder);
                     }
 
-                    builder.add(entry.getKey(), entry.getValue().right);
+                    builder.add(entry.getKey(), indexInfo.keys);
                 }
-                indexPerValue.clear();
+
+                indexPerTerm.clear();
 
                 // now do the writing
                 logger.info("about to submit for concurrent SA'ing");
@@ -313,7 +310,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
                 {
                     String fileName = descriptor.filenameFor(entry.getKey());
                     logger.info("submitting {} for concurrent SA'ing", fileName);
-                    futures.add(executor.submit(new BuilderFinisher(entry.getValue(), fileName)));
+                    futures.add(executor.submit(new BuilderFinisher(ranges.get(entry.getKey()), entry.getValue(), fileName)));
                 }
 
                 for (Future<Boolean> f : futures)
@@ -337,7 +334,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
             {
                 openListeners.remove(descriptor.generation);
                 // drop this data asap
-                indexPerValue.clear();
+                indexPerTerm.clear();
             }
         }
 
@@ -345,15 +342,44 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
         {
             return descriptor.generation;
         }
+
+        private class IndexInfo
+        {
+            private final Component component;
+            private final TreeMap<DecoratedKey, Integer> keys;
+
+            public IndexInfo(Component component)
+            {
+                this.component = component;
+                this.keys = new TreeMap<>(new Comparator<DecoratedKey>()
+                {
+                    @Override
+                    public int compare(DecoratedKey a, DecoratedKey b)
+                    {
+                        long tokenA = MurmurHash.hash2_64(a.key, a.key.position(), a.key.remaining(), 0);
+                        long tokenB = MurmurHash.hash2_64(b.key, b.key.position(), b.key.remaining(), 0);
+
+                        return Long.compare(tokenA, tokenB);
+                    }
+                });
+            }
+
+            public void add(DecoratedKey key, int offset)
+            {
+                keys.put(key, offset);
+            }
+        }
     }
 
     private class BuilderFinisher implements Callable<Boolean>
     {
+        private final Pair<DecoratedKey, DecoratedKey> range;
         private OnDiskSABuilder builder;
         private final String fileName;
 
-        public BuilderFinisher(OnDiskSABuilder builder, String fileName)
+        public BuilderFinisher(Pair<DecoratedKey, DecoratedKey> range, OnDiskSABuilder builder, String fileName)
         {
+            this.range = range;
             this.builder = builder;
             this.fileName = fileName;
         }
@@ -363,7 +389,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
             try
             {
                 long start = System.nanoTime();
-                builder.finish(new File(fileName));
+                builder.finish(range, new File(fileName));
                 logger.info("finishing SA for {} in {} ms", fileName, TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start));
                 return Boolean.TRUE;
             }
@@ -386,16 +412,11 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
 
     protected class LocalSecondaryIndexSearcher extends SecondaryIndexSearcher
     {
-        private final long executionTimeLimit;
         private final Phaser phaser;
-        private int phaserPhase;
-        private long startTime;
 
         protected LocalSecondaryIndexSearcher(SecondaryIndexManager indexManager, Set<ByteBuffer> columns)
         {
             super(indexManager, columns);
-            executionTimeLimit = (long)(DatabaseDescriptor.getRangeRpcTimeout() -
-                                        (DatabaseDescriptor.getRangeRpcTimeout() * .1));
             phaser = new Phaser();
         }
 
@@ -403,8 +424,6 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
         {
             try
             {
-                startTime = System.currentTimeMillis();
-                phaserPhase = phaser.register();
                 return performSearch(filter);
             }
             catch(Exception e)
@@ -427,21 +446,87 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
 
             final int maxRows = Math.min(MAX_ROWS, filter.maxRows());
             List<Row> rows = new ArrayList<>(maxRows);
-            List<Future<Row>> loadingRows = new ArrayList<>(maxRows);
             List<Pair<ByteBuffer, Expression>> expressions = analyzeQuery(filter.getClause());
             List<Pair<ByteBuffer, Expression>> expressionsImmutable = ImmutableList.copyOf(expressions);
 
-            // TODO:JEB - this is a Set we get from dataTracker, but we need to order them!!!!
-            // TODO: (i think) we need to have a strategy about marking any sstables as referenced, but as we break early
-            // on all the for loops, to eagerly determine the keys before loading, we might be ok without it.
-            Set<SSTableReader> sstables = baseCfs.getDataTracker().getSSTables();
+            Map<ByteBuffer, IntervalTree<ByteBuffer, SSTableReader, Interval<ByteBuffer, SSTableReader>>> termIntervalTree = new HashMap<>();
+            Map<ByteBuffer, IntervalTree<ByteBuffer, SSTableReader, Interval<ByteBuffer, SSTableReader>>> keyIntervalTree = new HashMap<>();
+
+            for (Pair<ByteBuffer, Expression> e : expressions)
+            {
+                String name = baseCfs.getComparator().getString(e.left);
+                final AbstractType<?> validator = baseCfs.metadata.getColumnDefinitionFromColumnName(e.left).getValidator();
+
+                List<Interval<ByteBuffer, SSTableReader>> termIntervals = new ArrayList<>();
+                List<Interval<ByteBuffer, SSTableReader>> keyIntervals = new ArrayList<>();
+
+                for (SSTableReader sstable : baseCfs.getDataTracker().getSSTables())
+                {
+                    try (RandomAccessFile index = new RandomAccessFile(new File(sstable.descriptor.filenameFor(String.format(FILE_NAME_FORMAT, name))), "r"))
+                    {
+                        ByteBuffer minTerm = ByteBufferUtil.readWithShortLength(index);
+                        ByteBuffer maxTerm = ByteBufferUtil.readWithShortLength(index);
+
+                        logger.info("(term) Interval.create(field: " + name + ", min: " + validator.getString(minTerm) + ", max: " + validator.getString(maxTerm) + ", sstable: " + sstable + ")");
+                        termIntervals.add(Interval.create(minTerm, maxTerm, sstable));
+
+                        ByteBuffer minKey = ByteBufferUtil.readWithShortLength(index);
+                        ByteBuffer maxKey = ByteBufferUtil.readWithShortLength(index);
+
+                        logger.info("(key) Interval.create(field: " + name + ", min: " + keyComparator.getString(minKey) + ", max: " + keyComparator.getString(maxKey) + ", sstable: " + sstable + ")");
+                        keyIntervals.add(Interval.create(minKey, maxKey, sstable));
+                    }
+                }
+
+                termIntervalTree.put(e.left, IntervalTree.build(termIntervals, new Comparator<ByteBuffer>()
+                {
+                    @Override
+                    public int compare(ByteBuffer a, ByteBuffer b)
+                    {
+                        return validator.compare(a, b);
+                    }
+                }));
+
+                keyIntervalTree.put(e.left, IntervalTree.build(keyIntervals, new Comparator<ByteBuffer>()
+                {
+                    @Override
+                    public int compare(ByteBuffer a, ByteBuffer b)
+                    {
+                        return keyComparator.compare(a, b);
+                    }
+                }));
+            }
+
+            List<SSTableReader> primarySSTables = null;
+            Pair<ByteBuffer, Expression> primaryExpression = null;
+
+            for (Pair<ByteBuffer, Expression> e : expressions)
+            {
+                Expression expression = e.right;
+                IntervalTree<ByteBuffer, SSTableReader, Interval<ByteBuffer, SSTableReader>> intervals = termIntervalTree.get(e.left);
+
+                List<SSTableReader> sstables = (expression.lower == null || expression.upper == null)
+                            ? intervals.search((expression.lower == null ? expression.upper : expression.lower).value)
+                            : intervals.search(Interval.create(expression.lower.value, expression.upper.value, (SSTableReader) null));
+
+                if (primarySSTables == null || primarySSTables.size() > sstables.size())
+                {
+                    primarySSTables = sstables;
+                    primaryExpression = e;
+                }
+            }
+
+            if (primarySSTables == null)
+                return Collections.emptyList();
+
+            expressions.remove(primaryExpression);
+
+            logger.info("Primary: Field: " + baseCfs.getComparator().getString(primaryExpression.left) + ", SSTables: " + primarySSTables);
+
             final Set<DecoratedKey> evaluatedKeys = new TreeSet<>(DecoratedKey.comparator);
 
-            final Map<Pair<Descriptor, ByteBuffer>, KeyContainer> lookAsideCache = new HashMap<>();
-
-            Pair<ByteBuffer, Expression> primary = expressions.remove(0);
             outermost:
-            try (ParallelSuffixIterator primarySuffixes = getSuffixIterator(sstables.iterator(), primary.left, primary.right))
+            try (ParallelSuffixIterator primarySuffixes = getSuffixIterator(primarySSTables.iterator(), primaryExpression.left, primaryExpression.right))
             {
                 if (primarySuffixes == null)
                     return Collections.emptyList();
@@ -449,113 +534,88 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
                 while (primarySuffixes.hasNext())
                 {
                     KeyContainer container = primarySuffixes.next().getKeys();
-
-                    if (!container.intersects(requestedRange))
-                        continue;
-
-                    ColumnFamilyStore.ViewFragment view = baseCfs.markReferenced(container.getRange());
-
-                    try
+                    for (KeyContainer.Bucket a : container)
                     {
-                        for (KeyContainer.Bucket a : container)
+                        IntIterator primaryOffsets = a.getPositions().getIntIterator();
+
+                        keys_loop:
+                        while (primaryOffsets.hasNext())
                         {
-                            IntIterator primaryOffsets = a.getPositions().getIntIterator();
+                            final int keyOffset = primaryOffsets.next();
+                            DecoratedKey key = primarySuffixes.currentSSTable().keyAt(keyOffset);
 
-                            keys_loop:
-                            while (primaryOffsets.hasNext())
+                            if (!requestedRange.contains(key) || !evaluatedKeys.add(key))
+                                continue;
+
+                            predicate_loop:
+                            for (Pair<ByteBuffer, Expression> predicate : expressions)
                             {
-                                final int keyOffset = primaryOffsets.next();
-                                DecoratedKey key = primarySuffixes.currentSSTable().keyAt(keyOffset);
+                                List<SSTableReader> candidateSSTables = keyIntervalTree.get(predicate.left).search(key.key);
+                                logger.info("candidate SSTables for (column: " + baseCfs.metadata.comparator.getString(predicate.left) + ", key: " + keyComparator.getString(key.key) + ") = " + candidateSSTables);
 
-                                if (!requestedRange.contains(key) || !evaluatedKeys.add(key))
-                                    continue;
-
-                                List<Pair<SSTableReader, Long>> indexPositions = new ArrayList<>();
-                                indexPositions.add(Pair.create(primarySuffixes.currentSSTable(), (long) keyOffset));
-                                predicate_loop:
-                                for (Pair<ByteBuffer, Expression> predicate : expressions)
+                                try (ParallelSuffixIterator suffixIterator = getSuffixIterator(candidateSSTables.iterator(), predicate.left, predicate.right))
                                 {
-                                    Iterator<SSTableReader> candidateSSTables = Iterators.filter(view.sstables.iterator(), new BloomFilterPredicate(key.key));
-                                    try (ParallelSuffixIterator suffixIterator = getSuffixIterator(candidateSSTables, predicate.left, predicate.right))
+                                    if (suffixIterator == null)
+                                        continue keys_loop; //it's arguable that we should just bail on the whole query if there's no index for the predicate's column
+
+                                    while (suffixIterator.hasNext())
                                     {
-                                        if (suffixIterator == null)
-                                            continue keys_loop; //it's arguable that we should just bail on the whole query if there's no index for the predicate's column
+                                        DataSuffix suffix = suffixIterator.next();
+                                        SSTableReader currentSSTable = suffixIterator.currentSSTable();
 
-                                        while (suffixIterator.hasNext())
+                                        KeyContainer candidates = suffix.getKeys();
+                                        for (KeyContainer.Bucket candidate : candidates.intersect(key.key))
                                         {
-                                            DataSuffix suffix = suffixIterator.next();
-                                            SSTableReader currentSSTable = suffixIterator.currentSSTable();
-
-                                            Pair<Descriptor, ByteBuffer> cachedKey = Pair.create(currentSSTable.descriptor, suffix.getSuffix());
-                                            KeyContainer candidates = lookAsideCache.get(cachedKey);
-
-                                            if (candidates == null)
-                                                lookAsideCache.put(cachedKey, (candidates = suffix.getKeys()));
-
-                                            for (KeyContainer.Bucket candidate : candidates.intersect(key.key))
+                                            // if it's the same SSTable we can avoid reading actual keys
+                                            // from the index file and match key offsets bitmap directly.
+                                            if (primarySuffixes.currentSSTable().equals(currentSSTable))
                                             {
-                                                // if it's the same SSTable we can avoid reading actual keys
-                                                // from the index file and match key offsets bitmap directly.
-                                                if (primarySuffixes.currentSSTable().equals(currentSSTable))
+                                                if (candidate.getPositions().contains(keyOffset))
+                                                    continue predicate_loop;
+                                            }
+                                            else // otherwise do a binary search in the external offsets, matching keys
+                                            {
+                                                int[] offsets = candidate.getPositions().toArray();
+
+                                                int start = 0, end = offsets.length - 1;
+                                                while (start <= end)
                                                 {
-                                                    if (candidate.getPositions().contains(keyOffset))
+                                                    int middle = start + ((end - start) >> 1);
+
+                                                    int cmp = currentSSTable.keyAt(offsets[middle]).compareTo(key);
+                                                    if (cmp == 0)
                                                         continue predicate_loop;
-                                                }
-                                                else // otherwise do a binary search in the external offsets, matching keys
-                                                {
-                                                    int[] offsets = candidate.getPositions().toArray();
 
-                                                    int start = 0, end = offsets.length - 1;
-                                                    while (start <= end)
-                                                    {
-                                                        int middle = start + ((end - start) >> 1);
-
-                                                        int cmp = currentSSTable.keyAt(offsets[middle]).compareTo(key);
-                                                        if (cmp == 0)
-                                                        {
-                                                            indexPositions.add(Pair.create(currentSSTable, (long) offsets[middle]));
-                                                            continue predicate_loop;
-                                                        }
-
-                                                        if (cmp < 0)
-                                                            start = middle + 1;
-                                                        else
-                                                            end = middle - 1;
-                                                    }
+                                                    if (cmp < 0)
+                                                        start = middle + 1;
+                                                    else
+                                                        end = middle - 1;
                                                 }
                                             }
                                         }
                                     }
-                                    finally
-                                    {
-                                        // do nothing here for now
-                                    }
-
-                                    // if we got here, there's no match for the current predicate, so skip this key
-                                    continue keys_loop;
                                 }
-
-                                while (rows.size() + loadingRows.size() >= maxRows)
+                                finally
                                 {
-                                    harvest(rows, loadingRows, maxRows, -1);
-                                    if (rows.size() >= maxRows)
-                                        break outermost;
-                                    awaitUninterupted(10);
+                                    // do nothing here for now
                                 }
-                                loadingRows.add(submitRow(key, indexPositions, filter, expressionsImmutable));
+
+                                // if we got here, there's no match for the current predicate, so skip this key
+                                continue keys_loop;
                             }
+
+                            Row row = getRow(key, filter, expressionsImmutable);
+
+                            if (row != null)
+                                rows.add(row);
+
+                            if (rows.size() >= maxRows)
+                                break outermost;
                         }
-                    }
-                    finally
-                    {
-                        SSTableReader.releaseReferences(view.sstables);
                     }
                 }
             }
 
-            // last call to here in case we didn't max out the row count above (and exited early).
-            // if we did hit the max, harvest will clean up/close the rows to be loaded
-            harvest(rows, loadingRows, maxRows, startTime);
             return rows;
         }
 
@@ -565,63 +625,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
             return columnDef != null ? new ParallelSuffixIterator(sstables, columnDef.name, predicate, columnDef.getValidator()) : null;
         }
 
-        private void awaitUninterupted(long millis)
-        {
-            try
-            {
-                // TODO: not sure if we need to phaser.arrive() here... or if the main thread even needs to register at all
-                phaserPhase = phaser.awaitAdvanceInterruptibly(phaserPhase, millis, TimeUnit.MILLISECONDS);
-            }
-            catch (InterruptedException | TimeoutException e)
-            {
-                // nop
-            }
-        }
-
-        private void harvest(List<Row> rows, List<Future<Row>> futures, int maxRows, long startTime)
-        {
-            if (rows.size() >= maxRows)
-            {
-                for (Iterator<Future<Row>> iter = futures.iterator(); iter.hasNext();)
-                {
-                    Future<Row> f = iter.next();
-                    f.cancel(true);
-                    iter.remove();
-                }
-                return;
-            }
-
-            boolean lastTime = startTime > 0;
-            if (lastTime)
-            {
-                long elapsed = System.currentTimeMillis() - startTime;
-                long remainingTime = executionTimeLimit - elapsed;
-                if (remainingTime > 0)
-                {
-                    phaser.arrive();
-                    awaitUninterupted(remainingTime);
-                }
-            }
-
-            for (Iterator<Future<Row>> iter = futures.iterator(); iter.hasNext();)
-            {
-                Future<Row> f = iter.next();
-                if (f.isDone() && !(rows.size() >= maxRows))
-                {
-                    Row r = Futures.getUnchecked(f);
-                    if (r != null)
-                        rows.add(r);
-                    iter.remove();
-                }
-                else if (lastTime || rows.size() >= maxRows)
-                {
-                    f.cancel(true);
-                    iter.remove();
-                }
-            }
-        }
-
-        private Future<Row> submitRow(DecoratedKey key, List<Pair<SSTableReader, Long>> indexPositions, ExtendedFilter filter, List<Pair<ByteBuffer, Expression>> expressions)
+        private Row getRow(DecoratedKey key, ExtendedFilter filter, List<Pair<ByteBuffer, Expression>> expressions)
         {
             ReadCommand cmd = ReadCommand.create(baseCfs.keyspace.getName(),
                                                  key.key,
@@ -629,31 +633,25 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
                                                  System.currentTimeMillis(),
                                                  filter.columnFilter(key.key));
 
-            return StageManager.getStage(Stage.READ).submit(new RowReader(key, cmd, indexPositions, expressions));
+            return new RowReader(cmd, expressions).call();
         }
 
         private class RowReader implements Callable<Row>
         {
-            private final DecoratedKey key;
             private final ReadCommand command;
-            private final List<Pair<SSTableReader, Long>> indexPositions;
             private final List<Pair<ByteBuffer, Expression>> expressions;
 
-            public RowReader(DecoratedKey key, ReadCommand command, List<Pair<SSTableReader, Long>> indexPositions, List<Pair<ByteBuffer, Expression>> expressions)
+            public RowReader(ReadCommand command, List<Pair<ByteBuffer, Expression>> expressions)
             {
-                this.key = key;
                 this.command = command;
-                this.indexPositions = indexPositions;
                 this.expressions = expressions;
                 phaser.register();
             }
 
-            public Row call() throws Exception
+            public Row call()
             {
                 try
                 {
-                    for (Pair<SSTableReader, Long> pair : indexPositions)
-                        pair.left.readAndCacheIndex(key, pair.right);
                     Row row = command.getRow(Keyspace.open(command.ksName));
                     return satisfiesPredicates(row) ? row : null;
                 }
@@ -938,7 +936,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
         @Override
         public void close()
         {
-            //FileUtils.closeQuietly(sa);
+            FileUtils.closeQuietly(sa);
         }
     }
 
