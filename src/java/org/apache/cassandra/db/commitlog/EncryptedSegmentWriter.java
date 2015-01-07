@@ -77,7 +77,7 @@ public class EncryptedSegmentWriter extends SegmentWriter
     {
         try
         {
-            int estimatedSize = (int)size + CHECKSUM_LEN + buffer.position();
+            int estimatedSize = (int)size + ENTRY_OVERHEAD_SIZE + buffer.position();
             // bail if there's no remaining space in the file
             if (estimatedSize > fileLength - logFileAccessor.getFilePointer())
                 return false;

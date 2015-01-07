@@ -43,7 +43,7 @@ public class RAFSegmentWriter extends SegmentWriter
 
     public boolean hasCapacityFor(long size)
     {
-        return size + CHECKSUM_LEN <= buffer.remaining();
+        return size + ENTRY_OVERHEAD_SIZE <= buffer.remaining();
     }
 
     protected void postWrite() throws IOException

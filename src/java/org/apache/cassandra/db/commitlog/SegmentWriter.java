@@ -24,7 +24,8 @@ public abstract class SegmentWriter
 {
     private static final Logger logger = LoggerFactory.getLogger(SegmentWriter.class);
 
-    protected static final int CHECKSUM_LEN = 16; // because we write out two longs from the checksum for each mutation entry
+    // The commit log entry overhead in bytes (int: length + long: head checksum + long: tail checksum)
+    static final int ENTRY_OVERHEAD_SIZE = 4 + 8 + 8;
 
     protected final RandomAccessFile logFileAccessor;
     protected final long fileLength;

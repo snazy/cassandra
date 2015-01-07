@@ -345,7 +345,7 @@ public class CommitLog implements CommitLogMBean
         public void run()
         {
             long mutationSize = RowMutation.serializer.serializedSize(rowMutation, MessagingService.current_version);
-            if (mutationSize + SegmentWriter.CHECKSUM_LEN > DatabaseDescriptor.getCommitLogSegmentSize())
+            if (mutationSize + SegmentWriter.ENTRY_OVERHEAD_SIZE > DatabaseDescriptor.getCommitLogSegmentSize())
             {
                 logger.warn("Skipping commitlog append of extremely large mutation ({} bytes)", mutationSize);
                 return;
