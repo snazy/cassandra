@@ -522,6 +522,36 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
             expressions.remove(primaryExpression);
 
             logger.info("Primary: Field: " + baseCfs.getComparator().getString(primaryExpression.left) + ", SSTables: " + primarySSTables);
+            Map<ByteBuffer, Set<SSTableReader>> narrowedCandidates = new HashMap<>();
+            for (Pair<ByteBuffer, Expression> e : expressions)
+            {
+                final AbstractType<?> validator = baseCfs.metadata.getColumnDefinitionFromColumnName(e.left).getValidator();
+                if (validator.compare(primaryExpression.left, e.left) == 0)
+                {
+                    narrowedCandidates.put(e.left, new HashSet<>(primarySSTables));
+                    continue;
+                }
+
+                Set<SSTableReader> readers = new HashSet<>();
+                String name = baseCfs.getComparator().getString(e.left);
+                IntervalTree<ByteBuffer, SSTableReader, Interval<ByteBuffer, SSTableReader>> it = keyIntervalTree.get(e.left);
+                for (SSTableReader reader : primarySSTables)
+                {
+                    try (RandomAccessFile index = new RandomAccessFile(new File(reader.descriptor.filenameFor(String.format(FILE_NAME_FORMAT, name))), "r"))
+                    {
+                        // read past the min/max terms
+                        ByteBufferUtil.readWithShortLength(index);
+                        ByteBufferUtil.readWithShortLength(index);
+                        ByteBuffer minKey = ByteBufferUtil.readWithShortLength(index);
+                        ByteBuffer maxKey = ByteBufferUtil.readWithShortLength(index);
+
+                        readers.addAll(it.search(Interval.create(minKey, maxKey, (SSTableReader) null)));
+                    }
+                }
+                if (readers.isEmpty())
+                    return Collections.EMPTY_LIST;
+                narrowedCandidates.put(e.left, readers);
+            }
 
             final Set<DecoratedKey> evaluatedKeys = new TreeSet<>(DecoratedKey.comparator);
 
@@ -550,7 +580,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
                             predicate_loop:
                             for (Pair<ByteBuffer, Expression> predicate : expressions)
                             {
-                                List<SSTableReader> candidateSSTables = keyIntervalTree.get(predicate.left).search(key.key);
+                                Set<SSTableReader> candidateSSTables = narrowedCandidates.get(predicate.left);
                                 logger.info("candidate SSTables for (column: " + baseCfs.metadata.comparator.getString(predicate.left) + ", key: " + keyComparator.getString(key.key) + ") = " + candidateSSTables);
 
                                 try (ParallelSuffixIterator suffixIterator = getSuffixIterator(candidateSSTables.iterator(), predicate.left, predicate.right))
