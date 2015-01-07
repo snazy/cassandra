@@ -7,21 +7,24 @@ import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
 
-import com.google.common.base.Predicate;
-import com.google.common.collect.Iterables;
-import org.apache.cassandra.db.RowPosition;
-import org.apache.cassandra.dht.AbstractBounds;
+import org.apache.cassandra.db.DecoratedKey;
+import org.apache.cassandra.db.marshal.AbstractType;
 import org.apache.cassandra.dht.Bounds;
+import org.apache.cassandra.dht.IPartitioner;
+import org.apache.cassandra.dht.LocalPartitioner;
 import org.apache.cassandra.io.FSReadError;
+import org.apache.cassandra.io.sstable.SSTableReader;
 import org.apache.cassandra.io.util.RandomAccessReader;
-
-import com.google.common.collect.AbstractIterator;
 import org.apache.cassandra.utils.*;
+
+import com.google.common.base.Predicate;
+import com.google.common.collect.AbstractIterator;
+import com.google.common.collect.Iterables;
 import org.roaringbitmap.RoaringBitmap;
 
 public class KeyContainer implements Iterable<KeyContainer.Bucket>
 {
-    protected final RowPosition min, max;
+    protected final ByteBuffer min, max;
 
     protected final RandomAccessReader in;
     protected final IntervalTree<Long, Bucket, Interval<Long, Bucket>> buckets;
@@ -33,8 +36,8 @@ public class KeyContainer implements Iterable<KeyContainer.Bucket>
         {
             in = file;
 
-            min = RowPosition.serializer.deserialize(file);
-            max = RowPosition.serializer.deserialize(file);
+            min = ByteBufferUtil.readWithShortLength(file);
+            max = ByteBufferUtil.readWithShortLength(file);
 
             int numBuckets = file.readInt();
             List<Interval<Long, Bucket>> intervals = new ArrayList<>(numBuckets);
@@ -58,11 +61,6 @@ public class KeyContainer implements Iterable<KeyContainer.Bucket>
         }
     }
 
-    public boolean intersects(AbstractBounds<RowPosition> bounds)
-    {
-        return max.compareTo(bounds.left) >= 0 || min.compareTo(bounds.right) <= 0;
-    }
-
     public Iterable<Bucket> intersect(final ByteBuffer key)
     {
         return Iterables.filter(buckets.search(MurmurHash.hash2_64(key, key.position(), key.remaining(), 0)),
@@ -76,9 +74,17 @@ public class KeyContainer implements Iterable<KeyContainer.Bucket>
                                 });
     }
 
-    public Bounds<RowPosition> getRange()
+    public Interval<ByteBuffer, SSTableReader> getRange()
     {
-        return new Bounds<>(min, max);
+        return Interval.create(min, max);
+    }
+
+    public boolean intersects(KeyContainer o, AbstractType<?> comparator)
+    {
+        IPartitioner partitioner = new LocalPartitioner(comparator);
+        Bounds<DecoratedKey> a = new Bounds<>(partitioner.decorateKey(min), partitioner.decorateKey(max), partitioner);
+        Bounds<DecoratedKey> b = new Bounds<>(partitioner.decorateKey(o.min), partitioner.decorateKey(o.max), partitioner);
+        return a.intersects(b);
     }
 
     @Override

@@ -11,6 +11,7 @@ import org.apache.cassandra.db.marshal.Int32Type;
 import org.apache.cassandra.db.marshal.UTF8Type;
 import org.apache.cassandra.service.StorageService;
 import org.apache.cassandra.utils.MurmurHash;
+import org.apache.cassandra.utils.Pair;
 
 import com.google.common.collect.Iterators;
 import junit.framework.Assert;
@@ -35,14 +36,14 @@ public class OnDiskSATest
                 put(UTF8Type.instance.decompose("michael"), keyBuilder(11, 12, 1));
         }};
 
-        OnDiskSABuilder builder = new OnDiskSABuilder(UTF8Type.instance, OnDiskSABuilder.Mode.SUFFIX);
+        OnDiskSABuilder builder = new OnDiskSABuilder(UTF8Type.instance, UTF8Type.instance, OnDiskSABuilder.Mode.SUFFIX);
         for (Map.Entry<ByteBuffer, NavigableMap<DecoratedKey, Integer>> e : data.entrySet())
             builder.add(e.getKey(), e.getValue());
 
         File index = File.createTempFile("on-disk-sa-string", "db");
         index.deleteOnExit();
 
-        builder.finish(index);
+        builder.finish(Pair.create(keyAt(1), keyAt(12)), index);
 
         OnDiskSA onDisk = new OnDiskSA(index, UTF8Type.instance);
 
@@ -90,14 +91,14 @@ public class OnDiskSATest
                 put(Int32Type.instance.decompose(0),  keyBuilder(11, 12, 1));
         }};
 
-        OnDiskSABuilder builder = new OnDiskSABuilder(Int32Type.instance, OnDiskSABuilder.Mode.ORIGINAL);
+        OnDiskSABuilder builder = new OnDiskSABuilder(UTF8Type.instance, Int32Type.instance, OnDiskSABuilder.Mode.ORIGINAL);
         for (Map.Entry<ByteBuffer, NavigableMap<DecoratedKey, Integer>> e : data.entrySet())
             builder.add(e.getKey(), e.getValue());
 
         File index = File.createTempFile("on-disk-sa-int", "db");
         index.deleteOnExit();
 
-        builder.finish(index);
+        builder.finish(Pair.create(keyAt(1), keyAt(12)), index);
 
         OnDiskSA onDisk = new OnDiskSA(index, Int32Type.instance);
 
@@ -178,21 +179,22 @@ public class OnDiskSATest
 
         onDisk.close();
 
-        List<ByteBuffer> iterCheckNums = new ArrayList<ByteBuffer>() {{
+        List<ByteBuffer> iterCheckNums = new ArrayList<ByteBuffer>()
+        {{
             add(Int32Type.instance.decompose(3));
             add(Int32Type.instance.decompose(9));
             add(Int32Type.instance.decompose(14));
             add(Int32Type.instance.decompose(42));
         }};
 
-        OnDiskSABuilder iterTest = new OnDiskSABuilder(Int32Type.instance, OnDiskSABuilder.Mode.ORIGINAL);
+        OnDiskSABuilder iterTest = new OnDiskSABuilder(UTF8Type.instance, Int32Type.instance, OnDiskSABuilder.Mode.ORIGINAL);
         for (int i = 0; i < iterCheckNums.size(); i++)
             iterTest.add(iterCheckNums.get(i), keyBuilder(i));
 
         File iterIndex = File.createTempFile("sa-iter", ".db");
         iterIndex.deleteOnExit();
 
-        iterTest.finish(iterIndex);
+        iterTest.finish(Pair.create(keyAt(0), keyAt(4)), iterIndex);
 
         onDisk = new OnDiskSA(iterIndex, Int32Type.instance);
 
@@ -232,7 +234,7 @@ public class OnDiskSATest
     @Test
     public void testMultiSuffixMatches() throws Exception
     {
-        OnDiskSABuilder builder = new OnDiskSABuilder(UTF8Type.instance, OnDiskSABuilder.Mode.SUFFIX)
+        OnDiskSABuilder builder = new OnDiskSABuilder(UTF8Type.instance, UTF8Type.instance, OnDiskSABuilder.Mode.SUFFIX)
         {{
                 add(UTF8Type.instance.decompose("Eliza"), keyBuilder(1, 2));
                 add(UTF8Type.instance.decompose("Elizabeth"), keyBuilder(3, 4));
@@ -244,7 +246,7 @@ public class OnDiskSATest
         File index = File.createTempFile("on-disk-sa-multi-suffix-match", ".db");
         index.deleteOnExit();
 
-        builder.finish(index);
+        builder.finish(Pair.create(keyAt(1), keyAt(10)), index);
 
         OnDiskSA onDisk = new OnDiskSA(index, UTF8Type.instance);
 
@@ -336,6 +338,11 @@ public class OnDiskSATest
         return bitmap;
     }
 
+    private static DecoratedKey keyAt(int key)
+    {
+        return StorageService.getPartitioner().decorateKey(ByteBuffer.wrap(("key" + key).getBytes()));
+    }
+
     private static NavigableMap<DecoratedKey, Integer> keyBuilder(Integer... keys)
     {
         NavigableMap<DecoratedKey, Integer> builder = new TreeMap<>(new Comparator<DecoratedKey>()
@@ -351,7 +358,7 @@ public class OnDiskSATest
         });
 
         for (Integer key : keys)
-            builder.put(StorageService.getPartitioner().decorateKey(ByteBuffer.wrap(("key" + key).getBytes())), key);
+            builder.put(keyAt(key), key);
 
         return builder;
     }

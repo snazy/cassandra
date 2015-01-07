@@ -6,8 +6,8 @@ import java.nio.ByteBuffer;
 import java.util.*;
 
 import org.apache.cassandra.db.DecoratedKey;
-import org.apache.cassandra.db.RowPosition;
-import org.apache.cassandra.db.TypeSizes;
+import org.apache.cassandra.db.marshal.AbstractType;
+import org.apache.cassandra.utils.ByteBufferUtil;
 import org.apache.cassandra.utils.FilterFactory;
 import org.apache.cassandra.utils.IFilter;
 import org.apache.cassandra.utils.MurmurHash;
@@ -21,14 +21,16 @@ public class KeyContainerBuilder
 {
     private static final int MAX_PER_BUCKET = 1024;
 
+    private final AbstractType<?> keyComparator;
     private final List<Bucket> buckets = new ArrayList<>();
     private final ObjectIntOpenHashMap<ByteBuffer> buffer = new ObjectIntOpenHashMap<>();
 
-    private RowPosition min, max;
+    private ByteBuffer min, max;
 
-    public KeyContainerBuilder(NavigableMap<DecoratedKey, Integer> keys)
+    public KeyContainerBuilder(AbstractType<?> keyComparator, NavigableMap<DecoratedKey, Integer> keys)
     {
-        add(keys);
+        this.keyComparator = keyComparator;
+        this.add(keys);
     }
 
     public void add(NavigableMap<DecoratedKey, Integer> other)
@@ -64,8 +66,8 @@ public class KeyContainerBuilder
 
     public void serialize(DataOutput out) throws IOException
     {
-        RowPosition.serializer.serialize(min, out);
-        RowPosition.serializer.serialize(max, out);
+        ByteBufferUtil.writeWithShortLength(min, out);
+        ByteBufferUtil.writeWithShortLength(max, out);
 
         out.writeInt(buckets.size());
 
@@ -85,9 +87,9 @@ public class KeyContainerBuilder
 
     public int serializedSize()
     {
-        int size = (int) (RowPosition.serializer.serializedSize(min, TypeSizes.NATIVE)
-                        + RowPosition.serializer.serializedSize(max, TypeSizes.NATIVE)
-                        + 4); // min + max tokens + number of buckets
+        int size = (2 + min.remaining()
+                  + 2 + max.remaining()
+                  + 4); // min + max tokens + number of buckets
 
         for (Bucket b : buckets)
             size += 4 + b.serializedSize(); // offset of the bucket + serialized size
@@ -95,10 +97,10 @@ public class KeyContainerBuilder
         return size;
     }
 
-    private void updateRange(RowPosition position)
+    private void updateRange(DecoratedKey key)
     {
-        this.min = (min == null || min.compareTo(position) > 0) ? position : min;
-        this.max = (max == null || max.compareTo(position) < 0) ? position : max;
+        this.min = (min == null || keyComparator.compare(min, key.key) > 0) ? key.key : min;
+        this.max = (max == null || keyComparator.compare(max, key.key) < 0) ? key.key : max;
     }
 
     @Override
@@ -180,11 +182,6 @@ public class KeyContainerBuilder
         public int serializedSize()
         {
             return super.serializedSize() + dataSerializedSize();
-        }
-
-        public String toString()
-        {
-            return String.format("Bucket(bf: %s, offsets: %s)",  bf, offsets);
         }
     }
 }

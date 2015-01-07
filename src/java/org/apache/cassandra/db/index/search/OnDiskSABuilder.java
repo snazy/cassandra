@@ -45,9 +45,9 @@ public class OnDiskSABuilder
     private final SA sa;
     private final Mode mode;
 
-    public OnDiskSABuilder(AbstractType<?> comparator, Mode mode)
+    public OnDiskSABuilder(AbstractType<?> keyComparator, AbstractType<?> comparator, Mode mode)
     {
-        this.sa = new SA(comparator, mode);
+        this.sa = new SA(keyComparator, comparator, mode);
         this.mode = mode;
     }
 
@@ -72,7 +72,7 @@ public class OnDiskSABuilder
         }
     }
 
-    public void finish(File file) throws FSWriteError
+    public void finish(Pair<DecoratedKey, DecoratedKey> range, File file) throws FSWriteError
     {
         SequentialWriter out = null;
 
@@ -80,7 +80,17 @@ public class OnDiskSABuilder
         {
             out = new SequentialWriter(file, BLOCK_SIZE, false);
 
-            Iterator<Pair<ByteBuffer, KeyContainerBuilder>> suffixes = sa.finish();
+            SuffixIterator suffixes = sa.finish();
+
+            // min, max suffix (useful to find initial scan range from search expressions)
+            ByteBufferUtil.writeWithShortLength(suffixes.minSuffix(), out);
+            ByteBufferUtil.writeWithShortLength(suffixes.maxSuffix(), out);
+
+            // min, max keys covered by index (useful when searching across multiple indexes)
+            ByteBufferUtil.writeWithShortLength(range.left.key, out);
+            ByteBufferUtil.writeWithShortLength(range.right.key, out);
+
+            out.skipBytes((int) (BLOCK_SIZE - out.getFilePointer()));
 
             dataLevel = new MutableLevel<>(out, new MutableDataBlock(mode));
             while (suffixes.hasNext())
@@ -188,13 +198,14 @@ public class OnDiskSABuilder
     private static class SA
     {
         private final List<Term> terms = new ArrayList<>();
-        private final AbstractType<?> comparator;
+        private final AbstractType<?> keyComparator, comparator;
         private final Mode mode;
 
         private int charCount = 0;
 
-        public SA(AbstractType<?> comparator, Mode mode)
+        public SA(AbstractType<?> keyComparator, AbstractType<?> comparator, Mode mode)
         {
+            this.keyComparator = keyComparator;
             this.comparator = comparator;
             this.mode = mode;
         }
@@ -205,132 +216,164 @@ public class OnDiskSABuilder
             charCount += term.remaining();
         }
 
-        public Iterator<Pair<ByteBuffer, KeyContainerBuilder>> finish()
+        public SuffixIterator finish()
         {
             switch (mode)
             {
                 case SUFFIX:
-                    return constructSuffixes();
+                    return new SASuffixIterator();
 
                 case ORIGINAL:
-                    return constructOriginal();
+                    return new IntegralSuffixIterator();
 
                 default:
                     throw new IllegalArgumentException("unknown mode: " + mode);
             }
         }
 
-        private Iterator<Pair<ByteBuffer, KeyContainerBuilder>> constructSuffixes()
+        private class IntegralSuffixIterator extends SuffixIterator
         {
-            // each element has term index and char position encoded as two 32-bit integers
-            // to avoid binary search per suffix while sorting suffix array.
-            final long[] suffixes = new long[charCount];
-            long termIndex = -1, currentTermLength = -1;
-            for (int i = 0; i < charCount; i++)
-            {
-                if (i >= currentTermLength || currentTermLength == -1)
-                {
-                    Term currentTerm = terms.get((int) ++termIndex);
-                    currentTermLength = currentTerm.position + currentTerm.value.remaining();
-                }
+            private final Iterator<Term> termIterator;
 
-                suffixes[i] = (termIndex << 32) | i;
+            public IntegralSuffixIterator()
+            {
+                Collections.sort(terms, new Comparator<Term>()
+                {
+                    @Override
+                    public int compare(Term a, Term b)
+                    {
+                        return comparator.compare(a.value, b.value);
+                    }
+                });
+
+                termIterator = terms.iterator();
             }
 
-            Primitive.sort(suffixes, new LongComparator()
+            @Override
+            public ByteBuffer minSuffix()
             {
-                @Override
-                public int compare(long a, long b)
-                {
-                    Term aTerm = terms.get((int) (a >>> 32));
-                    Term bTerm = terms.get((int) (b >>> 32));
-                    return comparator.compare(aTerm.getSuffix(((int) a) - aTerm.position),
-                                              bTerm.getSuffix(((int) b) - bTerm.position));
-                }
-            });
+                return terms.get(0).value;
+            }
 
-
-            return new AbstractIterator<Pair<ByteBuffer, KeyContainerBuilder>>()
+            @Override
+            public ByteBuffer maxSuffix()
             {
-                private int current = 0;
-                private ByteBuffer lastSuffix;
-                private KeyContainerBuilder container;
+                return terms.get(terms.size() - 1).value;
+            }
 
-                @Override
-                protected Pair<ByteBuffer, KeyContainerBuilder> computeNext()
-                {
-                    while (true)
-                    {
-                        if (current >= suffixes.length)
-                        {
-                            if (lastSuffix == null)
-                                return endOfData();
+            @Override
+            protected Pair<ByteBuffer, KeyContainerBuilder> computeNext()
+            {
+                if (!termIterator.hasNext())
+                    return endOfData();
 
-                            Pair<ByteBuffer, KeyContainerBuilder> result = finishSuffix();
-
-                            lastSuffix = null;
-                            return result;
-                        }
-
-                        long index = suffixes[current++];
-                        Term term = terms.get((int) (index >>> 32));
-
-                        ByteBuffer suffix = term.getSuffix(((int) index) - term.position);
-
-                        if (lastSuffix == null)
-                        {
-                            lastSuffix = suffix;
-                            container = new KeyContainerBuilder(term.keys);
-                        }
-                        else if (comparator.compare(lastSuffix, suffix) == 0)
-                        {
-                            lastSuffix = suffix;
-                            container.add(term.keys);
-                        }
-                        else
-                        {
-                            Pair<ByteBuffer, KeyContainerBuilder> result = finishSuffix();
-
-                            lastSuffix = suffix;
-                            container = new KeyContainerBuilder(term.keys);
-
-                            return result;
-                        }
-                    }
-                }
-
-                private Pair<ByteBuffer, KeyContainerBuilder> finishSuffix()
-                {
-                    return Pair.create(lastSuffix, container.finish());
-                }
-            };
+                Term term = termIterator.next();
+                return Pair.create(term.value, new KeyContainerBuilder(keyComparator, term.keys).finish());
+            }
         }
 
-        private Iterator<Pair<ByteBuffer, KeyContainerBuilder>> constructOriginal()
+        private class SASuffixIterator extends SuffixIterator
         {
-            Collections.sort(terms, new Comparator<Term>()
+            private final long[] suffixes;
+
+            private int current = 0;
+            private ByteBuffer lastProcessedSuffix;
+            private KeyContainerBuilder container;
+
+            public SASuffixIterator()
             {
-                @Override
-                public int compare(Term a, Term b)
-                {
-                    return comparator.compare(a.value, b.value);
-                }
-            });
+                // each element has term index and char position encoded as two 32-bit integers
+                // to avoid binary search per suffix while sorting suffix array.
+                suffixes = new long[charCount];
 
-            return new AbstractIterator<Pair<ByteBuffer, KeyContainerBuilder>>()
+                long termIndex = -1, currentTermLength = -1;
+                for (int i = 0; i < charCount; i++)
+                {
+                    if (i >= currentTermLength || currentTermLength == -1)
+                    {
+                        Term currentTerm = terms.get((int) ++termIndex);
+                        currentTermLength = currentTerm.position + currentTerm.value.remaining();
+                    }
+
+                    suffixes[i] = (termIndex << 32) | i;
+                }
+
+                Primitive.sort(suffixes, new LongComparator()
+                {
+                    @Override
+                    public int compare(long a, long b)
+                    {
+                        Term aTerm = terms.get((int) (a >>> 32));
+                        Term bTerm = terms.get((int) (b >>> 32));
+                        return comparator.compare(aTerm.getSuffix(((int) a) - aTerm.position),
+                                bTerm.getSuffix(((int) b) - bTerm.position));
+                    }
+                });
+            }
+
+            private Pair<ByteBuffer, NavigableMap<DecoratedKey, Integer>> suffixAt(int position)
             {
-                private final Iterator<Term> termIterator = terms.iterator();
+                long index = suffixes[position];
+                Term term = terms.get((int) (index >>> 32));
+                return Pair.create(term.getSuffix(((int) index) - term.position), term.keys);
+            }
 
-                @Override
-                protected Pair<ByteBuffer, KeyContainerBuilder> computeNext()
+            @Override
+            public ByteBuffer minSuffix()
+            {
+                return suffixAt(0).left;
+            }
+
+            @Override
+            public ByteBuffer maxSuffix()
+            {
+                return suffixAt(suffixes.length - 1).left;
+            }
+
+            @Override
+            protected Pair<ByteBuffer, KeyContainerBuilder> computeNext()
+            {
+                while (true)
                 {
-                    if (!termIterator.hasNext())
-                        return endOfData();
+                    if (current >= suffixes.length)
+                    {
+                        if (lastProcessedSuffix == null)
+                            return endOfData();
 
-                    Term term = termIterator.next();
-                    return Pair.create(term.value, new KeyContainerBuilder(term.keys).finish());
+                        Pair<ByteBuffer, KeyContainerBuilder> result = finishSuffix();
+
+                        lastProcessedSuffix = null;
+                        return result;
+                    }
+
+                    Pair<ByteBuffer, NavigableMap<DecoratedKey, Integer>> suffix = suffixAt(current++);
+
+                    if (lastProcessedSuffix == null)
+                    {
+                        lastProcessedSuffix = suffix.left;
+                        container = new KeyContainerBuilder(keyComparator, suffix.right);
+                    }
+                    else if (comparator.compare(lastProcessedSuffix, suffix.left) == 0)
+                    {
+                        lastProcessedSuffix = suffix.left;
+                        container.add(suffix.right);
+                    }
+                    else
+                    {
+                        Pair<ByteBuffer, KeyContainerBuilder> result = finishSuffix();
+
+                        lastProcessedSuffix = suffix.left;
+                        container = new KeyContainerBuilder(keyComparator, suffix.right);
+
+                        return result;
+                    }
                 }
-            };
+            }
+
+            private Pair<ByteBuffer, KeyContainerBuilder> finishSuffix()
+            {
+                return Pair.create(lastProcessedSuffix, container.finish());
+            }
         }
     }
 
@@ -520,5 +563,11 @@ public class OnDiskSABuilder
     private static long align(long val, int boundary)
     {
         return (val + boundary) & ~(boundary - 1);
+    }
+
+    public static abstract class SuffixIterator extends AbstractIterator<Pair<ByteBuffer, KeyContainerBuilder>>
+    {
+        public abstract ByteBuffer minSuffix();
+        public abstract ByteBuffer maxSuffix();
     }
 }
