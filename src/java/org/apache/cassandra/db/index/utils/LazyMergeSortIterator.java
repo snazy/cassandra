@@ -1,8 +1,7 @@
 package org.apache.cassandra.db.index.utils;
 
-import org.apache.cassandra.db.marshal.AbstractType;
+import com.google.common.collect.AbstractIterator;
 
-import java.nio.ByteBuffer;
 import java.util.*;
 
 /**
@@ -11,38 +10,36 @@ import java.util.*;
  * in all input iterators. OperationType.OR will return all elements from the
  * input iterators in sorted order.
  */
-public class LazyMergeSortIterator<T> implements Iterator<T>
+public class LazyMergeSortIterator<T> extends AbstractIterator<T>
 {
     public static enum OperationType
     {
         AND, OR
     }
 
-    private AbstractType<T> comparator;
+    private Comparator<T> comparator;
     private OperationType opType;
     private List<SeekableIterator<T>> iterators;
 
-    private T next = null;
     // buffer of elements already taken from an iterator
     // that maybe used in the next iteration
-    private List<T> dequeuedElmBuffer;
+    private List<T> currentPerIterator;
 
-    public LazyMergeSortIterator(AbstractType<T> comparator, OperationType opType,
+    public LazyMergeSortIterator(Comparator<T> comparator, OperationType opType,
                                  List<SeekableIterator<T>> iterators)
     {
         this.comparator = comparator;
         this.opType = opType;
         this.iterators = iterators;
-        this.dequeuedElmBuffer = new ArrayList<>((List<T>) Collections.nCopies(iterators.size(), null));
+        this.currentPerIterator = new ArrayList<>((List<T>) Collections.nCopies(iterators.size(), null));
     }
 
     @Override
-    public boolean hasNext()
+    public T computeNext()
     {
         Element nextElm = findNextElement();
-
         if (nextElm == null)
-            return false;
+            return endOfData();
 
         T tmp = null;
         if (opType == OperationType.AND)
@@ -56,18 +53,12 @@ public class LazyMergeSortIterator<T> implements Iterator<T>
                     if (nextElm.iteratorIdx == i)
                         continue;
 
-                    ByteBuffer o1 = (nextElm.value instanceof ByteBuffer)
-                            ? (ByteBuffer) nextElm.value
-                            : comparator.decompose(nextElm.value);
-                    ByteBuffer o2 = (dequeuedElmBuffer.get(i) instanceof ByteBuffer)
-                            ? (ByteBuffer) dequeuedElmBuffer.get(i)
-                            : comparator.decompose(dequeuedElmBuffer.get(i));
-                    int cmpRes = comparator.compare(o1, o2);
+                    int cmpRes = comparator.compare(nextElm.value, currentPerIterator.get(i));
                     if (cmpRes == 0)
                     {
                         // found the same value in this iterator, this satisfies our AND merge
                         tmp = nextElm.value;
-                        dequeuedElmBuffer.set(i, null);
+                        currentPerIterator.set(i, null);
                     }
                     else if (cmpRes > 0)
                     {
@@ -77,7 +68,7 @@ public class LazyMergeSortIterator<T> implements Iterator<T>
                         if (iterators.get(i).hasNext())
                         {
                             tmp = nextElm.value;
-                            dequeuedElmBuffer.set(i, null);
+                            currentPerIterator.set(i, null);
                         }
                     }
                     else
@@ -88,8 +79,7 @@ public class LazyMergeSortIterator<T> implements Iterator<T>
 
                 if (tmp != null && foundInAllIterators)
                 {
-                    next = tmp;
-                    break;
+                    return tmp;
                 }
                 else
                 {
@@ -97,20 +87,9 @@ public class LazyMergeSortIterator<T> implements Iterator<T>
                 }
             }
         }
-        next = (nextElm == null) ? null : nextElm.value;
-        return nextElm != null && nextElm.value != null;
-    }
-
-    @Override
-    public T next()
-    {
-        return next;
-    }
-
-    @Override
-    public void remove()
-    {
-        throw new UnsupportedOperationException();
+        if (nextElm == null || nextElm.value == null)
+            return endOfData();
+        return nextElm.value;
     }
 
     private Element findNextElement()
@@ -119,11 +98,11 @@ public class LazyMergeSortIterator<T> implements Iterator<T>
         T nextVal = null;
         for (int i = 0; i < iterators.size(); i++)
         {
-            T prev = dequeuedElmBuffer.get(i);
+            T prev = currentPerIterator.get(i);
             if (prev == null && iterators.get(i).hasNext())
             {
                 T itNext = iterators.get(i).next();
-                dequeuedElmBuffer.set(i, itNext);
+                currentPerIterator.set(i, itNext);
                 prev = itNext;
             }
 
@@ -141,18 +120,14 @@ public class LazyMergeSortIterator<T> implements Iterator<T>
                 continue;
             }
 
-            ByteBuffer o1 = (prev instanceof ByteBuffer)
-                    ? (ByteBuffer) prev : comparator.decompose(prev);
-            ByteBuffer o2 = (nextVal instanceof ByteBuffer)
-                    ? (ByteBuffer) nextVal : comparator.decompose(nextVal);
-            if (comparator.compare(o1, o2) <= 0)
+            if (comparator.compare(prev, nextVal) <= 0)
             {
                 // found value less than our previous candidate in current iterator
                 iteratorIdx = i;
                 nextVal = prev;
             }
         }
-        dequeuedElmBuffer.set(iteratorIdx, null);
+        currentPerIterator.set(iteratorIdx, null);
         return new Element(iteratorIdx, nextVal);
     }
 
