@@ -1,6 +1,6 @@
 package org.apache.cassandra.db.index.search;
 
-import org.apache.cassandra.db.index.utils.SeekableIterator;
+import org.apache.cassandra.db.index.utils.SkippableIterator;
 import org.apache.cassandra.db.index.utils.LazyMergeSortIterator;
 
 import org.junit.Assert;
@@ -20,10 +20,10 @@ public class MergeSortAwareIteratorTest
     @Test
     public void orLongIterators()
     {
-        SeekableIterator<Long> it1 = new TestSeekableIterator<>(Arrays.asList(2l,3l,5l,6l));
-        SeekableIterator<Long> it2 = new TestSeekableIterator<>(Arrays.asList(1l,7l));
-        SeekableIterator<Long> it3 = new TestSeekableIterator<>(Arrays.asList(4l,8l,9l,10l));
-        List<SeekableIterator<Long>> iterators = Arrays.asList(it1,it2,it3);
+        SkippableIterator<Long> it1 = new TestSkippableIterator<>(Arrays.asList(2l,3l,5l,6l));
+        SkippableIterator<Long> it2 = new TestSkippableIterator<>(Arrays.asList(1l,7l));
+        SkippableIterator<Long> it3 = new TestSkippableIterator<>(Arrays.asList(4l,8l,9l,10l));
+        List<SkippableIterator<Long>> iterators = Arrays.asList(it1,it2,it3);
 
         List<Long> actual = new ArrayList<>();
         Iterator<Long> it = new LazyMergeSortIterator<>(longComparator,
@@ -38,10 +38,10 @@ public class MergeSortAwareIteratorTest
     @Test
     public void andLongIterators()
     {
-        SeekableIterator<Long> it1 = new TestSeekableIterator<>(Arrays.asList(2l,3l,4l,5l,6l,9l));
-        SeekableIterator<Long> it2 = new TestSeekableIterator<>(Arrays.asList(1l,2l,4l,9l));
-        SeekableIterator<Long> it3 = new TestSeekableIterator<>(Arrays.asList(2l,4l,7l,8l,9l,10l));
-        List<SeekableIterator<Long>> iterators = Arrays.asList(it1,it2,it3);
+        SkippableIterator<Long> it1 = new TestSkippableIterator<>(Arrays.asList(2l,3l,4l,5l,6l,9l));
+        SkippableIterator<Long> it2 = new TestSkippableIterator<>(Arrays.asList(1l,2l,4l,9l));
+        SkippableIterator<Long> it3 = new TestSkippableIterator<>(Arrays.asList(2l,4l,7l,8l,9l,10l));
+        List<SkippableIterator<Long>> iterators = Arrays.asList(it1,it2,it3);
 
         List<Long> actual = new ArrayList<>();
         Iterator<Long> it = new LazyMergeSortIterator<>(longComparator,
@@ -53,13 +53,13 @@ public class MergeSortAwareIteratorTest
         Assert.assertArrayEquals(expected.toArray(), actual.toArray());
     }
 
-    // minimal impl of a SeekableIterator for basic test cases
-    public class TestSeekableIterator<T> implements SeekableIterator<T>
+    // minimal impl of a SkippableIterator for basic test cases
+    public class TestSkippableIterator<T> implements SkippableIterator<T>
     {
         private List<T> elms;
         private int pos = 0;
 
-        public TestSeekableIterator(List<T> elms)
+        public TestSkippableIterator(List<T> elms)
         {
             this.elms = elms;
         }

@@ -10,7 +10,7 @@ import java.util.*;
  * in all input iterators. OperationType.OR will return all elements from the
  * input iterators in sorted order.
  */
-public class LazyMergeSortIterator<T> extends AbstractIterator<T>
+public class LazyMergeSortIterator<T> extends AbstractIterator<T> implements SkippableIterator<T>
 {
     public static enum OperationType
     {
@@ -19,14 +19,14 @@ public class LazyMergeSortIterator<T> extends AbstractIterator<T>
 
     private Comparator<T> comparator;
     private OperationType opType;
-    private List<SeekableIterator<T>> iterators;
+    private List<SkippableIterator<T>> iterators;
 
     // buffer of elements already taken from an iterator
     // that maybe used in the next iteration
     private List<T> currentPerIterator;
 
     public LazyMergeSortIterator(Comparator<T> comparator, OperationType opType,
-                                 List<SeekableIterator<T>> iterators)
+                                 List<SkippableIterator<T>> iterators)
     {
         this.comparator = comparator;
         this.opType = opType;
@@ -90,6 +90,16 @@ public class LazyMergeSortIterator<T> extends AbstractIterator<T>
         if (nextElm == null || nextElm.value == null)
             return endOfData();
         return nextElm.value;
+    }
+
+    @Override
+    public void skipTo(T next)
+    {
+        for (int i = 0; i < iterators.size(); i++)
+        {
+            iterators.get(i).skipTo(next);
+            currentPerIterator.set(i, null);
+        }
     }
 
     private Element findNextElement()
