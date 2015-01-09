@@ -1,5 +1,6 @@
 package org.apache.cassandra.db.index.search;
 
+import com.google.common.collect.AbstractIterator;
 import org.apache.cassandra.db.index.utils.SkippableIterator;
 import org.apache.cassandra.db.index.utils.LazyMergeSortIterator;
 
@@ -213,48 +214,32 @@ public class MergeSortAwareIteratorTest
     }
 
     // minimal impl of a SkippableIterator for basic test cases
-    public class TestSkippableIterator<T> implements SkippableIterator<T>
+    public class TestSkippableIterator<T> extends AbstractIterator<T> implements SkippableIterator<T>
     {
-        private List<T> elms;
+        private Iterator<T> elms;
         private Comparator<T> comparator;
-        private int pos = 0;
 
         public TestSkippableIterator(List<T> elms, Comparator<T> comparator)
         {
-            this.elms = elms;
+            this.elms = elms.iterator();
             this.comparator = comparator;
         }
 
         @Override
-        public boolean hasNext()
+        public T computeNext()
         {
-            return elms.size() > pos;
-        }
-
-        @Override
-        public T next()
-        {
-            return elms.get(pos++);
-        }
-
-        @Override
-        public void remove()
-        {
-            throw new UnsupportedOperationException();
+            return elms.hasNext() ? elms.next() : endOfData();
         }
 
         @Override
         public void skipTo(T next)
         {
-            if (pos+1 >= elms.size())
-                return;
-
-            while(hasNext())
+            while (hasNext())
             {
-                if (pos+1 < elms.size() && comparator.compare(elms.get(pos+1), next) < 0)
-                    pos++;
-                else
+                if (comparator.compare(peek(), next) >= 0)
                     break;
+
+                next();
             }
         }
     }
