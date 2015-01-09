@@ -70,7 +70,7 @@ public class MergeSortAwareIteratorTest
         for(int i = 0; i < 3; i++) {
             List<Table> generatedTables = new ArrayList<>();
             int numTablesToGen = 0;
-            while (numTablesToGen <= 0)
+            while (numTablesToGen <= 4)
                 numTablesToGen = random.nextInt(30);
 
             // generate a list of tableids to use..
