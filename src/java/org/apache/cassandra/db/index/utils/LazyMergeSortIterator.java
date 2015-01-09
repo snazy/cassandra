@@ -1,7 +1,5 @@
 package org.apache.cassandra.db.index.utils;
 
-import com.google.common.collect.AbstractIterator;
-
 import java.util.*;
 
 /**
@@ -10,7 +8,7 @@ import java.util.*;
  * in all input iterators. OperationType.OR will return all elements from the
  * input iterators in sorted order.
  */
-public class LazyMergeSortIterator<T> extends AbstractIterator<T> implements SkippableIterator<T>
+public class LazyMergeSortIterator<T> implements SkippableIterator<T>
 {
     public static enum OperationType
     {
@@ -24,6 +22,7 @@ public class LazyMergeSortIterator<T> extends AbstractIterator<T> implements Ski
     // buffer of elements already taken from an iterator
     // that maybe used in the next iteration
     private List<T> currentPerIterator;
+    private T next = null;
 
     public LazyMergeSortIterator(Comparator<T> comparator, OperationType opType,
                                  List<SkippableIterator<T>> iterators)
@@ -35,18 +34,28 @@ public class LazyMergeSortIterator<T> extends AbstractIterator<T> implements Ski
     }
 
     @Override
-    public T computeNext()
+    public boolean hasNext()
     {
         Element nextElm = findNextElement();
         if (nextElm == null)
-            return endOfData();
+            return false;
 
         T tmp = null;
         if (opType == OperationType.AND)
         {
-            // currently, we only need additional handling for AND
             while (nextElm != null)
             {
+                // if next target element is smaller than the max value
+                // seen in the last pass across all iterators, we can tell
+                // all iterators to safely skip forwards to the last known max
+                if (nextElm.max != null && comparator.compare(nextElm.value, nextElm.max) < 0)
+                {
+                    for(SkippableIterator<T> iterator : iterators)
+                        iterator.skipTo(nextElm.max);
+                    nextElm = findNextElement();
+                    continue;
+                }
+
                 boolean foundInAllIterators = true;
                 for (int i = 0; i < iterators.size(); i++)
                 {
@@ -60,26 +69,17 @@ public class LazyMergeSortIterator<T> extends AbstractIterator<T> implements Ski
                         tmp = nextElm.value;
                         currentPerIterator.set(i, null);
                     }
-                    else if (cmpRes > 0)
-                    {
-                        // skip forward in iterator until we find a value equal to
-                        // the current potential next value
-                        iterators.get(i).skipTo(nextElm.value);
-                        if (iterators.get(i).hasNext())
-                        {
-                            tmp = nextElm.value;
-                            currentPerIterator.set(i, null);
-                        }
-                    }
                     else
                     {
                         foundInAllIterators = false;
                     }
+
                 }
 
                 if (tmp != null && foundInAllIterators)
                 {
-                    return tmp;
+                    next = tmp;
+                    break;
                 }
                 else
                 {
@@ -87,9 +87,33 @@ public class LazyMergeSortIterator<T> extends AbstractIterator<T> implements Ski
                 }
             }
         }
+        else if (opType == OperationType.OR && nextElm.value != null)
+        {
+            // check if the previous value returned equals the next
+            // possible value. Because OR operator, elements must be de-duped
+            if (next != null && comparator.compare(nextElm.value, next) == 0)
+                while (nextElm != null && nextElm.value != null
+                        && comparator.compare(nextElm.value, next) == 0)
+                    nextElm = findNextElement();
+        }
+
         if (nextElm == null || nextElm.value == null)
-            return endOfData();
-        return nextElm.value;
+            return false;
+
+        next = nextElm.value;
+        return true;
+    }
+
+    @Override
+    public T next()
+    {
+        return next;
+    }
+
+    @Override
+    public void remove()
+    {
+        throw new UnsupportedOperationException();
     }
 
     @Override
@@ -106,6 +130,7 @@ public class LazyMergeSortIterator<T> extends AbstractIterator<T> implements Ski
     {
         int iteratorIdx = 0;
         T nextVal = null;
+        T maxFound = null;
         for (int i = 0; i < iterators.size(); i++)
         {
             T prev = currentPerIterator.get(i);
@@ -118,6 +143,8 @@ public class LazyMergeSortIterator<T> extends AbstractIterator<T> implements Ski
 
             if (prev == null)
             {
+                // if any one of the iterators has no more elements we can
+                // safely bail now as there will never be another match
                 if (opType == OperationType.AND)
                     return null;
                 else
@@ -127,18 +154,23 @@ public class LazyMergeSortIterator<T> extends AbstractIterator<T> implements Ski
             {
                 iteratorIdx = i;
                 nextVal = prev;
+                maxFound = prev;
                 continue;
             }
 
-            if (comparator.compare(prev, nextVal) <= 0)
+            // found value smaller than previous candidate from other iterator
+            if (comparator.compare(prev, nextVal) < 0)
             {
-                // found value less than our previous candidate in current iterator
                 iteratorIdx = i;
                 nextVal = prev;
             }
+
+            // this iterator has a value larger than seen before?
+            if (comparator.compare(prev, maxFound) > 0)
+                maxFound = prev;
         }
         currentPerIterator.set(iteratorIdx, null);
-        return new Element(iteratorIdx, nextVal);
+        return new Element(iteratorIdx, nextVal, maxFound);
     }
 
     private class Element
@@ -146,11 +178,13 @@ public class LazyMergeSortIterator<T> extends AbstractIterator<T> implements Ski
         // index of iterator this value is from
         protected int iteratorIdx;
         protected T value;
+        protected T max;
 
-        protected Element(int iteratorIdx, T value)
+        protected Element(int iteratorIdx, T value, T max)
         {
             this.iteratorIdx = iteratorIdx;
             this.value = value;
+            this.max = max;
         }
     }
 }
