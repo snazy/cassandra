@@ -119,18 +119,15 @@ public class LazyMergeSortIterator<T> implements SkippableIterator<T>
     @Override
     public void skipTo(T next)
     {
-        for (int i = 0; i < iterators.size(); i++)
-        {
-            iterators.get(i).skipTo(next);
-            currentPerIterator.set(i, null);
-        }
+        for (SkippableIterator<T> itr : iterators)
+            itr.skipTo(next);
     }
 
     private Element findNextElement()
     {
         int iteratorIdx = 0;
-        T nextVal = null;
-        T maxFound = null;
+        T minVal = null;
+        T maxVal = null;
         for (int i = 0; i < iterators.size(); i++)
         {
             T prev = currentPerIterator.get(i);
@@ -150,27 +147,27 @@ public class LazyMergeSortIterator<T> implements SkippableIterator<T>
                 else
                     continue;
             }
-            else if (nextVal == null)
+            else if (minVal == null)
             {
                 iteratorIdx = i;
-                nextVal = prev;
-                maxFound = prev;
+                minVal = prev;
+                maxVal = prev;
                 continue;
             }
 
             // found value smaller than previous candidate from other iterator
-            if (comparator.compare(prev, nextVal) < 0)
+            if (comparator.compare(prev, minVal) < 0)
             {
                 iteratorIdx = i;
-                nextVal = prev;
+                minVal = prev;
             }
 
             // this iterator has a value larger than seen before?
-            if (comparator.compare(prev, maxFound) > 0)
-                maxFound = prev;
+            if (comparator.compare(prev, maxVal) > 0)
+                maxVal = prev;
         }
         currentPerIterator.set(iteratorIdx, null);
-        return new Element(iteratorIdx, nextVal, maxFound);
+        return new Element(iteratorIdx, minVal, maxVal);
     }
 
     private class Element

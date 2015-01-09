@@ -69,9 +69,7 @@ public class MergeSortAwareIteratorTest
 
         for(int i = 0; i < 3; i++) {
             List<Table> generatedTables = new ArrayList<>();
-            int numTablesToGen = 0;
-            while (numTablesToGen <= 4)
-                numTablesToGen = random.nextInt(30);
+            int numTablesToGen = getRandomInt(4, 30);
 
             // generate a list of tableids to use..
             Set<Long> tableIds = new HashSet<>();
@@ -140,6 +138,66 @@ public class MergeSortAwareIteratorTest
         Assert.assertTrue(actual.containsKey(2l));
         Assert.assertTrue(actual.containsKey(9l));
         Assert.assertTrue(actual.containsKey(17l));
+    }
+
+    @Test
+    public void randomGeneratedOr()
+    {
+        List<Long> expectedOrRes = new ArrayList<>();
+        Set<Long> expectedOrSet = new HashSet<>();
+
+        List<SkippableIterator<Long>> iterators = new ArrayList<>();
+        for (int i = 0; i < 4; i++)
+        {
+            List<Long> randomArray = getRandomLongArray(1, 25);
+            expectedOrSet.addAll(randomArray);
+            SkippableIterator<Long> it = new TestSkippableIterator<>(randomArray, longComparator);
+            iterators.add(it);
+        }
+        expectedOrRes.addAll(expectedOrSet);
+        Collections.sort(expectedOrRes);
+
+        LazyMergeSortIterator<Long> it = new LazyMergeSortIterator<>(longComparator,
+                LazyMergeSortIterator.OperationType.OR, iterators);
+        List<Long> actual = new ArrayList<>();
+        while (it.hasNext())
+            actual.add(it.next());
+
+        Assert.assertArrayEquals(expectedOrRes.toArray(), actual.toArray());
+    }
+
+    @Test
+    //multiORWithSingleANDTest
+    public void theMoviePrimerIsEasierToUnderstand()
+    {
+        List<SkippableIterator<Long>> iteratorsToAnd = new ArrayList<>();
+        int numLazyOrIterators = getRandomInt(3,7);
+        for (int i = 0; i < numLazyOrIterators; i++)
+        {
+            List<SkippableIterator<Long>> skippableIterators = new ArrayList<>();
+            int numSkippableIterators = getRandomInt(2,7);
+            for (int j = 0; j < numSkippableIterators; j++) {
+                List<Long> list = getRandomLongArray(1, 25);
+                SkippableIterator<Long> it = new TestSkippableIterator<>(list, longComparator);
+                skippableIterators.add(it);
+            }
+            SkippableIterator<Long> unionItr = new LazyMergeSortIterator<>(longComparator,
+                    LazyMergeSortIterator.OperationType.OR, skippableIterators);
+            iteratorsToAnd.add(unionItr);
+        }
+
+        SkippableIterator<Long> intersection = new LazyMergeSortIterator<>(longComparator,
+                LazyMergeSortIterator.OperationType.AND, iteratorsToAnd);
+        while (intersection.hasNext())
+            intersection.next();
+    }
+
+    private int getRandomInt(int min, int max)
+    {
+        int numTablesToGen = 0;
+        while (numTablesToGen <= min)
+            numTablesToGen = random.nextInt(max);
+        return numTablesToGen;
     }
 
     private Table getTestTable(Long tableId, List<Long> ... lists)
@@ -238,7 +296,7 @@ public class MergeSortAwareIteratorTest
             {
                 if (comparator.compare(peek(), next) >= 0)
                     break;
-
+                
                 next();
             }
         }
