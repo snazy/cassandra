@@ -1,5 +1,7 @@
 package org.apache.cassandra.db.index.utils;
 
+import org.apache.cassandra.utils.Pair;
+
 import java.util.*;
 
 /**
@@ -45,13 +47,22 @@ public class LazyMergeSortIterator<T> implements SkippableIterator<T>
         {
             while (nextElm != null)
             {
+                // "expected" behavior when op is AND and only given 1 input is to
+                // simply iterate and return all the values from the one iterator
+                if (iterators.size() == 1)
+                {
+                    next = nextElm.currentMinElement.left;
+                    break;
+                }
+
                 // if next target element is smaller than the max value
                 // seen in the last pass across all iterators, we can tell
                 // all iterators to safely skip forwards to the last known max
-                if (nextElm.max != null && comparator.compare(nextElm.value, nextElm.max) < 0)
+                if (nextElm.currentMaxElement.left != null
+                        && comparator.compare(nextElm.currentMinElement.left, nextElm.currentMaxElement.left) < 0)
                 {
                     for(SkippableIterator<T> iterator : iterators)
-                        iterator.skipTo(nextElm.max);
+                        iterator.skipTo(nextElm.currentMaxElement.left);
                     nextElm = findNextElement();
                     continue;
                 }
@@ -59,14 +70,14 @@ public class LazyMergeSortIterator<T> implements SkippableIterator<T>
                 boolean foundInAllIterators = true;
                 for (int i = 0; i < iterators.size(); i++)
                 {
-                    if (nextElm.iteratorIdx == i)
+                    if (nextElm.currentMinElement.right == i)
                         continue;
 
-                    int cmpRes = comparator.compare(nextElm.value, currentPerIterator.get(i));
+                    int cmpRes = comparator.compare(nextElm.currentMinElement.left, currentPerIterator.get(i));
                     if (cmpRes == 0)
                     {
                         // found the same value in this iterator, this satisfies our AND merge
-                        tmp = nextElm.value;
+                        tmp = nextElm.currentMinElement.left;
                         currentPerIterator.set(i, null);
                     }
                     else
@@ -87,20 +98,20 @@ public class LazyMergeSortIterator<T> implements SkippableIterator<T>
                 }
             }
         }
-        else if (opType == OperationType.OR && nextElm.value != null)
+        else if (opType == OperationType.OR && nextElm.currentMinElement.left != null)
         {
             // check if the previous value returned equals the next
             // possible value. Because OR operator, elements must be de-duped
-            if (next != null && comparator.compare(nextElm.value, next) == 0)
-                while (nextElm != null && nextElm.value != null
-                        && comparator.compare(nextElm.value, next) == 0)
+            if (next != null && comparator.compare(nextElm.currentMinElement.left, next) == 0)
+                while (nextElm != null && nextElm.currentMinElement.left != null
+                        && comparator.compare(nextElm.currentMinElement.left, next) == 0)
                     nextElm = findNextElement();
         }
 
-        if (nextElm == null || nextElm.value == null)
+        if (nextElm == null || nextElm.currentMinElement.left == null)
             return false;
 
-        next = nextElm.value;
+        next = nextElm.currentMinElement.left;
         return true;
     }
 
@@ -126,8 +137,8 @@ public class LazyMergeSortIterator<T> implements SkippableIterator<T>
     private Element findNextElement()
     {
         int iteratorIdx = 0;
-        T minVal = null;
-        T maxVal = null;
+        Pair<T,Integer> minVal = null;
+        Pair<T,Integer> maxVal = null;
         for (int i = 0; i < iterators.size(); i++)
         {
             T prev = currentPerIterator.get(i);
@@ -149,39 +160,35 @@ public class LazyMergeSortIterator<T> implements SkippableIterator<T>
             }
             else if (minVal == null)
             {
-                iteratorIdx = i;
-                minVal = prev;
-                maxVal = prev;
+                Pair<T,Integer> elm = Pair.create(prev, i);
+                minVal = elm;
+                maxVal = elm;
                 continue;
             }
 
             // found value smaller than previous candidate from other iterator
-            if (comparator.compare(prev, minVal) < 0)
-            {
-                iteratorIdx = i;
-                minVal = prev;
-            }
+            if (comparator.compare(prev, minVal.left) < 0)
+                minVal = Pair.create(prev, i);
+
 
             // this iterator has a value larger than seen before?
-            if (comparator.compare(prev, maxVal) > 0)
-                maxVal = prev;
+            if (comparator.compare(prev, maxVal.left) > 0)
+                maxVal = Pair.create(prev, i);
         }
         currentPerIterator.set(iteratorIdx, null);
-        return new Element(iteratorIdx, minVal, maxVal);
+        return new Element(minVal, maxVal);
     }
 
     private class Element
     {
-        // index of iterator this value is from
-        protected int iteratorIdx;
-        protected T value;
-        protected T max;
+        // <left:value,right:index of iterator value from>
+        protected Pair<T,Integer> currentMinElement;
+        protected Pair<T,Integer> currentMaxElement;
 
-        protected Element(int iteratorIdx, T value, T max)
+        protected Element(Pair<T,Integer> currentMinElement, Pair<T,Integer> currentMaxElement)
         {
-            this.iteratorIdx = iteratorIdx;
-            this.value = value;
-            this.max = max;
+            this.currentMinElement = currentMinElement;
+            this.currentMaxElement = currentMaxElement;
         }
     }
 }
