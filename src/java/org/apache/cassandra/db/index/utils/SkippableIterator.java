@@ -4,9 +4,12 @@ import java.util.Iterator;
 
 public interface SkippableIterator<T> extends Iterator<T> {
     /**
-     * Skip forward in the iterator until either running
-     * out of elements or finding an equal value
-     * @param next value to seek the iterator forward until matching
+     * When called, this iterators current position should
+     * be skipped forwards until finding either:
+     *   1) an element equal to next
+     *   2) the greatest element that still evaluates to less than next
+     *   3) the end of the iterator
+     * @param next value to skip the iterator forward until matching
      */
     public void skipTo(T next);
 }
