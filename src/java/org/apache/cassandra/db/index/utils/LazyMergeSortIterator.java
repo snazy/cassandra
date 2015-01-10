@@ -158,9 +158,7 @@ public class LazyMergeSortIterator<T> implements SkippableIterator<T>
             }
             else if (minVal == null)
             {
-                Pair<T,Integer> elm = Pair.create(prev, i);
-                minVal = elm;
-                maxVal = elm;
+                minVal = maxVal = Pair.create(prev, i);
                 continue;
             }
 
