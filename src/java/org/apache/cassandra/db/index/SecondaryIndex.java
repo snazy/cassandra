@@ -257,7 +257,7 @@ public abstract class SecondaryIndex
         return baseCfs;
     }
 
-    private void setBaseCfs(ColumnFamilyStore baseCfs)
+    protected void setBaseCfs(ColumnFamilyStore baseCfs)
     {
         this.baseCfs = baseCfs;
     }
