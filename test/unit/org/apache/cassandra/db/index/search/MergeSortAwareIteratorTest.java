@@ -62,6 +62,22 @@ public class MergeSortAwareIteratorTest
     }
 
     @Test
+    public void orWithSingleIteratorAsInput()
+    {
+        List<Long> input = Arrays.asList(1l,2l,4l,9l);
+        SkippableIterator<Long> it = new TestSkippableIterator<>(input, longComparator);
+        List<SkippableIterator<Long>> iterators = Arrays.asList(it);
+
+        List<Long> actual = new ArrayList<>();
+        SkippableIterator<Long> itRes = new LazyMergeSortIterator<>(longComparator,
+                LazyMergeSortIterator.OperationType.AND, iterators);
+        while(itRes.hasNext())
+            actual.add(itRes.next());
+
+        Assert.assertArrayEquals(input.toArray(), actual.toArray());
+    }
+
+    @Test
     public void christopherNolanWouldBeProud()
     {
         List<List<Long>> rawMergedLists = new ArrayList<>();
