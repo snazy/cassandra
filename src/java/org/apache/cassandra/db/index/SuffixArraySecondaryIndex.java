@@ -11,6 +11,7 @@ import java.util.concurrent.Phaser;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicReference;
 
 import com.google.common.collect.*;
 import org.apache.cassandra.db.*;
@@ -18,6 +19,11 @@ import org.apache.cassandra.db.index.search.container.KeyContainer;
 import org.apache.cassandra.dht.AbstractBounds;
 import org.apache.cassandra.io.sstable.*;
 import org.apache.cassandra.io.util.FileUtils;
+import org.apache.cassandra.notifications.INotification;
+import org.apache.cassandra.notifications.INotificationConsumer;
+import org.apache.cassandra.notifications.SSTableAddedNotification;
+import org.apache.cassandra.notifications.SSTableDeletingNotification;
+import org.apache.cassandra.notifications.SSTableListChangedNotification;
 import org.apache.cassandra.utils.*;
 import org.apache.cassandra.concurrent.JMXEnabledThreadPoolExecutor;
 import org.apache.cassandra.concurrent.NamedThreadFactory;
@@ -73,8 +79,9 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
 
     //not sure i really need this, tbh
     private final Map<Integer, SSTableWriterListener> openListeners;
-
     private final BiMap<ByteBuffer, Component> columnDefComponents;
+
+    private final Map<ByteBuffer, SADataTracker> intervalTrees;
 
     private AbstractType<?> keyComparator;
 
@@ -82,6 +89,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
     {
         openListeners = new ConcurrentHashMap<>();
         columnDefComponents = HashBiMap.create();
+        intervalTrees = new ConcurrentHashMap<>();
     }
 
     public void init()
@@ -90,6 +98,12 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
         // that it happens to create (and subsequently/immediately throw away)
         addComponent(columnDefs);
 
+        baseCfs.getDataTracker().subscribe(new DataTrackerConsumer());
+    }
+
+    protected void setBaseCfs(ColumnFamilyStore baseCfs)
+    {
+        super.setBaseCfs(baseCfs);
         keyComparator = baseCfs.metadata.getKeyValidator();
     }
 
@@ -105,16 +119,36 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
         // checks that the SI 'looks' legit, but then throws away any created instances - fml, this 2I api sux
         if (baseCfs == null)
             return;
-        assert baseCfs != null : "should not happen - fix code paths to here!!";
+        executor.setCorePoolSize(columnDefs.size() * 2);
 
         AbstractType<?> type = baseCfs.getComparator();
         for (ColumnDefinition def : defs)
         {
             String indexName = String.format(FILE_NAME_FORMAT, type.getString(def.name));
             columnDefComponents.put(def.name, new Component(Component.Type.SECONDARY_INDEX, indexName));
-        }
 
-        executor.setCorePoolSize(columnDefs.size() * 2);
+            // on restart, sstables are loaded into DataTracker before 2I are hooked up (and init() invoked),
+            // so we need to grab the sstables here
+            if (!intervalTrees.containsKey(def.name))
+                intervalTrees.put(def.name, new SADataTracker(def.name, baseCfs.getDataTracker().getSSTables()));
+        }
+    }
+
+    private void addToIntervalTree(Collection<SSTableReader> readers, Collection<ColumnDefinition> defs)
+    {
+        for (ColumnDefinition columnDefinition : defs)
+        {
+            SADataTracker dataTracker = intervalTrees.get(columnDefinition.name);
+            dataTracker.update(Collections.EMPTY_LIST, readers);
+        }
+    }
+
+    private void removeFromIntervalTree(Collection<SSTableReader> readers)
+    {
+        for (Map.Entry<ByteBuffer, SADataTracker> entry : intervalTrees.entrySet())
+        {
+            entry.getValue().update(readers, Collections.EMPTY_LIST);
+        }
     }
 
     private ColumnDefinition getColumnDef(Component component)
@@ -449,61 +483,13 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
             List<Pair<ByteBuffer, Expression>> expressions = analyzeQuery(filter.getClause());
             List<Pair<ByteBuffer, Expression>> expressionsImmutable = ImmutableList.copyOf(expressions);
 
-            Map<ByteBuffer, IntervalTree<ByteBuffer, SSTableReader, Interval<ByteBuffer, SSTableReader>>> termIntervalTree = new HashMap<>();
-            Map<ByteBuffer, IntervalTree<ByteBuffer, SSTableReader, Interval<ByteBuffer, SSTableReader>>> keyIntervalTree = new HashMap<>();
-
-            for (Pair<ByteBuffer, Expression> e : expressions)
-            {
-                String name = baseCfs.getComparator().getString(e.left);
-                final AbstractType<?> validator = baseCfs.metadata.getColumnDefinitionFromColumnName(e.left).getValidator();
-
-                List<Interval<ByteBuffer, SSTableReader>> termIntervals = new ArrayList<>();
-                List<Interval<ByteBuffer, SSTableReader>> keyIntervals = new ArrayList<>();
-
-                for (SSTableReader sstable : baseCfs.getDataTracker().getSSTables())
-                {
-                    try (RandomAccessFile index = new RandomAccessFile(new File(sstable.descriptor.filenameFor(String.format(FILE_NAME_FORMAT, name))), "r"))
-                    {
-                        ByteBuffer minTerm = ByteBufferUtil.readWithShortLength(index);
-                        ByteBuffer maxTerm = ByteBufferUtil.readWithShortLength(index);
-
-                        logger.info("(term) Interval.create(field: " + name + ", min: " + validator.getString(minTerm) + ", max: " + validator.getString(maxTerm) + ", sstable: " + sstable + ")");
-                        termIntervals.add(Interval.create(minTerm, maxTerm, sstable));
-
-                        ByteBuffer minKey = ByteBufferUtil.readWithShortLength(index);
-                        ByteBuffer maxKey = ByteBufferUtil.readWithShortLength(index);
-
-                        logger.info("(key) Interval.create(field: " + name + ", min: " + keyComparator.getString(minKey) + ", max: " + keyComparator.getString(maxKey) + ", sstable: " + sstable + ")");
-                        keyIntervals.add(Interval.create(minKey, maxKey, sstable));
-                    }
-                }
-
-                termIntervalTree.put(e.left, IntervalTree.build(termIntervals, new Comparator<ByteBuffer>()
-                {
-                    @Override
-                    public int compare(ByteBuffer a, ByteBuffer b)
-                    {
-                        return validator.compare(a, b);
-                    }
-                }));
-
-                keyIntervalTree.put(e.left, IntervalTree.build(keyIntervals, new Comparator<ByteBuffer>()
-                {
-                    @Override
-                    public int compare(ByteBuffer a, ByteBuffer b)
-                    {
-                        return keyComparator.compare(a, b);
-                    }
-                }));
-            }
-
             List<SSTableReader> primarySSTables = null;
             Pair<ByteBuffer, Expression> primaryExpression = null;
 
             for (Pair<ByteBuffer, Expression> e : expressions)
             {
                 Expression expression = e.right;
-                IntervalTree<ByteBuffer, SSTableReader, Interval<ByteBuffer, SSTableReader>> intervals = termIntervalTree.get(e.left);
+                IntervalTree<ByteBuffer, SSTableReader, Interval<ByteBuffer, SSTableReader>> intervals = intervalTrees.get(e.left).view.get().termIntervalTree;
 
                 List<SSTableReader> sstables = (expression.lower == null || expression.upper == null)
                             ? intervals.search((expression.lower == null ? expression.upper : expression.lower).value)
@@ -534,7 +520,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
 
                 Set<SSTableReader> readers = new HashSet<>();
                 String name = baseCfs.getComparator().getString(e.left);
-                IntervalTree<ByteBuffer, SSTableReader, Interval<ByteBuffer, SSTableReader>> it = keyIntervalTree.get(e.left);
+                IntervalTree<ByteBuffer, SSTableReader, Interval<ByteBuffer, SSTableReader>> it = intervalTrees.get(e.left).view.get().keyIntervalTree;
                 for (SSTableReader reader : primarySSTables)
                 {
                     try (RandomAccessFile index = new RandomAccessFile(new File(reader.descriptor.filenameFor(String.format(FILE_NAME_FORMAT, name))), "r"))
@@ -548,8 +534,14 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
                         readers.addAll(it.search(Interval.create(minKey, maxKey, (SSTableReader) null)));
                     }
                 }
-                if (readers.isEmpty())
+
+                // might not want to fail the entire search if we fail to acquire references - maybe retry (but will need updated SADataTracker) ??
+                if (readers.isEmpty() || !SSTableReader.acquireReferences(readers))
+                {
+                    for (Map.Entry<ByteBuffer, Set<SSTableReader>> entry : narrowedCandidates.entrySet())
+                        SSTableReader.releaseReferences(entry.getValue());
                     return Collections.EMPTY_LIST;
+                }
                 narrowedCandidates.put(e.left, readers);
             }
 
@@ -644,6 +636,11 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
                         }
                     }
                 }
+            }
+            finally
+            {
+                for (Map.Entry<ByteBuffer, Set<SSTableReader>> entry : narrowedCandidates.entrySet())
+                    SSTableReader.releaseReferences(entry.getValue());
             }
 
             return rows;
@@ -984,4 +981,159 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
             return reader.getBloomFilter().isPresent(key);
         }
     }
+
+    /** a pared-down version of DataTracker and DT.View. need one for each index of each column family */
+    private class SADataTracker
+    {
+        // by using using DT.View, we do get some baggage fields (memtable, compacting, and so on)
+        // but always pass in empty list for those fields, we should be ok
+        private final AtomicReference<SAView> view = new AtomicReference<>();
+
+        public SADataTracker(ByteBuffer name, Set<SSTableReader> ssTables)
+        {
+            view.set(new SAView(name, ssTables));
+        }
+
+        public void update(Collection<SSTableReader> oldSSTables, Collection<SSTableReader> newSSTables)
+        {
+
+            SAView currentView, newView;
+            do
+            {
+                currentView = view.get();
+
+                //TODO: handle this slightly more elegantly, but don't bother trying to remove tables from an empty tree
+                if (currentView.keyIntervalTree.intervalCount() == 0 && oldSSTables.size() > 0)
+                    return;
+                newView = currentView.update(oldSSTables, newSSTables);
+                if (newView == null)
+                    break;
+            }
+            while (!view.compareAndSet(currentView, newView));
+        }
+    }
+
+    private class SAView
+    {
+        private final ByteBuffer col;
+        final IntervalTree<ByteBuffer, SSTableReader, Interval<ByteBuffer, SSTableReader>> termIntervalTree;
+        final IntervalTree<ByteBuffer, SSTableReader, Interval<ByteBuffer, SSTableReader>> keyIntervalTree;
+
+        public SAView(ByteBuffer col, Set<SSTableReader> sstables)
+        {
+            this(null, col, Collections.EMPTY_LIST, sstables);
+        }
+
+        private SAView(SAView previous, ByteBuffer col, final Collection<SSTableReader> toRemove, Collection<SSTableReader> toAdd)
+        {
+            this.col = col;
+
+            String name = baseCfs.getComparator().getString(col);
+            final AbstractType<?> validator = baseCfs.metadata.getColumnDefinitionFromColumnName(col).getValidator();
+
+            Predicate<Interval<ByteBuffer, SSTableReader>> predicate = new Predicate<Interval<ByteBuffer, SSTableReader>>()
+            {
+                public boolean apply(Interval<ByteBuffer, SSTableReader> interval)
+                {
+                    return !toRemove.contains(interval.data);
+                }
+            };
+
+            List<Interval<ByteBuffer, SSTableReader>> termIntervals = new ArrayList<>();
+            List<Interval<ByteBuffer, SSTableReader>> keyIntervals = new ArrayList<>();
+
+            // reuse entries from the previously constructed view to avoid reloading from disk or keep (yet another) cache of the sstreader -> intervals
+            if (previous != null)
+            {
+                for (Interval<ByteBuffer, SSTableReader> interval : Iterables.filter(previous.keyIntervalTree, predicate))
+                    keyIntervals.add(interval);
+                for (Interval<ByteBuffer, SSTableReader> interval : Iterables.filter(previous.termIntervalTree, predicate))
+                    termIntervals.add(interval);
+            }
+
+            for (SSTableReader sstable : toAdd)
+            {
+                try (RandomAccessFile index = new RandomAccessFile(new File(sstable.descriptor.filenameFor(String.format(FILE_NAME_FORMAT, name))), "r"))
+                {
+                    ByteBuffer minTerm = ByteBufferUtil.readWithShortLength(index);
+                    ByteBuffer maxTerm = ByteBufferUtil.readWithShortLength(index);
+
+                    logger.info("(term) Interval.create(field: " + name + ", min: " + validator.getString(minTerm) + ", max: " + validator.getString(maxTerm) + ", sstable: " + sstable + ")");
+                    termIntervals.add(Interval.create(minTerm, maxTerm, sstable));
+
+                    ByteBuffer minKey = ByteBufferUtil.readWithShortLength(index);
+                    ByteBuffer maxKey = ByteBufferUtil.readWithShortLength(index);
+
+                    logger.info("(key) Interval.create(field: " + name + ", min: " + keyComparator.getString(minKey) + ", max: " + keyComparator.getString(maxKey) + ", sstable: " + sstable + ")");
+                    keyIntervals.add(Interval.create(minKey, maxKey, sstable));
+                }
+                catch (IOException ioe)
+                {
+                    logger.warn("unable to read SA file - ignoring", ioe);
+                }
+            }
+
+            termIntervalTree = IntervalTree.build(termIntervals, new Comparator<ByteBuffer>()
+            {
+                @Override
+                public int compare(ByteBuffer a, ByteBuffer b)
+                {
+                    return validator.compare(a, b);
+                }
+            });
+
+            keyIntervalTree = IntervalTree.build(keyIntervals, new Comparator<ByteBuffer>()
+            {
+                @Override
+                public int compare(ByteBuffer a, ByteBuffer b)
+                {
+                    return keyComparator.compare(a, b);
+                }
+            });
+        }
+
+        public SAView update(Collection<SSTableReader> toRemove, Collection<SSTableReader> toAdd)
+        {
+            int newKeysSize = assertCorrectSizing(keyIntervalTree, toRemove, toAdd);
+            int newTermsSize = assertCorrectSizing(termIntervalTree, toRemove, toAdd);
+            assert newKeysSize == newTermsSize : String.format("mismatched sizes for intervals tree for keys vs terms: %d != %d", newKeysSize, newTermsSize);
+
+            return new SAView(this, col, toRemove, toAdd);
+        }
+
+        private int assertCorrectSizing(IntervalTree<ByteBuffer, SSTableReader, Interval<ByteBuffer, SSTableReader>> tree, Collection<SSTableReader> oldSSTables, Collection<SSTableReader> newReaders)
+        {
+            int newSSTablesSize = tree.intervalCount() - oldSSTables.size() + newReaders.size();
+            assert newSSTablesSize >= newReaders.size() :
+                String.format("Incoherent new size %d replacing %s by %s, sstable size %d", newSSTablesSize, oldSSTables, newReaders, tree.intervalCount());
+            return newSSTablesSize;
+        }
+    }
+
+    private class DataTrackerConsumer implements INotificationConsumer
+    {
+        public void handleNotification(INotification notification, Object sender)
+        {
+            // unfortunately, we can only check the type of notification via instaceof :(
+            if (notification instanceof SSTableAddedNotification)
+            {
+                SSTableAddedNotification notif = (SSTableAddedNotification) notification;
+                addToIntervalTree(Collections.singletonList(notif.added), getColumnDefs());
+            }
+            else if (notification instanceof SSTableListChangedNotification)
+            {
+                SSTableListChangedNotification notif = (SSTableListChangedNotification) notification;
+                for (SSTableReader reader : notif.added)
+                    addToIntervalTree(Collections.singletonList(reader), getColumnDefs());
+                for (SSTableReader reader : notif.removed)
+                    removeFromIntervalTree(Collections.singletonList(reader));
+            }
+            else if (notification instanceof SSTableDeletingNotification)
+            {
+                SSTableDeletingNotification notif = (SSTableDeletingNotification) notification;
+                removeFromIntervalTree(Collections.singletonList(notif.deleting));
+            }
+        }
+    }
 }
+
