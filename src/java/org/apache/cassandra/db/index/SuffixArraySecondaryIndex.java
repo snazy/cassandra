@@ -2,6 +2,7 @@ package org.apache.cassandra.db.index;
 
 import java.io.*;
 import java.nio.ByteBuffer;
+import java.nio.charset.CharacterCodingException;
 import java.util.*;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ConcurrentHashMap;
@@ -14,6 +15,7 @@ import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicReference;
 
 import org.apache.cassandra.db.*;
+import org.apache.cassandra.db.index.search.AbstractTokenizer;
 import org.apache.cassandra.db.index.utils.LazyMergeSortIterator;
 import org.apache.cassandra.db.index.utils.SkippableIterator;
 import org.apache.cassandra.dht.AbstractBounds;
@@ -58,6 +60,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
 {
     protected static final Logger logger = LoggerFactory.getLogger(SuffixArraySecondaryIndex.class);
     public static final String FILE_NAME_FORMAT = "SI_%s.db";
+    public static final String TOKENIZATION_CLASS_OPTION_NAME = "tokenization_class";
 
     private static final ThreadPoolExecutor executor = getExecutor();
 
@@ -79,6 +82,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
     //not sure i really need this, tbh
     private final Map<Integer, SSTableWriterListener> openListeners;
     private final BiMap<ByteBuffer, Component> columnDefComponents;
+    private final Map<ByteBuffer, Class<?>> columnTokenizers;
 
     private final Map<ByteBuffer, SADataTracker> intervalTrees;
 
@@ -88,6 +92,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
     {
         openListeners = new ConcurrentHashMap<>();
         columnDefComponents = HashBiMap.create();
+        columnTokenizers = new ConcurrentHashMap<>();
         intervalTrees = new ConcurrentHashMap<>();
     }
 
@@ -131,6 +136,20 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
             if (!intervalTrees.containsKey(def.name))
                 intervalTrees.put(def.name, new SADataTracker(def.name, baseCfs.getDataTracker().getSSTables()));
         }
+
+        // todo: where should this actually go?
+        try
+        {
+            for (ColumnDefinition colDef : columnDefs)
+            {
+                Map<String, String> indexOptions = colDef.getIndexOptions();
+                columnTokenizers.put(colDef.name, Class.forName(indexOptions.get(TOKENIZATION_CLASS_OPTION_NAME)));
+            }
+        }
+        catch (Exception e)
+        {
+            logger.error("Failed to parse index options from column", e);
+        }
     }
 
     private void addToIntervalTree(Collection<SSTableReader> readers, Collection<ColumnDefinition> defs)
@@ -166,7 +185,38 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
 
     public void validateOptions() throws ConfigurationException
     {
-        // nop ??
+        for (ColumnDefinition colDef : columnDefs)
+        {
+            if (!colDef.isIndexed())
+                continue;
+
+            Map<String, String> indexOptions = colDef.getIndexOptions();
+
+            // if specified, check to make sure the provided tokenization class is valid
+            if (indexOptions.get(TOKENIZATION_CLASS_OPTION_NAME) != null)
+            {
+                try
+                {
+                    Class<?> clazz = Class.forName(indexOptions.get(TOKENIZATION_CLASS_OPTION_NAME));
+                    Object instance = clazz.newInstance();
+                    if (!(instance instanceof AbstractTokenizer))
+                    {
+                        throw new ConfigurationException("Unable to use configured tokenization "
+                                + "class [" + clazz.getName() + "] as it does not extend AbstractTokenizer");
+                    }
+                }
+                catch (ClassNotFoundException e)
+                {
+                    throw new ConfigurationException("Tokenization class "
+                            + "[" + indexOptions.get(TOKENIZATION_CLASS_OPTION_NAME) + "] not found");
+                }
+                catch (IllegalAccessException | InstantiationException e)
+                {
+                    throw new ConfigurationException("Unable to instantiate an instance of "
+                            + "tokenization class [" + indexOptions.get(TOKENIZATION_CLASS_OPTION_NAME) + "]");
+                }
+            }
+        }
     }
 
     public String getIndexName()
@@ -258,6 +308,37 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
         return columnDef == null ? null : columnDef.getValidator();
     }
 
+    private AbstractTokenizer<ByteBuffer> getTokenizer(ByteBuffer columnName, ByteBuffer input)
+    {
+        Class<?> tokenizerClass = columnTokenizers.get(columnName);
+        AbstractTokenizer<ByteBuffer> tokenizer = null;
+        if (tokenizerClass != null)
+        {
+            try {
+                tokenizer = (AbstractTokenizer<ByteBuffer>) columnTokenizers.get(columnName).newInstance();
+                tokenizer.setOptions(getColumnDefinition(columnName).getIndexOptions());
+                tokenizer.setInput(input);
+                tokenizer.init();
+            }
+            catch (Exception e)
+            {
+                String columnNameToString;
+                try
+                {
+                    columnNameToString = ByteBufferUtil.string(columnName);
+                }
+                catch (CharacterCodingException e1)
+                {
+                    logger.error("Failed to get column name as string", e1);
+                    columnNameToString = "Unknown";
+                }
+                logger.error("Failed to get a tokenizer instance for column " +
+                        "name [{}]", columnNameToString, e);
+            }
+        }
+        return (tokenizer == null) ? null : tokenizer;
+    }
+
     protected class LocalSSTableWriterListener implements SSTableWriterListener
     {
         private final Descriptor descriptor;
@@ -268,6 +349,8 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
 
         private DecoratedKey curKey;
         private long curFilePosition;
+
+        private AbstractTokenizer<ByteBuffer> tokenizer;
 
         public LocalSSTableWriterListener(Descriptor descriptor)
         {
@@ -294,11 +377,33 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
                 return;
 
             ByteBuffer term = column.value().slice();
-            IndexInfo indexInfo = indexPerTerm.get(term);
-            if (indexInfo == null)
-                indexPerTerm.put(term, (indexInfo = new IndexInfo(component)));
 
-            indexInfo.add(curKey, (int) curFilePosition);
+            // todo: for performance we should share an instance, but we
+            // don't have the column name until here.. and options per column..
+            // additionally, bc we are using AbstractIterator now, once endOfData()
+            // is called once it appears there is no way to reset it..
+            tokenizer = getTokenizer(column.name(), term);
+
+            if (tokenizer != null)
+            {
+                while (tokenizer.hasNext())
+                {
+                    ByteBuffer token = tokenizer.next();
+                    IndexInfo indexInfo = indexPerTerm.get(token);
+                    if (indexInfo == null)
+                        indexPerTerm.put(token, (indexInfo = new IndexInfo(component)));
+
+                    indexInfo.add(curKey, (int) curFilePosition);
+                }
+            }
+            else
+            {
+                IndexInfo indexInfo = indexPerTerm.get(term);
+                if (indexInfo == null)
+                    indexPerTerm.put(term, (indexInfo = new IndexInfo(component)));
+
+                indexInfo.add(curKey, (int) curFilePosition);
+            }
 
             Pair<DecoratedKey, DecoratedKey> range = ranges.get(component);
             if (range == null)
