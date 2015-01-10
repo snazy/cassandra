@@ -268,7 +268,7 @@ public class OnDiskSABuilder
                     return endOfData();
 
                 Term term = termIterator.next();
-                return Pair.create(term.value, new KeyContainerBuilder(keyComparator, term.keys).finish());
+                return Pair.create(term.value, new KeyContainerBuilder(keyComparator, term.keys));
             }
         }
 
@@ -372,7 +372,7 @@ public class OnDiskSABuilder
 
             private Pair<ByteBuffer, KeyContainerBuilder> finishSuffix()
             {
-                return Pair.create(lastProcessedSuffix, container.finish());
+                return Pair.create(lastProcessedSuffix, container);
             }
         }
     }

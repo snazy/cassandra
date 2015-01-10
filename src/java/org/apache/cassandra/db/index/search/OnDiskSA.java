@@ -76,25 +76,39 @@ public class OnDiskSA implements Iterable<OnDiskSA.DataSuffix>, Closeable
         dataLevel = new DataLevel(file.getFilePointer(), blockCount);
     }
 
-    public RoaringBitmap search(ByteBuffer query) throws IOException
+    public RoaringBitmap search(ByteBuffer suffix) throws IOException
     {
-        RoaringBitmap keys = null;
-        Iterator<DataSuffix> suffixes = iteratorAt(query, IteratorOrder.DESC, true);
+        return search(suffix, true, suffix, true);
+    }
 
+    public RoaringBitmap search(ByteBuffer lower, boolean lowerInclusive,
+                                ByteBuffer upper, boolean upperInclusive)
+    {
+        IteratorOrder order = lower == null ? IteratorOrder.ASC : IteratorOrder.DESC;
+        Iterator<DataSuffix> suffixes = lower == null
+                                         ? iteratorAt(upper, order, upperInclusive)
+                                         : iteratorAt(lower, order, lowerInclusive);
+
+        RoaringBitmap keys = null;
         while (suffixes.hasNext())
         {
             DataSuffix suffix = suffixes.next();
 
-            if (suffix.compareTo(comparator, query, false) != 0)
-                break;
-
-            for (KeyContainer.Bucket bucket : suffix.getKeys())
+            if (order == IteratorOrder.DESC && upper != null)
             {
-                if (keys == null)
-                    keys = bucket.getPositions();
-                else
-                    keys.or(bucket.getPositions());
+                ByteBuffer s = suffix.getSuffix();
+                s.limit(s.position() + upper.remaining());
+
+                int cmp = comparator.compare(s, upper);
+                if ((cmp > 0 && upperInclusive) || (cmp >= 0 && !upperInclusive))
+                    return keys;
             }
+
+            RoaringBitmap offsets = suffix.getOffsets();
+            if (keys == null)
+                keys = offsets;
+            else
+                keys.or(offsets);
         }
 
         return keys;
@@ -281,10 +295,15 @@ public class OnDiskSA implements Iterable<OnDiskSA.DataSuffix>, Closeable
             return content.getInt(position + 2 + content.getShort(position));
         }
 
-        public KeyContainer getKeys()
+        public KeyContainer getContainer()
         {
             file.seek(auxSectionOffset + getOffset());
             return new KeyContainer(file);
+        }
+
+        public RoaringBitmap getOffsets()
+        {
+            return getContainer().getOffsets();
         }
     }
 
@@ -421,7 +440,7 @@ public class OnDiskSA implements Iterable<OnDiskSA.DataSuffix>, Closeable
             for (int j = 0; j < block.getElementsSize(); j++)
             {
                 OnDiskSA.DataSuffix p = block.getElement(j);
-                out.printf("DataSuffix(chars: %s, keys: %s)%n", comparator.compose(p.getSuffix()), p.getKeys());
+                out.printf("DataSuffix(chars: %s, offsets: %s)%n", comparator.compose(p.getSuffix()), p.getOffsets());
             }
         }
 

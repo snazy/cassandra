@@ -1225,7 +1225,7 @@ public class SSTableReader extends SSTable implements Closeable
 
     public DecoratedKey keyAt(long indexPosition) throws IOException
     {
-        try (FileDataInput in = ifile.getSegment(indexPosition))
+        try (FileDataInput in = dfile.getSegment(indexPosition))
         {
             return (in.isEOF()) ? null : partitioner.decorateKey(ByteBufferUtil.readWithShortLength(in));
         }

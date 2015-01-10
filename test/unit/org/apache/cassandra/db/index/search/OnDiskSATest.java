@@ -1,12 +1,10 @@
 package org.apache.cassandra.db.index.search;
 
 import java.io.File;
-import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.*;
 
 import org.apache.cassandra.db.DecoratedKey;
-import org.apache.cassandra.db.index.search.container.KeyContainer;
 import org.apache.cassandra.db.marshal.Int32Type;
 import org.apache.cassandra.db.marshal.UTF8Type;
 import org.apache.cassandra.service.StorageService;
@@ -128,7 +126,7 @@ public class OnDiskSATest
         {
             ByteBuffer number = sortedNumbers.get(idx++);
             Assert.assertEquals(number, suffix.getSuffix());
-            Assert.assertEquals(convert(data.get(number)), convert(suffix.getKeys()));
+            Assert.assertEquals(convert(data.get(number)), suffix.getOffsets());
         }
 
         // test partial iteration (descending)
@@ -140,7 +138,7 @@ public class OnDiskSATest
             ByteBuffer number = sortedNumbers.get(idx++);
 
             Assert.assertEquals(number, suffix.getSuffix());
-            Assert.assertEquals(convert(data.get(number)), convert(suffix.getKeys()));
+            Assert.assertEquals(convert(data.get(number)), suffix.getOffsets());
         }
 
         idx = 3; // start from the 3rd element exclusive
@@ -151,7 +149,7 @@ public class OnDiskSATest
             ByteBuffer number = sortedNumbers.get(idx++);
 
             Assert.assertEquals(number, suffix.getSuffix());
-            Assert.assertEquals(convert(data.get(number)), convert(suffix.getKeys()));
+            Assert.assertEquals(convert(data.get(number)), suffix.getOffsets());
         }
 
         // test partial iteration (ascending)
@@ -163,7 +161,7 @@ public class OnDiskSATest
             ByteBuffer number = sortedNumbers.get(idx--);
 
             Assert.assertEquals(number, suffix.getSuffix());
-            Assert.assertEquals(convert(data.get(number)), convert(suffix.getKeys()));
+            Assert.assertEquals(convert(data.get(number)), suffix.getOffsets());
         }
 
         idx = 6; // start from the 6rd element exclusive
@@ -174,7 +172,7 @@ public class OnDiskSATest
             ByteBuffer number = sortedNumbers.get(idx--);
 
             Assert.assertEquals(number, suffix.getSuffix());
-            Assert.assertEquals(convert(data.get(number)), convert(suffix.getKeys()));
+            Assert.assertEquals(convert(data.get(number)), suffix.getOffsets());
         }
 
         onDisk.close();
@@ -327,17 +325,6 @@ public class OnDiskSATest
         return bitmap;
     }
 
-    private static RoaringBitmap convert(KeyContainer container)
-    {
-        RoaringBitmap bitmap = new RoaringBitmap();
-        for (KeyContainer.Bucket bucket : container)
-        {
-            bitmap.or(bucket.getPositions());
-        }
-
-        return bitmap;
-    }
-
     private static DecoratedKey keyAt(int key)
     {
         return StorageService.getPartitioner().decorateKey(ByteBuffer.wrap(("key" + key).getBytes()));
@@ -369,39 +356,5 @@ public class OnDiskSATest
         for (int v : values)
             map.add(v);
         return map;
-    }
-
-    @SuppressWarnings("unused")
-    private static void printSA(OnDiskSA sa) throws IOException
-    {
-        int level = 0;
-        for (OnDiskSA.PointerLevel l : sa.levels)
-        {
-            System.out.println(" !!!! level " + (level++));
-            for (int i = 0; i < l.blockCount; i++)
-            {
-                System.out.println(" --- block " + i + " ---- ");
-                OnDiskSA.PointerBlock block = l.getBlock(i);
-                for (int j = 0; j < block.getElementsSize(); j++)
-                {
-                    OnDiskSA.PointerSuffix p = block.getElement(j);
-                    System.out.printf("PointerSuffix(chars: %s, blockIdx: %d)%n", sa.comparator.compose(p.getSuffix()), p.getBlock());
-                }
-            }
-        }
-
-        System.out.println(" !!!!! data blocks !!!!! ");
-        for (int i = 0; i < sa.dataLevel.blockCount; i++)
-        {
-            System.out.println(" --- block " + i + " ---- ");
-            OnDiskSA.DataBlock block = sa.dataLevel.getBlock(i);
-            for (int j = 0; j < block.getElementsSize(); j++)
-            {
-                OnDiskSA.DataSuffix p = block.getElement(j);
-                System.out.printf("DataSuffix(chars: %s, keys: %s)%n", sa.comparator.compose(p.getSuffix()), p.getKeys());
-            }
-        }
-
-        System.out.println(" ***** end of level printout ***** ");
     }
 }
