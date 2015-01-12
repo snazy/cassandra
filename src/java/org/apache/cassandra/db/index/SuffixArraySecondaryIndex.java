@@ -105,12 +105,6 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
         baseCfs.getDataTracker().subscribe(new DataTrackerConsumer());
     }
 
-    protected void setBaseCfs(ColumnFamilyStore baseCfs)
-    {
-        super.setBaseCfs(baseCfs);
-        keyComparator = this.baseCfs.metadata.getKeyValidator();
-    }
-
     void addColumnDef(ColumnDefinition columnDef)
     {
         super.addColumnDef(columnDef);
@@ -123,6 +117,8 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
         // checks that the SI 'looks' legit, but then throws away any created instances - fml, this 2I api sux
         if (baseCfs == null)
             return;
+        else if (keyComparator == null)
+            keyComparator = this.baseCfs.metadata.getKeyValidator();
         executor.setCorePoolSize(columnDefs.size() * 2);
 
         AbstractType<?> type = baseCfs.getComparator();
