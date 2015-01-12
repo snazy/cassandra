@@ -618,6 +618,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
 
             // add primary expression first
             narrowedCandidates.put(primaryExpression.left, new HashSet<>(primarySSTables));
+            Set<SSTableReader> uniqueNarrowedCandidates = new HashSet<>();
 
             for (Pair<ByteBuffer, Expression> e : expressions)
             {
@@ -625,6 +626,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
                 if (validator.compare(primaryExpression.left, e.left) == 0)
                 {
                     narrowedCandidates.put(e.left, new HashSet<>(primarySSTables));
+                    uniqueNarrowedCandidates.addAll(primarySSTables);
                     continue;
                 }
 
@@ -646,14 +648,18 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
                 }
 
                 // might not want to fail the entire search if we fail to acquire references - maybe retry (but will need updated SADataTracker) ??
-                if (readers.isEmpty() || !SSTableReader.acquireReferences(readers))
-                {
-                    for (Map.Entry<ByteBuffer, Set<SSTableReader>> entry : narrowedCandidates.entrySet())
-                        SSTableReader.releaseReferences(entry.getValue());
+                if (readers.isEmpty())
                     return Collections.emptyList();
-                }
 
                 narrowedCandidates.put(e.left, readers);
+                uniqueNarrowedCandidates.addAll(readers);
+            }
+
+            // might not want to fail the entire search if we fail to acquire references - maybe retry (but will need updated SADataTracker) ??
+            if (!SSTableReader.acquireReferences(uniqueNarrowedCandidates))
+            {
+                logger.warn("unable to acquire sstable references for search");
+                return Collections.emptyList();
             }
 
             try
@@ -680,8 +686,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
             }
             finally
             {
-                for (Map.Entry<ByteBuffer, Set<SSTableReader>> entry : narrowedCandidates.entrySet())
-                    SSTableReader.releaseReferences(entry.getValue());
+                SSTableReader.releaseReferences(uniqueNarrowedCandidates);
             }
 
             return rows;
