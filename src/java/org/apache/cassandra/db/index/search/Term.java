@@ -9,9 +9,9 @@ public class Term
 {
     public final int position;
     public final ByteBuffer value;
-    public final NavigableMap<DecoratedKey, Integer> keys;
+    public final NavigableMap<DecoratedKey, Long> keys;
 
-    public Term(int position, ByteBuffer value, NavigableMap<DecoratedKey, Integer> keys)
+    public Term(int position, ByteBuffer value, NavigableMap<DecoratedKey, Long> keys)
     {
         this.position = position;
         this.value = value;

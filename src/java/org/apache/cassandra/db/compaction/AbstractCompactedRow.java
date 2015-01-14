@@ -53,7 +53,7 @@ public abstract class AbstractCompactedRow implements Closeable
     public RowIndexEntry write(Pair<Long, Long> currentPositions, DataOutput out, Collection<SSTableWriterListener> listeners) throws IOException
     {
         for (SSTableWriterListener listener : listeners)
-            listener.startRow(key, currentPositions.right);
+            listener.startRow(key, currentPositions.left);
         return writeInternal(currentPositions.right, out, listeners);
     }
 

@@ -1,54 +1,49 @@
 package org.apache.cassandra.db.index;
 
-import java.io.*;
+import java.io.File;
+import java.io.IOException;
+import java.io.RandomAccessFile;
 import java.nio.ByteBuffer;
-import java.nio.charset.CharacterCodingException;
 import java.util.*;
-import java.util.concurrent.Callable;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.Future;
-import java.util.concurrent.LinkedBlockingQueue;
-import java.util.concurrent.Phaser;
-import java.util.concurrent.ThreadPoolExecutor;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
+import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicReference;
 
-import org.apache.cassandra.db.*;
-import org.apache.cassandra.db.index.search.AbstractTokenizer;
-import org.apache.cassandra.db.index.utils.LazyMergeSortIterator;
-import org.apache.cassandra.db.index.utils.SkippableIterator;
-import org.apache.cassandra.dht.AbstractBounds;
-import org.apache.cassandra.io.FSReadError;
-import org.apache.cassandra.io.sstable.*;
-import org.apache.cassandra.io.util.FileUtils;
-import org.apache.cassandra.notifications.INotification;
-import org.apache.cassandra.notifications.INotificationConsumer;
-import org.apache.cassandra.notifications.SSTableAddedNotification;
-import org.apache.cassandra.notifications.SSTableDeletingNotification;
-import org.apache.cassandra.notifications.SSTableListChangedNotification;
-import org.apache.cassandra.utils.*;
+import com.google.common.base.Function;
 import org.apache.cassandra.concurrent.JMXEnabledThreadPoolExecutor;
 import org.apache.cassandra.concurrent.NamedThreadFactory;
 import org.apache.cassandra.config.ColumnDefinition;
+import org.apache.cassandra.db.*;
 import org.apache.cassandra.db.filter.ExtendedFilter;
 import org.apache.cassandra.db.index.search.OnDiskSA;
 import org.apache.cassandra.db.index.search.OnDiskSABuilder;
+import org.apache.cassandra.db.index.search.tokenization.AbstractTokenizer;
+import org.apache.cassandra.db.index.search.tokenization.NoOpTokenizer;
+import org.apache.cassandra.db.index.search.tokenization.StandardTokenizer;
+import org.apache.cassandra.db.index.utils.LazyMergeSortIterator;
+import org.apache.cassandra.db.index.utils.SkippableIterator;
 import org.apache.cassandra.db.marshal.AbstractType;
 import org.apache.cassandra.db.marshal.AsciiType;
 import org.apache.cassandra.db.marshal.UTF8Type;
+import org.apache.cassandra.dht.AbstractBounds;
 import org.apache.cassandra.exceptions.ConfigurationException;
+import org.apache.cassandra.io.FSReadError;
+import org.apache.cassandra.io.sstable.*;
+import org.apache.cassandra.io.util.FileUtils;
+import org.apache.cassandra.notifications.*;
 import org.apache.cassandra.thrift.IndexExpression;
 import org.apache.cassandra.thrift.IndexOperator;
+import org.apache.cassandra.utils.*;
 
 import com.google.common.base.Predicate;
 import com.google.common.collect.*;
 import com.google.common.util.concurrent.Futures;
-import org.roaringbitmap.RoaringBitmap;
+import com.google.common.util.concurrent.Uninterruptibles;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import static org.apache.cassandra.db.index.utils.LazyMergeSortIterator.OperationType;
+import static org.apache.cassandra.db.index.search.container.TokenTree.Token;
 
 /**
  * Note: currently does not work with cql3 tables (unless 'WITH COMPACT STORAGE' is declared when creating the table).
@@ -58,31 +53,44 @@ import static org.apache.cassandra.db.index.utils.LazyMergeSortIterator.Operatio
  */
 public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements SSTableWriterListenable
 {
-    protected static final Logger logger = LoggerFactory.getLogger(SuffixArraySecondaryIndex.class);
-    public static final String FILE_NAME_FORMAT = "SI_%s.db";
-    public static final String TOKENIZATION_CLASS_OPTION_NAME = "tokenization_class";
+    private static final Logger logger = LoggerFactory.getLogger(SuffixArraySecondaryIndex.class);
 
-    private static final ThreadPoolExecutor executor = getExecutor();
-
-    private static ThreadPoolExecutor getExecutor()
+    public static final Comparator<DecoratedKey> TOKEN_COMPARATOR = new Comparator<DecoratedKey>()
     {
-        ThreadPoolExecutor executor = new JMXEnabledThreadPoolExecutor(1, 8, 60, TimeUnit.SECONDS,
-                                                                       new LinkedBlockingQueue<Runnable>(),
-                                                                       new NamedThreadFactory("SuffixArrayBuilder"),
-                                                                       "internal");
-        executor.allowCoreThreadTimeOut(true);
-        return executor;
-    }
+        @Override
+        public int compare(DecoratedKey a, DecoratedKey b)
+        {
+            long tokenA = MurmurHash.hash2_64(a.key, a.key.position(), a.key.remaining(), 0);
+            long tokenB = MurmurHash.hash2_64(b.key, b.key.position(), b.key.remaining(), 0);
+
+            return Long.compare(tokenA, tokenB);
+        }
+    };
+
+    private static final Set<AbstractType<?>> TOKENIZABLE_TYPES = new HashSet<AbstractType<?>>()
+    {{
+        add(UTF8Type.instance);
+        add(AsciiType.instance);
+    }};
 
     /**
      * A sanity ceiling on the number of max rows we'll ever return for a query.
      */
-    private static final int MAX_ROWS = 100000;
+    private static final int MAX_ROWS = 10000;
 
-    //not sure i really need this, tbh
-    private final Map<Integer, SSTableWriterListener> openListeners;
+    private static final String FILE_NAME_FORMAT = "SI_%s.db";
+    private static final ThreadPoolExecutor INDEX_FLUSHER;
+
+    static
+    {
+        INDEX_FLUSHER = new JMXEnabledThreadPoolExecutor(1, 8, 60, TimeUnit.SECONDS,
+                                                         new LinkedBlockingQueue<Runnable>(),
+                                                         new NamedThreadFactory("SuffixArrayBuilder"),
+                                                         "internal");
+        INDEX_FLUSHER.allowCoreThreadTimeOut(true);
+    }
+
     private final BiMap<ByteBuffer, Component> columnDefComponents;
-    private final Map<ByteBuffer, Class<?>> columnTokenizers;
 
     private final Map<ByteBuffer, SADataTracker> intervalTrees;
 
@@ -90,9 +98,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
 
     public SuffixArraySecondaryIndex()
     {
-        openListeners = new ConcurrentHashMap<>();
         columnDefComponents = HashBiMap.create();
-        columnTokenizers = new ConcurrentHashMap<>();
         intervalTrees = new ConcurrentHashMap<>();
     }
 
@@ -119,7 +125,8 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
             return;
         else if (keyComparator == null)
             keyComparator = this.baseCfs.metadata.getKeyValidator();
-        executor.setCorePoolSize(columnDefs.size() * 2);
+
+        INDEX_FLUSHER.setCorePoolSize(columnDefs.size() * 2);
 
         AbstractType<?> type = baseCfs.getComparator();
         for (ColumnDefinition def : defs)
@@ -131,20 +138,6 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
             // so we need to grab the sstables here
             if (!intervalTrees.containsKey(def.name))
                 intervalTrees.put(def.name, new SADataTracker(def.name, baseCfs.getDataTracker().getSSTables()));
-        }
-
-        // todo: where should this actually go?
-        try
-        {
-            for (ColumnDefinition colDef : columnDefs)
-            {
-                Map<String, String> indexOptions = colDef.getIndexOptions();
-                columnTokenizers.put(colDef.name, Class.forName(indexOptions.get(TOKENIZATION_CLASS_OPTION_NAME)));
-            }
-        }
-        catch (Exception e)
-        {
-            logger.error("Failed to parse index options from column", e);
         }
     }
 
@@ -181,38 +174,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
 
     public void validateOptions() throws ConfigurationException
     {
-        for (ColumnDefinition colDef : columnDefs)
-        {
-            if (!colDef.isIndexed())
-                continue;
-
-            Map<String, String> indexOptions = colDef.getIndexOptions();
-
-            // if specified, check to make sure the provided tokenization class is valid
-            if (indexOptions.get(TOKENIZATION_CLASS_OPTION_NAME) != null)
-            {
-                try
-                {
-                    Class<?> clazz = Class.forName(indexOptions.get(TOKENIZATION_CLASS_OPTION_NAME));
-                    Object instance = clazz.newInstance();
-                    if (!(instance instanceof AbstractTokenizer))
-                    {
-                        throw new ConfigurationException("Unable to use configured tokenization "
-                                + "class [" + clazz.getName() + "] as it does not extend AbstractTokenizer");
-                    }
-                }
-                catch (ClassNotFoundException e)
-                {
-                    throw new ConfigurationException("Tokenization class "
-                            + "[" + indexOptions.get(TOKENIZATION_CLASS_OPTION_NAME) + "] not found");
-                }
-                catch (IllegalAccessException | InstantiationException e)
-                {
-                    throw new ConfigurationException("Unable to instantiate an instance of "
-                            + "tokenization class [" + indexOptions.get(TOKENIZATION_CLASS_OPTION_NAME) + "]");
-                }
-            }
-        }
+        // todo: sanity check on valid tokenization options
     }
 
     public String getIndexName()
@@ -293,9 +255,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
 
     public SSTableWriterListener getListener(Descriptor descriptor)
     {
-        LocalSSTableWriterListener listener = new LocalSSTableWriterListener(descriptor);
-        openListeners.put(descriptor.generation, listener);
-        return listener;
+        return new PerSSTableIndexWriter(descriptor);
     }
 
     private AbstractType<?> getValidator(ByteBuffer columnName)
@@ -304,55 +264,20 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
         return columnDef == null ? null : columnDef.getValidator();
     }
 
-    private AbstractTokenizer<ByteBuffer> getTokenizer(ByteBuffer columnName, ByteBuffer input)
-    {
-        Class<?> tokenizerClass = columnTokenizers.get(columnName);
-        AbstractTokenizer<ByteBuffer> tokenizer = null;
-        if (tokenizerClass != null)
-        {
-            try {
-                tokenizer = (AbstractTokenizer<ByteBuffer>) columnTokenizers.get(columnName).newInstance();
-                tokenizer.setOptions(getColumnDefinition(columnName).getIndexOptions());
-                tokenizer.setInput(input);
-                tokenizer.init();
-            }
-            catch (Exception e)
-            {
-                String columnNameToString;
-                try
-                {
-                    columnNameToString = ByteBufferUtil.string(columnName);
-                }
-                catch (CharacterCodingException e1)
-                {
-                    logger.error("Failed to get column name as string", e1);
-                    columnNameToString = "Unknown";
-                }
-                logger.error("Failed to get a tokenizer instance for column " +
-                        "name [{}]", columnNameToString, e);
-            }
-        }
-        return (tokenizer == null) ? null : tokenizer;
-    }
-
-    protected class LocalSSTableWriterListener implements SSTableWriterListener
+    protected class PerSSTableIndexWriter implements SSTableWriterListener
     {
         private final Descriptor descriptor;
 
         // need one entry for each term we index
-        private final Map<ByteBuffer, IndexInfo> indexPerTerm;
-        private final Map<Component, Pair<DecoratedKey, DecoratedKey>> ranges;
+        private final Map<ByteBuffer, ColumnIndex> indexPerColumn;
 
-        private DecoratedKey curKey;
-        private long curFilePosition;
+        private DecoratedKey currentKey;
+        private long currentKeyPosition;
 
-        private AbstractTokenizer<ByteBuffer> tokenizer;
-
-        public LocalSSTableWriterListener(Descriptor descriptor)
+        public PerSSTableIndexWriter(Descriptor descriptor)
         {
             this.descriptor = descriptor;
-            this.indexPerTerm = new ConcurrentHashMap<>();
-            this.ranges = new ConcurrentHashMap<>();
+            this.indexPerColumn = new HashMap<>();
         }
 
         public void begin()
@@ -362,8 +287,8 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
 
         public void startRow(DecoratedKey key, long curPosition)
         {
-            curKey = key;
-            curFilePosition = curPosition;
+            currentKey = key;
+            currentKeyPosition = curPosition;
         }
 
         public void nextColumn(Column column)
@@ -372,109 +297,56 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
             if (component == null)
                 return;
 
-            ByteBuffer term = column.value().slice();
-
-            // todo: for performance we should share an instance, but we
-            // don't have the column name until here.. and options per column..
-            // additionally, bc we are using AbstractIterator now, once endOfData()
-            // is called once it appears there is no way to reset it..
-            tokenizer = getTokenizer(column.name(), term);
-
-            if (tokenizer != null)
+            ColumnIndex index = indexPerColumn.get(column.name());
+            if (index == null)
             {
-                while (tokenizer.hasNext())
-                {
-                    ByteBuffer token = tokenizer.next();
-                    IndexInfo indexInfo = indexPerTerm.get(token);
-                    if (indexInfo == null)
-                        indexPerTerm.put(token, (indexInfo = new IndexInfo(component)));
-
-                    indexInfo.add(curKey, (int) curFilePosition);
-                }
-            }
-            else
-            {
-                IndexInfo indexInfo = indexPerTerm.get(term);
-                if (indexInfo == null)
-                    indexPerTerm.put(term, (indexInfo = new IndexInfo(component)));
-
-                indexInfo.add(curKey, (int) curFilePosition);
+                String outputFile = descriptor.filenameFor(component);
+                indexPerColumn.put(column.name(), (index = new ColumnIndex(getColumnDef(component), outputFile)));
             }
 
-            Pair<DecoratedKey, DecoratedKey> range = ranges.get(component);
-            if (range == null)
-            {
-                ranges.put(component, Pair.create(curKey, curKey));
-                return;
-            }
-
-            DecoratedKey min = range.left, max = range.right;
-            min = (min == null || keyComparator.compare(min.key, curKey.key) > 0) ? curKey : min;
-            max = (max == null || keyComparator.compare(max.key, curKey.key) < 0) ? curKey : max;
-            ranges.put(component, Pair.create(min, max));
+            index.add(column.value().duplicate(), currentKey, (int) currentKeyPosition);
         }
 
         public void complete()
         {
-            curKey = null;
+            currentKey = null;
+
             try
             {
-                // first, build up a listing per-component (per-index)
-                Map<Component, OnDiskSABuilder> componentBuilders = new HashMap<>(columnDefComponents.size());
-                for (Map.Entry<ByteBuffer, IndexInfo> entry : indexPerTerm.entrySet())
-                {
-                    IndexInfo indexInfo = entry.getValue();
-                    assert columnDefComponents.values().contains(indexInfo.component);
-
-                    OnDiskSABuilder builder = componentBuilders.get(indexInfo.component);
-                    if (builder == null)
-                    {
-                        AbstractType<?> validator = getColumnDef(indexInfo.component).getValidator();
-                        OnDiskSABuilder.Mode mode = (validator instanceof AsciiType || validator instanceof UTF8Type)
-                                                     ? OnDiskSABuilder.Mode.SUFFIX
-                                                     : OnDiskSABuilder.Mode.ORIGINAL;
-
-                        builder = new OnDiskSABuilder(keyComparator, validator, mode);
-                        componentBuilders.put(indexInfo.component, builder);
-                    }
-
-                    builder.add(entry.getKey(), indexInfo.keys);
-                }
-
-                indexPerTerm.clear();
-
-                // now do the writing
                 logger.info("about to submit for concurrent SA'ing");
-                List<Future<Boolean>> futures = new ArrayList<>(componentBuilders.size());
-                for (Map.Entry<Component, OnDiskSABuilder> entry : componentBuilders.entrySet())
+                final CountDownLatch latch = new CountDownLatch(indexPerColumn.size());
+
+                // first, build up a listing per-component (per-index)
+                for (final ColumnIndex index : indexPerColumn.values())
                 {
-                    String fileName = descriptor.filenameFor(entry.getKey());
-                    logger.info("submitting {} for concurrent SA'ing", fileName);
-                    futures.add(executor.submit(new BuilderFinisher(ranges.get(entry.getKey()), entry.getValue(), fileName)));
+                    logger.info("Submitting {} for concurrent SA'ing", index.outputFile);
+                    INDEX_FLUSHER.submit(new Runnable()
+                    {
+                        @Override
+                        public void run()
+                        {
+                            try
+                            {
+                                long flushStart = System.nanoTime();
+                                index.blockingFlush();
+                                logger.info("Flushing SA index to {} took {} ms.",
+                                        index.outputFile,
+                                        TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - flushStart));
+                            }
+                            finally
+                            {
+                                latch.countDown();
+                            }
+                        }
+                    });
                 }
 
-                for (Future<Boolean> f : futures)
-                {
-                    try
-                    {
-                        // set *some* upper bound of wait time
-                        f.get(120, TimeUnit.MINUTES);
-                    }
-                    catch (TimeoutException toe)
-                    {
-                        logger.warn("timed out waiting for a suffix array index to be created");
-                    }
-                    catch (Exception e)
-                    {
-                        throw new IOError(e);
-                    }
-                }
+                Uninterruptibles.awaitUninterruptibly(latch, 10, TimeUnit.MINUTES);
             }
             finally
             {
-                openListeners.remove(descriptor.generation);
-                // drop this data asap
-                indexPerTerm.clear();
+                // drop this data ASAP
+                indexPerColumn.clear();
             }
         }
 
@@ -483,64 +355,62 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
             return descriptor.generation;
         }
 
-        private class IndexInfo
+        private class ColumnIndex
         {
-            private final Component component;
-            private final TreeMap<DecoratedKey, Integer> keys;
+            private final ColumnDefinition column;
+            private final String outputFile;
+            private final AbstractTokenizer tokenizer;
+            private final Map<ByteBuffer, NavigableMap<DecoratedKey, Long>> keysPerTerm;
 
-            public IndexInfo(Component component)
+            // key range of the per-column index
+            private DecoratedKey min, max;
+
+            public ColumnIndex(ColumnDefinition column, String outputFile)
             {
-                this.component = component;
-                this.keys = new TreeMap<>(new Comparator<DecoratedKey>()
+                this.column = column;
+                this.outputFile = outputFile;
+                this.tokenizer = TOKENIZABLE_TYPES.contains(column.getValidator())
+                                        ? new StandardTokenizer()
+                                        : new NoOpTokenizer();
+
+                this.tokenizer.init(column.getIndexOptions());
+                this.keysPerTerm = new HashMap<>();
+            }
+
+            private void add(ByteBuffer term, DecoratedKey key, long keyPosition)
+            {
+                tokenizer.reset(term);
+                while (tokenizer.hasNext())
                 {
-                    @Override
-                    public int compare(DecoratedKey a, DecoratedKey b)
-                    {
-                        long tokenA = MurmurHash.hash2_64(a.key, a.key.position(), a.key.remaining(), 0);
-                        long tokenB = MurmurHash.hash2_64(b.key, b.key.position(), b.key.remaining(), 0);
+                    ByteBuffer token = tokenizer.next();
+                    NavigableMap<DecoratedKey, Long> keys = keysPerTerm.get(token);
+                    if (keys == null)
+                        keysPerTerm.put(token, (keys = new TreeMap<>(TOKEN_COMPARATOR)));
 
-                        return Long.compare(tokenA, tokenB);
-                    }
-                });
+                    keys.put(key, keyPosition);
+                }
+
+                /* calculate key range (based on actual key values) for current index */
+
+                min = (min == null || keyComparator.compare(min.key, currentKey.key) > 0) ? currentKey : min;
+                max = (max == null || keyComparator.compare(max.key, currentKey.key) < 0) ? currentKey : max;
             }
 
-            public void add(DecoratedKey key, int offset)
+            public void blockingFlush()
             {
-                keys.put(key, offset);
-            }
-        }
-    }
+                OnDiskSABuilder.Mode mode = TOKENIZABLE_TYPES.contains(column.getValidator())
+                                                ? OnDiskSABuilder.Mode.SUFFIX
+                                                : OnDiskSABuilder.Mode.ORIGINAL;
 
-    private class BuilderFinisher implements Callable<Boolean>
-    {
-        private final Pair<DecoratedKey, DecoratedKey> range;
-        private OnDiskSABuilder builder;
-        private final String fileName;
+                OnDiskSABuilder builder = new OnDiskSABuilder(keyComparator, column.getValidator(), mode);
 
-        public BuilderFinisher(Pair<DecoratedKey, DecoratedKey> range, OnDiskSABuilder builder, String fileName)
-        {
-            this.range = range;
-            this.builder = builder;
-            this.fileName = fileName;
-        }
+                for (Map.Entry<ByteBuffer, NavigableMap<DecoratedKey, Long>> e : keysPerTerm.entrySet())
+                    builder.add(e.getKey(), e.getValue());
 
-        public Boolean call() throws Exception
-        {
-            try
-            {
-                long start = System.nanoTime();
-                builder.finish(range, new File(fileName));
-                logger.info("finishing SA for {} in {} ms", fileName, TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start));
-                return Boolean.TRUE;
-            }
-            catch (Exception e)
-            {
-                throw new Exception(String.format("failed to write output file %s", fileName), e);
-            }
-            finally
-            {
-                //release the builder and any resources asap
-                builder = null;
+                // since everything added to the builder, it's time to drop references to the data
+                keysPerTerm.clear();
+
+                builder.finish(Pair.create(min, max), new File(outputFile));
             }
         }
     }
@@ -662,30 +532,39 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
                 return Collections.emptyList();
             }
 
+
+            SkippableIterator<Long, Token> joiner = null;
             try
             {
-                List<SkippableIterator<DecoratedKey>> suffixes = new ArrayList<>(expressionsImmutable.size());
+                List<SkippableIterator<Long, Token>> suffixes = new ArrayList<>(expressionsImmutable.size());
                 for (Pair<ByteBuffer, Expression> expression : expressionsImmutable)
                 {
                     ByteBuffer name = expression.left;
                     suffixes.add(new SuffixIterator(name, expression.right, narrowedCandidates.get(name)));
                 }
 
-                Iterator<DecoratedKey> joiner = new LazyMergeSortIterator<>(DecoratedKey.comparator, OperationType.AND, suffixes);
-                while (joiner.hasNext() && rows.size() < maxRows)
+                joiner = new LazyMergeSortIterator<>(OperationType.AND, suffixes);
+
+                intersection:
+                while (joiner.hasNext())
                 {
-                    DecoratedKey key = joiner.next();
+                    for (DecoratedKey key : joiner.next())
+                    {
+                        if (rows.size() >= maxRows)
+                            break intersection;
 
-                    if (!requestedRange.contains(key))
-                        continue;
+                        if (!requestedRange.contains(key))
+                            continue;
 
-                    Row row = getRow(key, filter, expressionsImmutable);
-                    if (row != null)
-                        rows.add(row);
+                        Row row = getRow(key, filter, expressionsImmutable);
+                        if (row != null)
+                            rows.add(row);
+                    }
                 }
             }
             finally
             {
+                FileUtils.closeQuietly(joiner);
                 SSTableReader.releaseReferences(uniqueNarrowedCandidates);
             }
 
@@ -880,122 +759,62 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
         }
     }
 
-    private class SuffixIterator extends AbstractIterator<DecoratedKey> implements SkippableIterator<DecoratedKey>
+    private class SuffixIterator extends AbstractIterator<Token> implements SkippableIterator<Long, Token>
     {
-        private final SkippableIterator<DecoratedKey> union;
+        private final SkippableIterator<Long, Token> union;
+        private final List<OnDiskSA> indexes = new ArrayList<>();
 
-        public SuffixIterator(ByteBuffer columnName, Expression expression, Set<SSTableReader> sstables)
+        public SuffixIterator(ByteBuffer columnName, Expression expression, final Set<SSTableReader> sstables)
         {
             AbstractType<?> validator = getValidator(columnName);
             assert validator != null;
 
             String name = (String) baseCfs.getComparator().compose(columnName);
-            List<SkippableIterator<DecoratedKey>> keys = new ArrayList<>(sstables.size());
+            List<SkippableIterator<Long, Token>> keys = new ArrayList<>(sstables.size());
 
-            for (SSTableReader reader : sstables)
+            for (final SSTableReader sstable : sstables)
             {
-                File index = new File(reader.descriptor.filenameFor(String.format(FILE_NAME_FORMAT, name)));
-                assert index.exists() : "SSTable " + reader.getFilename() + " should have index " + name;
+                File indexFile = new File(sstable.descriptor.filenameFor(String.format(FILE_NAME_FORMAT, name)));
+                assert indexFile.exists() : "SSTable " + sstable.getFilename() + " should have index " + name;
 
-                OnDiskSA sa = null;
                 try
                 {
-                    sa = new OnDiskSA(index, validator);
+                    OnDiskSA index = new OnDiskSA(indexFile, validator, new DecoratedKeyFetcher(sstable));
 
                     ByteBuffer lower = (expression.lower == null) ? null : expression.lower.value;
                     ByteBuffer upper = (expression.upper == null) ? null : expression.upper.value;
 
-                    keys.add(new DecoratedKeySkippableIterator(sa.search(lower, lower == null || expression.lower.inclusive,
-                                                                         upper, upper == null || expression.upper.inclusive),
-                                                               reader));
+                    keys.add(index.search(lower, lower == null || expression.lower.inclusive,
+                                          upper, upper == null || expression.upper.inclusive));
+
+                    indexes.add(index);
                 }
                 catch (IOException e)
                 {
-                    throw new FSReadError(e, index.getAbsolutePath());
-                }
-                finally
-                {
-                    FileUtils.closeQuietly(sa);
+                    throw new FSReadError(e, indexFile.getAbsolutePath());
                 }
             }
 
-            union = new LazyMergeSortIterator<>(DecoratedKey.comparator, OperationType.OR, keys);
+            union = new LazyMergeSortIterator<>(OperationType.OR, keys);
         }
 
         @Override
-        protected DecoratedKey computeNext()
+        protected Token computeNext()
         {
             return union.hasNext() ? union.next() : endOfData();
         }
 
         @Override
-        public void skipTo(DecoratedKey next)
+        public void skipTo(Long next)
         {
             union.skipTo(next);
         }
-    }
-
-    private class DecoratedKeySkippableIterator extends AbstractIterator<DecoratedKey> implements SkippableIterator<DecoratedKey>
-    {
-        private final OffsetPeekingIterator offsets;
-        private final SSTableReader reader;
-
-        private DecoratedKeySkippableIterator(RoaringBitmap offsets, SSTableReader reader)
-        {
-            this.reader = reader;
-            this.offsets = new OffsetPeekingIterator(offsets);
-        }
 
         @Override
-        protected DecoratedKey computeNext()
+        public void close()
         {
-            try
-            {
-                return offsets.hasNext() ? reader.keyAt(offsets.next()) : endOfData();
-            }
-            catch (IOException e)
-            {
-                throw new FSReadError(e, reader.getFilename());
-            }
-        }
-
-        @Override
-        public void skipTo(DecoratedKey next)
-        {
-            RowIndexEntry entry = reader.getPosition(next, SSTableReader.Operator.GE);
-            if (entry == null)
-                return;
-
-            offsets.skipTo((int) entry.position);
-        }
-    }
-
-    private static class OffsetPeekingIterator extends AbstractIterator<Integer> implements SkippableIterator<Integer>, PeekingIterator<Integer>
-    {
-        private final Iterator<Integer> offsets;
-
-        private OffsetPeekingIterator(RoaringBitmap offsets)
-        {
-            this.offsets = offsets == null ? null : offsets.iterator();
-        }
-
-        @Override
-        protected Integer computeNext()
-        {
-            return offsets != null && offsets.hasNext() ? offsets.next() : endOfData();
-        }
-
-        @Override
-        public void skipTo(Integer next)
-        {
-            while (hasNext())
-            {
-                int nextOffset = peek();
-                if (nextOffset >= next)
-                    break;
-
-                next();
-            }
+            for (OnDiskSA index : indexes)
+                FileUtils.closeQuietly(index);
         }
     }
 
@@ -1150,6 +969,42 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
                 SSTableDeletingNotification notif = (SSTableDeletingNotification) notification;
                 removeFromIntervalTree(Collections.singletonList(notif.deleting));
             }
+        }
+    }
+
+    private static class DecoratedKeyFetcher implements Function<Long, DecoratedKey>
+    {
+        private final SSTableReader sstable;
+
+        DecoratedKeyFetcher(SSTableReader reader)
+        {
+            sstable = reader;
+        }
+
+        @Override
+        public DecoratedKey apply(Long offset)
+        {
+            try
+            {
+                return sstable.keyAt(offset);
+            }
+            catch (IOException e)
+            {
+                throw new FSReadError(e, sstable.getFilename());
+            }
+        }
+
+        @Override
+        public int hashCode()
+        {
+            return sstable.descriptor.hashCode();
+        }
+
+        @Override
+        public boolean equals(Object other)
+        {
+            return other instanceof DecoratedKeyFetcher
+                    && sstable.descriptor.equals(((DecoratedKeyFetcher) other).sstable.descriptor);
         }
     }
 }

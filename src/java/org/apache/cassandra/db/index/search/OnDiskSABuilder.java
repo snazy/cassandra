@@ -7,7 +7,7 @@ import java.nio.ByteBuffer;
 import java.util.*;
 
 import org.apache.cassandra.db.DecoratedKey;
-import org.apache.cassandra.db.index.search.container.KeyContainerBuilder;
+import org.apache.cassandra.db.index.search.container.TokenTreeBuilder;
 import org.apache.cassandra.db.marshal.AbstractType;
 import org.apache.cassandra.io.FSWriteError;
 import org.apache.cassandra.io.util.FileUtils;
@@ -51,7 +51,7 @@ public class OnDiskSABuilder
         this.mode = mode;
     }
 
-    public OnDiskSABuilder add(ByteBuffer term, NavigableMap<DecoratedKey, Integer> keys)
+    public OnDiskSABuilder add(ByteBuffer term, NavigableMap<DecoratedKey, Long> keys)
     {
         sa.add(term, keys);
         return this;
@@ -95,7 +95,7 @@ public class OnDiskSABuilder
             dataLevel = new MutableLevel<>(out, new MutableDataBlock(mode));
             while (suffixes.hasNext())
             {
-                Pair<ByteBuffer, KeyContainerBuilder> suffix = suffixes.next();
+                Pair<ByteBuffer, TokenTreeBuilder> suffix = suffixes.next();
                 addSuffix(new InMemoryDataSuffix(suffix.left, suffix.right), out);
             }
 
@@ -186,9 +186,9 @@ public class OnDiskSABuilder
 
     private static class InMemoryDataSuffix extends InMemorySuffix
     {
-        private KeyContainerBuilder keys;
+        private TokenTreeBuilder keys;
 
-        public InMemoryDataSuffix(ByteBuffer suffix, KeyContainerBuilder keys)
+        public InMemoryDataSuffix(ByteBuffer suffix, TokenTreeBuilder keys)
         {
             super(suffix);
             this.keys = keys;
@@ -210,7 +210,7 @@ public class OnDiskSABuilder
             this.mode = mode;
         }
 
-        public void add(ByteBuffer term, NavigableMap<DecoratedKey, Integer> keys)
+        public void add(ByteBuffer term, NavigableMap<DecoratedKey, Long> keys)
         {
             terms.add(new Term(charCount, term, keys));
             charCount += term.remaining();
@@ -262,13 +262,13 @@ public class OnDiskSABuilder
             }
 
             @Override
-            protected Pair<ByteBuffer, KeyContainerBuilder> computeNext()
+            protected Pair<ByteBuffer, TokenTreeBuilder> computeNext()
             {
                 if (!termIterator.hasNext())
                     return endOfData();
 
                 Term term = termIterator.next();
-                return Pair.create(term.value, new KeyContainerBuilder(keyComparator, term.keys));
+                return Pair.create(term.value, new TokenTreeBuilder(transformKeysMap(term.keys)));
             }
         }
 
@@ -278,7 +278,7 @@ public class OnDiskSABuilder
 
             private int current = 0;
             private ByteBuffer lastProcessedSuffix;
-            private KeyContainerBuilder container;
+            private TokenTreeBuilder container;
 
             public SASuffixIterator()
             {
@@ -311,7 +311,7 @@ public class OnDiskSABuilder
                 });
             }
 
-            private Pair<ByteBuffer, NavigableMap<DecoratedKey, Integer>> suffixAt(int position)
+            private Pair<ByteBuffer, NavigableMap<DecoratedKey, Long>> suffixAt(int position)
             {
                 long index = suffixes[position];
                 Term term = terms.get((int) (index >>> 32));
@@ -331,7 +331,7 @@ public class OnDiskSABuilder
             }
 
             @Override
-            protected Pair<ByteBuffer, KeyContainerBuilder> computeNext()
+            protected Pair<ByteBuffer, TokenTreeBuilder> computeNext()
             {
                 while (true)
                 {
@@ -340,37 +340,37 @@ public class OnDiskSABuilder
                         if (lastProcessedSuffix == null)
                             return endOfData();
 
-                        Pair<ByteBuffer, KeyContainerBuilder> result = finishSuffix();
+                        Pair<ByteBuffer, TokenTreeBuilder> result = finishSuffix();
 
                         lastProcessedSuffix = null;
                         return result;
                     }
 
-                    Pair<ByteBuffer, NavigableMap<DecoratedKey, Integer>> suffix = suffixAt(current++);
+                    Pair<ByteBuffer, NavigableMap<DecoratedKey, Long>> suffix = suffixAt(current++);
 
                     if (lastProcessedSuffix == null)
                     {
                         lastProcessedSuffix = suffix.left;
-                        container = new KeyContainerBuilder(keyComparator, suffix.right);
+                        container = new TokenTreeBuilder(transformKeysMap(suffix.right));
                     }
                     else if (comparator.compare(lastProcessedSuffix, suffix.left) == 0)
                     {
                         lastProcessedSuffix = suffix.left;
-                        container.add(suffix.right);
+                        container.add(transformKeysMap(suffix.right));
                     }
                     else
                     {
-                        Pair<ByteBuffer, KeyContainerBuilder> result = finishSuffix();
+                        Pair<ByteBuffer, TokenTreeBuilder> result = finishSuffix();
 
                         lastProcessedSuffix = suffix.left;
-                        container = new KeyContainerBuilder(keyComparator, suffix.right);
+                        container = new TokenTreeBuilder(transformKeysMap(suffix.right));
 
                         return result;
                     }
                 }
             }
 
-            private Pair<ByteBuffer, KeyContainerBuilder> finishSuffix()
+            private Pair<ByteBuffer, TokenTreeBuilder> finishSuffix()
             {
                 return Pair.create(lastProcessedSuffix, container);
             }
@@ -486,7 +486,7 @@ public class OnDiskSABuilder
         private final Mode mode;
         // we need a sorted map based on offsets here because it's required to write KeyContainerBuilder in "offset" order.
         // This map helps to find containers much quicker than iterating over whole set as we'd have to do with list.
-        private final BiMap<KeyContainerBuilder, Integer> containers = HashBiMap.create();
+        private final BiMap<TokenTreeBuilder, Integer> containers = HashBiMap.create();
 
         private int offset = 0;
 
@@ -529,7 +529,7 @@ public class OnDiskSABuilder
         {
             super.flushAndClear(out);
 
-            BiMap<Integer, KeyContainerBuilder> inverse = containers.inverse();
+            BiMap<Integer, TokenTreeBuilder> inverse = containers.inverse();
 
             int pos = 0;
             int[] offsets = new int[inverse.size()];
@@ -546,7 +546,7 @@ public class OnDiskSABuilder
             });
 
             for (int off : offsets)
-                inverse.get(off).serialize(out);
+                inverse.get(off).write(out);
 
             super.alignToBlock(out);
             containers.clear();
@@ -560,14 +560,25 @@ public class OnDiskSABuilder
         }
     }
 
-    private static long align(long val, int boundary)
+    // TODO (jwest): move somewhere
+    public static long align(long val, int boundary)
     {
         return (val + boundary) & ~(boundary - 1);
     }
 
-    public static abstract class SuffixIterator extends AbstractIterator<Pair<ByteBuffer, KeyContainerBuilder>>
+    public static abstract class SuffixIterator extends AbstractIterator<Pair<ByteBuffer, TokenTreeBuilder>>
     {
         public abstract ByteBuffer minSuffix();
         public abstract ByteBuffer maxSuffix();
+
+        // TODO (jwest): this makes me sad and probably needs to go away
+        protected SortedMap<DecoratedKey, long[]> transformKeysMap(SortedMap<DecoratedKey, Long> keys)
+        {
+            SortedMap<DecoratedKey, long[]> keyMap = new TreeMap<>();
+            for (Map.Entry<DecoratedKey, Long> entry : keys.entrySet())
+                keyMap.put(entry.getKey(), new long[]{entry.getValue()});
+
+            return keyMap;
+        }
     }
 }

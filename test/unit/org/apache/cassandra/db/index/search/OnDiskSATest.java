@@ -4,7 +4,10 @@ import java.io.File;
 import java.nio.ByteBuffer;
 import java.util.*;
 
+import com.google.common.base.Function;
 import org.apache.cassandra.db.DecoratedKey;
+import org.apache.cassandra.db.index.search.container.TokenTree;
+import org.apache.cassandra.db.index.utils.SkippableIterator;
 import org.apache.cassandra.db.marshal.Int32Type;
 import org.apache.cassandra.db.marshal.UTF8Type;
 import org.apache.cassandra.service.StorageService;
@@ -12,30 +15,31 @@ import org.apache.cassandra.utils.MurmurHash;
 import org.apache.cassandra.utils.Pair;
 
 import com.google.common.collect.Iterators;
+
 import junit.framework.Assert;
 import org.junit.Test;
-import org.roaringbitmap.RoaringBitmap;
+
 
 public class OnDiskSATest
 {
     @Test
     public void testStringSAConstruction() throws Exception
     {
-        Map<ByteBuffer, NavigableMap<DecoratedKey, Integer>> data = new HashMap<ByteBuffer, NavigableMap<DecoratedKey, Integer>>()
+        Map<ByteBuffer, NavigableMap<DecoratedKey, Long>> data = new HashMap<ByteBuffer, NavigableMap<DecoratedKey, Long>>()
         {{
-                put(UTF8Type.instance.decompose("scat"), keyBuilder(1));
-                put(UTF8Type.instance.decompose("mat"),  keyBuilder(2));
-                put(UTF8Type.instance.decompose("fat"),  keyBuilder(3));
-                put(UTF8Type.instance.decompose("cat"),  keyBuilder(1, 4));
-                put(UTF8Type.instance.decompose("till"), keyBuilder(2, 6));
-                put(UTF8Type.instance.decompose("bill"), keyBuilder(5));
-                put(UTF8Type.instance.decompose("foo"),  keyBuilder(7));
-                put(UTF8Type.instance.decompose("bar"),  keyBuilder(9, 10));
-                put(UTF8Type.instance.decompose("michael"), keyBuilder(11, 12, 1));
+                put(UTF8Type.instance.decompose("scat"), keyBuilder(1L));
+                put(UTF8Type.instance.decompose("mat"),  keyBuilder(2L));
+                put(UTF8Type.instance.decompose("fat"),  keyBuilder(3L));
+                put(UTF8Type.instance.decompose("cat"),  keyBuilder(1L, 4L));
+                put(UTF8Type.instance.decompose("till"), keyBuilder(2L, 6L));
+                put(UTF8Type.instance.decompose("bill"), keyBuilder(5L));
+                put(UTF8Type.instance.decompose("foo"),  keyBuilder(7L));
+                put(UTF8Type.instance.decompose("bar"),  keyBuilder(9L, 10L));
+                put(UTF8Type.instance.decompose("michael"), keyBuilder(11L, 12L, 1L));
         }};
 
         OnDiskSABuilder builder = new OnDiskSABuilder(UTF8Type.instance, UTF8Type.instance, OnDiskSABuilder.Mode.SUFFIX);
-        for (Map.Entry<ByteBuffer, NavigableMap<DecoratedKey, Integer>> e : data.entrySet())
+        for (Map.Entry<ByteBuffer, NavigableMap<DecoratedKey, Long>> e : data.entrySet())
             builder.add(e.getKey(), e.getValue());
 
         File index = File.createTempFile("on-disk-sa-string", "db");
@@ -43,32 +47,32 @@ public class OnDiskSATest
 
         builder.finish(Pair.create(keyAt(1), keyAt(12)), index);
 
-        OnDiskSA onDisk = new OnDiskSA(index, UTF8Type.instance);
+        OnDiskSA onDisk = new OnDiskSA(index, UTF8Type.instance, new KeyConverter());
 
         // first check if we can find exact matches
-        for (Map.Entry<ByteBuffer, NavigableMap<DecoratedKey, Integer>> e : data.entrySet())
+        for (Map.Entry<ByteBuffer, NavigableMap<DecoratedKey, Long>> e : data.entrySet())
         {
             if (UTF8Type.instance.getString(e.getKey()).equals("cat"))
                 continue; // cat is embedded into scat, we'll test it in next section
 
-            Assert.assertEquals("Key was: " + UTF8Type.instance.compose(e.getKey()), convert(e.getValue()), onDisk.search(e.getKey()));
+            Assert.assertEquals("Key was: " + UTF8Type.instance.compose(e.getKey()), e.getValue().keySet(), convert(onDisk.search(e.getKey())));
         }
 
         // check that cat returns positions for scat & cat
-        Assert.assertEquals(RoaringBitmap.bitmapOf(1, 4), onDisk.search(UTF8Type.instance.fromString("cat")));
+        Assert.assertEquals(convert(1, 4), convert(onDisk.search(UTF8Type.instance.fromString("cat"))));
 
         // random suffix queries
-        Assert.assertEquals(RoaringBitmap.bitmapOf(9, 10), onDisk.search(UTF8Type.instance.fromString("ar")));
-        Assert.assertEquals(RoaringBitmap.bitmapOf(1, 2, 3, 4), onDisk.search(UTF8Type.instance.fromString("at")));
-        Assert.assertEquals(RoaringBitmap.bitmapOf(1, 11, 12), onDisk.search(UTF8Type.instance.fromString("mic")));
-        Assert.assertEquals(RoaringBitmap.bitmapOf(1, 11, 12), onDisk.search(UTF8Type.instance.fromString("ae")));
-        Assert.assertEquals(RoaringBitmap.bitmapOf(2, 5, 6), onDisk.search(UTF8Type.instance.fromString("ll")));
-        Assert.assertEquals(RoaringBitmap.bitmapOf(1, 2, 5, 6, 11, 12), onDisk.search(UTF8Type.instance.fromString("l")));
-        Assert.assertEquals(RoaringBitmap.bitmapOf(7), onDisk.search(UTF8Type.instance.fromString("oo")));
-        Assert.assertEquals(RoaringBitmap.bitmapOf(7), onDisk.search(UTF8Type.instance.fromString("o")));
-        Assert.assertEquals(RoaringBitmap.bitmapOf(1, 2, 3, 4, 6), onDisk.search(UTF8Type.instance.fromString("t")));
+        Assert.assertEquals(convert(9, 10), convert(onDisk.search(UTF8Type.instance.fromString("ar"))));
+        Assert.assertEquals(convert(1, 2, 3, 4), convert(onDisk.search(UTF8Type.instance.fromString("at"))));
+        Assert.assertEquals(convert(1, 11, 12), convert(onDisk.search(UTF8Type.instance.fromString("mic"))));
+        Assert.assertEquals(convert(1, 11, 12), convert(onDisk.search(UTF8Type.instance.fromString("ae"))));
+        Assert.assertEquals(convert(2, 5, 6), convert(onDisk.search(UTF8Type.instance.fromString("ll"))));
+        Assert.assertEquals(convert(1, 2, 5, 6, 11, 12), convert(onDisk.search(UTF8Type.instance.fromString("l"))));
+        Assert.assertEquals(convert(7), convert(onDisk.search(UTF8Type.instance.fromString("oo"))));
+        Assert.assertEquals(convert(7), convert(onDisk.search(UTF8Type.instance.fromString("o"))));
+        Assert.assertEquals(convert(1, 2, 3, 4, 6), convert(onDisk.search(UTF8Type.instance.fromString("t"))));
 
-        Assert.assertEquals(null, onDisk.search(UTF8Type.instance.decompose("hello")));
+        Assert.assertEquals(Collections.emptySet(), convert(onDisk.search(UTF8Type.instance.decompose("hello"))));
 
         onDisk.close();
     }
@@ -76,21 +80,21 @@ public class OnDiskSATest
     @Test
     public void testIntegerSAConstruction() throws Exception
     {
-        final Map<ByteBuffer, NavigableMap<DecoratedKey, Integer>> data = new HashMap<ByteBuffer, NavigableMap<DecoratedKey, Integer>>()
+        final Map<ByteBuffer, NavigableMap<DecoratedKey, Long>> data = new HashMap<ByteBuffer, NavigableMap<DecoratedKey, Long>>()
         {{
-                put(Int32Type.instance.decompose(5),  keyBuilder(1));
-                put(Int32Type.instance.decompose(7),  keyBuilder(2));
-                put(Int32Type.instance.decompose(1),  keyBuilder(3));
-                put(Int32Type.instance.decompose(3),  keyBuilder(1, 4));
-                put(Int32Type.instance.decompose(8),  keyBuilder(2, 6));
-                put(Int32Type.instance.decompose(10), keyBuilder(5));
-                put(Int32Type.instance.decompose(6),  keyBuilder(7));
-                put(Int32Type.instance.decompose(4),  keyBuilder(9, 10));
-                put(Int32Type.instance.decompose(0),  keyBuilder(11, 12, 1));
+                put(Int32Type.instance.decompose(5),  keyBuilder(1L));
+                put(Int32Type.instance.decompose(7),  keyBuilder(2L));
+                put(Int32Type.instance.decompose(1),  keyBuilder(3L));
+                put(Int32Type.instance.decompose(3),  keyBuilder(1L, 4L));
+                put(Int32Type.instance.decompose(8),  keyBuilder(2L, 6L));
+                put(Int32Type.instance.decompose(10), keyBuilder(5L));
+                put(Int32Type.instance.decompose(6),  keyBuilder(7L));
+                put(Int32Type.instance.decompose(4),  keyBuilder(9L, 10L));
+                put(Int32Type.instance.decompose(0),  keyBuilder(11L, 12L, 1L));
         }};
 
         OnDiskSABuilder builder = new OnDiskSABuilder(UTF8Type.instance, Int32Type.instance, OnDiskSABuilder.Mode.ORIGINAL);
-        for (Map.Entry<ByteBuffer, NavigableMap<DecoratedKey, Integer>> e : data.entrySet())
+        for (Map.Entry<ByteBuffer, NavigableMap<DecoratedKey, Long>> e : data.entrySet())
             builder.add(e.getKey(), e.getValue());
 
         File index = File.createTempFile("on-disk-sa-int", "db");
@@ -98,11 +102,11 @@ public class OnDiskSATest
 
         builder.finish(Pair.create(keyAt(1), keyAt(12)), index);
 
-        OnDiskSA onDisk = new OnDiskSA(index, Int32Type.instance);
+        OnDiskSA onDisk = new OnDiskSA(index, Int32Type.instance, new KeyConverter());
 
-        for (Map.Entry<ByteBuffer, NavigableMap<DecoratedKey, Integer>> e : data.entrySet())
+        for (Map.Entry<ByteBuffer, NavigableMap<DecoratedKey, Long>> e : data.entrySet())
         {
-            Assert.assertEquals(convert(e.getValue()), onDisk.search(e.getKey()));
+            Assert.assertEquals(e.getValue().keySet(), convert(onDisk.search(e.getKey())));
         }
 
         List<ByteBuffer> sortedNumbers = new ArrayList<ByteBuffer>()
@@ -126,7 +130,7 @@ public class OnDiskSATest
         {
             ByteBuffer number = sortedNumbers.get(idx++);
             Assert.assertEquals(number, suffix.getSuffix());
-            Assert.assertEquals(convert(data.get(number)), suffix.getOffsets());
+            Assert.assertEquals(data.get(number).keySet(), convert(suffix.getOffsets()));
         }
 
         // test partial iteration (descending)
@@ -138,7 +142,7 @@ public class OnDiskSATest
             ByteBuffer number = sortedNumbers.get(idx++);
 
             Assert.assertEquals(number, suffix.getSuffix());
-            Assert.assertEquals(convert(data.get(number)), suffix.getOffsets());
+            Assert.assertEquals(data.get(number).keySet(), convert(suffix.getOffsets()));
         }
 
         idx = 3; // start from the 3rd element exclusive
@@ -149,7 +153,7 @@ public class OnDiskSATest
             ByteBuffer number = sortedNumbers.get(idx++);
 
             Assert.assertEquals(number, suffix.getSuffix());
-            Assert.assertEquals(convert(data.get(number)), suffix.getOffsets());
+            Assert.assertEquals(data.get(number).keySet(), convert(suffix.getOffsets()));
         }
 
         // test partial iteration (ascending)
@@ -161,7 +165,7 @@ public class OnDiskSATest
             ByteBuffer number = sortedNumbers.get(idx--);
 
             Assert.assertEquals(number, suffix.getSuffix());
-            Assert.assertEquals(convert(data.get(number)), suffix.getOffsets());
+            Assert.assertEquals(data.get(number).keySet(), convert(suffix.getOffsets()));
         }
 
         idx = 6; // start from the 6rd element exclusive
@@ -172,7 +176,7 @@ public class OnDiskSATest
             ByteBuffer number = sortedNumbers.get(idx--);
 
             Assert.assertEquals(number, suffix.getSuffix());
-            Assert.assertEquals(convert(data.get(number)), suffix.getOffsets());
+            Assert.assertEquals(data.get(number).keySet(), convert(suffix.getOffsets()));
         }
 
         onDisk.close();
@@ -187,14 +191,14 @@ public class OnDiskSATest
 
         OnDiskSABuilder iterTest = new OnDiskSABuilder(UTF8Type.instance, Int32Type.instance, OnDiskSABuilder.Mode.ORIGINAL);
         for (int i = 0; i < iterCheckNums.size(); i++)
-            iterTest.add(iterCheckNums.get(i), keyBuilder(i));
+            iterTest.add(iterCheckNums.get(i), keyBuilder((long) i));
 
         File iterIndex = File.createTempFile("sa-iter", ".db");
         iterIndex.deleteOnExit();
 
         iterTest.finish(Pair.create(keyAt(0), keyAt(4)), iterIndex);
 
-        onDisk = new OnDiskSA(iterIndex, Int32Type.instance);
+        onDisk = new OnDiskSA(iterIndex, Int32Type.instance, new KeyConverter());
 
         ByteBuffer number = Int32Type.instance.decompose(1);
         Assert.assertEquals(0, Iterators.size(onDisk.iteratorAt(number, OnDiskSA.IteratorOrder.ASC, false)));
@@ -234,11 +238,11 @@ public class OnDiskSATest
     {
         OnDiskSABuilder builder = new OnDiskSABuilder(UTF8Type.instance, UTF8Type.instance, OnDiskSABuilder.Mode.SUFFIX)
         {{
-                add(UTF8Type.instance.decompose("Eliza"), keyBuilder(1, 2));
-                add(UTF8Type.instance.decompose("Elizabeth"), keyBuilder(3, 4));
-                add(UTF8Type.instance.decompose("Aliza"), keyBuilder(5, 6));
-                add(UTF8Type.instance.decompose("Taylor"), keyBuilder(7, 8));
-                add(UTF8Type.instance.decompose("Pavel"), keyBuilder(9, 10));
+                add(UTF8Type.instance.decompose("Eliza"), keyBuilder(1L, 2L));
+                add(UTF8Type.instance.decompose("Elizabeth"), keyBuilder(3L, 4L));
+                add(UTF8Type.instance.decompose("Aliza"), keyBuilder(5L, 6L));
+                add(UTF8Type.instance.decompose("Taylor"), keyBuilder(7L, 8L));
+                add(UTF8Type.instance.decompose("Pavel"), keyBuilder(9L, 10L));
         }};
 
         File index = File.createTempFile("on-disk-sa-multi-suffix-match", ".db");
@@ -246,25 +250,25 @@ public class OnDiskSATest
 
         builder.finish(Pair.create(keyAt(1), keyAt(10)), index);
 
-        OnDiskSA onDisk = new OnDiskSA(index, UTF8Type.instance);
+        OnDiskSA onDisk = new OnDiskSA(index, UTF8Type.instance, new KeyConverter());
 
-        Assert.assertEquals(bitMapOf(1, 2, 3, 4, 5, 6), onDisk.search(UTF8Type.instance.decompose("liz")));
-        Assert.assertEquals(bitMapOf(1, 2, 3, 4, 5, 6, 7, 8, 9, 10), onDisk.search(UTF8Type.instance.decompose("a")));
-        Assert.assertEquals(bitMapOf(5, 6), onDisk.search(UTF8Type.instance.decompose("A")));
-        Assert.assertEquals(bitMapOf(1, 2, 3, 4), onDisk.search(UTF8Type.instance.decompose("E")));
-        Assert.assertEquals(bitMapOf(1, 2, 3, 4, 5, 6, 7, 8, 9, 10), onDisk.search(UTF8Type.instance.decompose("l")));
-        Assert.assertEquals(bitMapOf(3, 4), onDisk.search(UTF8Type.instance.decompose("bet")));
-        Assert.assertEquals(bitMapOf(3, 4, 9, 10), onDisk.search(UTF8Type.instance.decompose("e")));
-        Assert.assertEquals(bitMapOf(7, 8), onDisk.search(UTF8Type.instance.decompose("yl")));
-        Assert.assertEquals(bitMapOf(7, 8), onDisk.search(UTF8Type.instance.decompose("T")));
-        Assert.assertEquals(bitMapOf(1, 2, 3, 4, 5, 6), onDisk.search(UTF8Type.instance.decompose("za")));
-        Assert.assertEquals(bitMapOf(3, 4), onDisk.search(UTF8Type.instance.decompose("ab")));
+        Assert.assertEquals(convert(1, 2, 3, 4, 5, 6), convert(onDisk.search(UTF8Type.instance.decompose("liz"))));
+        Assert.assertEquals(convert(1, 2, 3, 4, 5, 6, 7, 8, 9, 10), convert(onDisk.search(UTF8Type.instance.decompose("a"))));
+        Assert.assertEquals(convert(5, 6), convert(onDisk.search(UTF8Type.instance.decompose("A"))));
+        Assert.assertEquals(convert(1, 2, 3, 4), convert(onDisk.search(UTF8Type.instance.decompose("E"))));
+        Assert.assertEquals(convert(1, 2, 3, 4, 5, 6, 7, 8, 9, 10), convert(onDisk.search(UTF8Type.instance.decompose("l"))));
+        Assert.assertEquals(convert(3, 4), convert(onDisk.search(UTF8Type.instance.decompose("bet"))));
+        Assert.assertEquals(convert(3, 4, 9, 10), convert(onDisk.search(UTF8Type.instance.decompose("e"))));
+        Assert.assertEquals(convert(7, 8), convert(onDisk.search(UTF8Type.instance.decompose("yl"))));
+        Assert.assertEquals(convert(7, 8), convert(onDisk.search(UTF8Type.instance.decompose("T"))));
+        Assert.assertEquals(convert(1, 2, 3, 4, 5, 6), convert(onDisk.search(UTF8Type.instance.decompose("za"))));
+        Assert.assertEquals(convert(3, 4), convert(onDisk.search(UTF8Type.instance.decompose("ab"))));
 
-        Assert.assertNull(onDisk.search(UTF8Type.instance.decompose("Pi")));
-        Assert.assertNull(onDisk.search(UTF8Type.instance.decompose("ethz")));
-        Assert.assertNull(onDisk.search(UTF8Type.instance.decompose("liw")));
-        Assert.assertNull(onDisk.search(UTF8Type.instance.decompose("Taw")));
-        Assert.assertNull(onDisk.search(UTF8Type.instance.decompose("Av")));
+        Assert.assertEquals(Collections.emptySet(), convert(onDisk.search(UTF8Type.instance.decompose("Pi"))));
+        Assert.assertEquals(Collections.emptySet(), convert(onDisk.search(UTF8Type.instance.decompose("ethz"))));
+        Assert.assertEquals(Collections.emptySet(), convert(onDisk.search(UTF8Type.instance.decompose("liw"))));
+        Assert.assertEquals(Collections.emptySet(), convert(onDisk.search(UTF8Type.instance.decompose("Taw"))));
+        Assert.assertEquals(Collections.emptySet(), convert(onDisk.search(UTF8Type.instance.decompose("Av"))));
 
         onDisk.close();
     }
@@ -316,23 +320,14 @@ public class OnDiskSATest
     }
     */
 
-    private static RoaringBitmap convert(NavigableMap<DecoratedKey, Integer> keys)
-    {
-        RoaringBitmap bitmap = new RoaringBitmap();
-        for (Integer offset : keys.values())
-            bitmap.add(offset);
-
-        return bitmap;
-    }
-
-    private static DecoratedKey keyAt(int key)
+    private static DecoratedKey keyAt(long key)
     {
         return StorageService.getPartitioner().decorateKey(ByteBuffer.wrap(("key" + key).getBytes()));
     }
 
-    private static NavigableMap<DecoratedKey, Integer> keyBuilder(Integer... keys)
+    private static NavigableMap<DecoratedKey, Long> keyBuilder(Long... keys)
     {
-        NavigableMap<DecoratedKey, Integer> builder = new TreeMap<>(new Comparator<DecoratedKey>()
+        NavigableMap<DecoratedKey, Long> builder = new TreeMap<>(new Comparator<DecoratedKey>()
         {
             @Override
             public int compare(DecoratedKey a, DecoratedKey b)
@@ -344,17 +339,40 @@ public class OnDiskSATest
             }
         });
 
-        for (Integer key : keys)
+        for (Long key : keys)
             builder.put(keyAt(key), key);
 
         return builder;
     }
 
-    private static RoaringBitmap bitMapOf(int... values)
+    private static Set<DecoratedKey> convert(long... keyOffsets)
     {
-        RoaringBitmap map = new RoaringBitmap();
-        for (int v : values)
-            map.add(v);
-        return map;
+        Set<DecoratedKey> result = new HashSet<>();
+        for (long offset : keyOffsets)
+            result.add(keyAt(offset));
+
+        return result;
+    }
+
+    private static Set<DecoratedKey> convert(SkippableIterator<Long, TokenTree.Token> results)
+    {
+        Set<DecoratedKey> keys = new HashSet<>();
+
+        while (results.hasNext())
+        {
+            for (DecoratedKey key : results.next())
+                keys.add(key);
+        }
+
+        return keys;
+    }
+
+    private static class KeyConverter implements Function<Long, DecoratedKey>
+    {
+        @Override
+        public DecoratedKey apply(Long offset)
+        {
+            return keyAt(offset);
+        }
     }
 }
