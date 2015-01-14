@@ -37,6 +37,17 @@ public class ByteBufferDataInput extends AbstractDataInput
     @Override
     public int read() throws IOException
     {
-        return buffer.get() & 0xff;
+        return buffer.hasRemaining() ? buffer.get() & 0xff : -1;
+    }
+
+    @Override
+    public int read(byte[] bytes, int off, int len) throws IOException
+    {
+        if (!buffer.hasRemaining())
+            return -1;
+
+        len = Math.min(len, buffer.remaining());
+        buffer.get(bytes, off, len);
+        return len;
     }
 }

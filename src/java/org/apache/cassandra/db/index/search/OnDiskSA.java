@@ -5,15 +5,24 @@ import java.io.File;
 import java.io.IOException;
 import java.io.PrintStream;
 import java.nio.ByteBuffer;
+import java.util.ArrayList;
 import java.util.Iterator;
+import java.util.List;
 
+import com.google.common.base.Function;
 import com.google.common.collect.AbstractIterator;
 
-import org.apache.cassandra.db.index.search.container.KeyContainer;
+import com.google.common.collect.Iterators;
+import org.apache.cassandra.db.DecoratedKey;
+import org.apache.cassandra.db.index.search.container.TokenTree;
+import org.apache.cassandra.db.index.utils.LazyMergeSortIterator;
+import org.apache.cassandra.db.index.utils.SkippableIterator;
 import org.apache.cassandra.db.marshal.AbstractType;
 import org.apache.cassandra.io.FSReadError;
 import org.apache.cassandra.io.util.RandomAccessReader;
-import org.roaringbitmap.RoaringBitmap;
+
+import static org.apache.cassandra.db.index.utils.LazyMergeSortIterator.OperationType;
+import static org.apache.cassandra.db.index.search.container.TokenTree.Token;
 
 import static org.apache.cassandra.db.index.search.OnDiskBlock.SearchResult;
 
@@ -46,13 +55,17 @@ public class OnDiskSA implements Iterable<OnDiskSA.DataSuffix>, Closeable
 
     protected final AbstractType<?> comparator;
     protected final RandomAccessReader file;
+    protected final Function<Long, DecoratedKey> keyFetcher;
+
     protected final String indexPath;
 
     protected final PointerLevel[] levels;
     protected final DataLevel dataLevel;
 
-    public OnDiskSA(File index, AbstractType<?> cmp) throws IOException
+    public OnDiskSA(File index, AbstractType<?> cmp, Function<Long, DecoratedKey> keyReader) throws IOException
     {
+        keyFetcher = keyReader;
+
         comparator = cmp;
         indexPath = index.getAbsolutePath();
 
@@ -76,42 +89,37 @@ public class OnDiskSA implements Iterable<OnDiskSA.DataSuffix>, Closeable
         dataLevel = new DataLevel(file.getFilePointer(), blockCount);
     }
 
-    public RoaringBitmap search(ByteBuffer suffix) throws IOException
+    public SkippableIterator<Long, Token> search(ByteBuffer suffix) throws IOException
     {
         return search(suffix, true, suffix, true);
     }
 
-    public RoaringBitmap search(ByteBuffer lower, boolean lowerInclusive,
-                                ByteBuffer upper, boolean upperInclusive)
+    public SkippableIterator<Long, Token> search(ByteBuffer lower, boolean lowerInclusive,
+                                                        ByteBuffer upper, boolean upperInclusive)
     {
         IteratorOrder order = lower == null ? IteratorOrder.ASC : IteratorOrder.DESC;
         Iterator<DataSuffix> suffixes = lower == null
                                          ? iteratorAt(upper, order, upperInclusive)
                                          : iteratorAt(lower, order, lowerInclusive);
 
-        RoaringBitmap keys = null;
+
+        List<SkippableIterator<Long, Token>> union = new ArrayList<>();
         while (suffixes.hasNext())
         {
             DataSuffix suffix = suffixes.next();
 
-            if (order == IteratorOrder.DESC && upper != null)
-            {
+            if (order == IteratorOrder.DESC && upper != null) {
                 ByteBuffer s = suffix.getSuffix();
                 s.limit(s.position() + upper.remaining());
-
                 int cmp = comparator.compare(s, upper);
                 if ((cmp > 0 && upperInclusive) || (cmp >= 0 && !upperInclusive))
-                    return keys;
+                    break;
             }
 
-            RoaringBitmap offsets = suffix.getOffsets();
-            if (keys == null)
-                keys = offsets;
-            else
-                keys.or(offsets);
+            union.add(suffix.getOffsets());
         }
 
-        return keys;
+        return new LazyMergeSortIterator<>(OperationType.OR, union);
     }
 
     public Iterator<DataSuffix> iteratorAt(ByteBuffer query, IteratorOrder order, boolean inclusive)
@@ -248,7 +256,7 @@ public class OnDiskSA implements Iterable<OnDiskSA.DataSuffix>, Closeable
         protected abstract T cast(ByteBuffer block, RandomAccessReader source);
     }
 
-    protected static class DataBlock extends OnDiskBlock<DataSuffix>
+    protected class DataBlock extends OnDiskBlock<DataSuffix>
     {
         public DataBlock(ByteBuffer data, RandomAccessReader source)
         {
@@ -276,7 +284,7 @@ public class OnDiskSA implements Iterable<OnDiskSA.DataSuffix>, Closeable
         }
     }
 
-    public static class DataSuffix extends Suffix
+    public class DataSuffix extends Suffix
     {
         private final RandomAccessReader file;
         private final long auxSectionOffset;
@@ -295,15 +303,18 @@ public class OnDiskSA implements Iterable<OnDiskSA.DataSuffix>, Closeable
             return content.getInt(position + 2 + content.getShort(position));
         }
 
-        public KeyContainer getContainer()
+        public SkippableIterator<Long, Token> getOffsets()
         {
             file.seek(auxSectionOffset + getOffset());
-            return new KeyContainer(file);
-        }
 
-        public RoaringBitmap getOffsets()
-        {
-            return getContainer().getOffsets();
+            try
+            {
+                return new TokenTree(file).iterator(keyFetcher);
+            }
+            catch (IOException e)
+            {
+                throw new FSReadError(e, file.getPath());
+            }
         }
     }
 
@@ -440,7 +451,7 @@ public class OnDiskSA implements Iterable<OnDiskSA.DataSuffix>, Closeable
             for (int j = 0; j < block.getElementsSize(); j++)
             {
                 OnDiskSA.DataSuffix p = block.getElement(j);
-                out.printf("DataSuffix(chars: %s, offsets: %s)%n", comparator.compose(p.getSuffix()), p.getOffsets());
+                out.printf("DataSuffix(chars: %s, offsets: %s)%n", comparator.compose(p.getSuffix()), Iterators.toString(p.getOffsets()));
             }
         }
 
