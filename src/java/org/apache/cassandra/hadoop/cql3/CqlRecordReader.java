@@ -72,8 +72,6 @@ public class CqlRecordReader extends RecordReader<Long, Row>
 {
     private static final Logger logger = LoggerFactory.getLogger(CqlRecordReader.class);
 
-    public static final int DEFAULT_CQL_PAGE_LIMIT = 1000;
-
     private ColumnFamilySplit split;
     private RowIterator rowIterator;
 
@@ -92,6 +90,7 @@ public class CqlRecordReader extends RecordReader<Long, Row>
 
     // partition keys -- key aliases
     private LinkedHashMap<String, Boolean> partitionBoundColumns = Maps.newLinkedHashMap();
+    protected int nativeProtocolVersion = 1;
 
     public CqlRecordReader()
     {
@@ -131,6 +130,9 @@ public class CqlRecordReader extends RecordReader<Long, Row>
 
         if (session == null)
           throw new RuntimeException("Can't create connection session");
+
+        //get negotiated serialization protocol
+        nativeProtocolVersion = cluster.getConfiguration().getProtocolOptions().getProtocolVersion();
 
         // If the user provides a CQL query then we will use it without validation
         // otherwise we will fall back to building a query using the:
@@ -231,6 +233,14 @@ public class CqlRecordReader extends RecordReader<Long, Row>
     public Row createValue()
     {
         return new WrappedRow();
+    }
+
+    /**
+     * Return native version protocol of the cluster connection
+     * @return serialization protocol version.
+     */
+    public int getNativeProtocolVersion() {
+        return nativeProtocolVersion;
     }
 
     /** CQL row iterator 

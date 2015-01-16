@@ -15,13 +15,23 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.apache.cassandra.auth;
+package org.apache.cassandra.exceptions;
 
-public interface AuthMBean
+import org.apache.cassandra.db.ConsistencyLevel;
+
+public class RequestFailureException extends RequestExecutionException
 {
-    public int getPermissionsValidity();
+    public final ConsistencyLevel consistency;
+    public final int received;
+    public final int failures;
+    public final int blockFor;
 
-    public void setPermissionsValidity(int timeoutInMs);
-
-    public void invalidatePermissionsCache();
+    protected RequestFailureException(ExceptionCode code, ConsistencyLevel consistency, int received, int failures, int blockFor)
+    {
+        super(code, String.format("Operation failed - received %d responses and %d failures.", received, failures));
+        this.consistency = consistency;
+        this.received = received;
+        this.failures = failures;
+        this.blockFor = blockFor;
+    }
 }

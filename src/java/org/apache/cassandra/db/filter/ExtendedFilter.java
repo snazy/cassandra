@@ -133,6 +133,12 @@ public abstract class ExtendedFilter
      */
     public abstract ColumnFamily prune(DecoratedKey key, ColumnFamily data);
 
+    /** Returns true if tombstoned partitions should not be included in results or count towards the limit, false otherwise. */
+    public boolean ignoreTombstonedPartitions()
+    {
+        return dataRange.ignoredTombstonedPartitions();
+    }
+
     /**
      * @return true if the provided data satisfies all the expressions from
      * the clause of this filter.
@@ -298,7 +304,15 @@ public abstract class ExtendedFilter
             ColumnFamily pruned = data.cloneMeShallow();
             IDiskAtomFilter filter = dataRange.columnFilter(rowKey.getKey());
             Iterator<Cell> iter = filter.getColumnIterator(data);
-            filter.collectReducedColumns(pruned, QueryFilter.gatherTombstones(pruned, iter), cfs.gcBefore(timestamp), timestamp);
+            try
+            {
+                filter.collectReducedColumns(pruned, QueryFilter.gatherTombstones(pruned, iter), cfs.gcBefore(timestamp), timestamp);
+            }
+            catch (TombstoneOverwhelmingException e)
+            {
+                e.setKey(rowKey);
+                throw e;
+            }
             return pruned;
         }
 

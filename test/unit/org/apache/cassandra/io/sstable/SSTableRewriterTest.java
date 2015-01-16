@@ -200,6 +200,7 @@ public class SSTableRewriterTest extends SchemaLoader
         int filecounts = assertFileCounts(sstables.iterator().next().descriptor.directory.list(), 0, 0);
         assertEquals(1, filecounts);
         cfs.truncateBlocking();
+        Thread.sleep(1000); // make sure the deletion tasks have run etc
         validateCFS(cfs);
     }
 
@@ -213,21 +214,27 @@ public class SSTableRewriterTest extends SchemaLoader
         for (int i = 0; i < 100; i++)
             cf.addColumn(Util.cellname(i), ByteBuffer.allocate(1000), 1);
         File dir = cfs.directories.getDirectoryForNewSSTables();
+
         SSTableWriter writer = getWriter(cfs, dir);
         for (int i = 0; i < 500; i++)
             writer.append(StorageService.getPartitioner().decorateKey(ByteBufferUtil.bytes(i)), cf);
         SSTableReader s = writer.openEarly(1000);
         assertFileCounts(dir.list(), 2, 3);
+
         for (int i = 500; i < 1000; i++)
             writer.append(StorageService.getPartitioner().decorateKey(ByteBufferUtil.bytes(i)), cf);
         SSTableReader s2 = writer.openEarly(1000);
+
         assertTrue(s != s2);
         assertFileCounts(dir.list(), 2, 3);
-        s.markObsolete();
+
+        s.setReplacedBy(s2);
+        s2.markObsolete();
         s.releaseReference();
-        Thread.sleep(1000);
-        assertFileCounts(dir.list(), 0, 3);
+        s2.releaseReference();
+
         writer.abort(false);
+
         Thread.sleep(1000);
         int datafiles = assertFileCounts(dir.list(), 0, 0);
         assertEquals(datafiles, 0);
@@ -492,6 +499,7 @@ public class SSTableRewriterTest extends SchemaLoader
         Thread.sleep(1000);
         assertFileCounts(s.descriptor.directory.list(), 0, 0);
         cfs.truncateBlocking();
+        Thread.sleep(1000); // make sure the deletion tasks have run etc
         validateCFS(cfs);
     }
 

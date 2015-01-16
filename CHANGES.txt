@@ -1,4 +1,12 @@
 3.0
+ * Support direct buffer decompression for reads (CASSANDRA-8464)
+ * DirectByteBuffer compatible LZ4 methods (CASSANDRA-7039)
+ * Add role based access control (CASSANDRA-7653)
+ * Group sstables for anticompaction correctly (CASSANDRA-8578)
+ * Add ReadFailureException to native protocol, respond
+   immediately when replicas encounter errors while handling
+   a read request (CASSANDRA-7886)
+ * Switch CommitLogSegment from RandomAccessFile to nio (CASSANDRA-8308)
  * Allow mixing token and partition key restrictions (CASSANDRA-7016)
  * Support index key/value entries on map collections (CASSANDRA-8473)
  * Modernize schema tables (CASSANDRA-8261)
@@ -44,6 +52,10 @@
 
 
 2.1.3
+ * (cqlsh) Escape clqshrc passwords properly (CASSANDRA-8618)
+ * Fix NPE when passing wrong argument in ALTER TABLE statement (CASSANDRA-8355)
+ * Pig: Refactor and deprecate CqlStorage (CASSANDRA-8599)
+ * Don't reuse the same cleanup strategy for all sstables (CASSANDRA-8537)
  * Fix case-sensitivity of index name on CREATE and DROP INDEX
    statements (CASSANDRA-8365)
  * Better detection/logging for corruption in compressed sstables (CASSANDRA-8192)
@@ -94,6 +106,14 @@
  * Log failed host when preparing incremental repair (CASSANDRA-8228)
  * Force config client mode in CQLSSTableWriter (CASSANDRA-8281)
 Merged from 2.0:
+ * Use more efficient slice size for querying internal secondary
+   index tables (CASSANDRA-8550)
+ * Fix potentially returning deleted rows with range tombstone (CASSANDRA-8558)
+ * Check for available disk space before starting a compaction (CASSANDRA-8562)
+ * Fix DISTINCT queries with LIMITs or paging when some partitions
+   contain only tombstones (CASSANDRA-8490)
+ * Introduce background cache refreshing to permissions cache
+   (CASSANDRA-8194)
  * Fix race condition in StreamTransferTask that could lead to
    infinite loops and premature sstable deletion (CASSANDRA-7704)
  * Add an extra version check to MigrationTask (CASSANDRA-8462)
@@ -137,7 +157,7 @@ Merged from 2.0:
  * Improve PropertyFileSnitch logging (CASSANDRA-8183)
  * Add DC-aware sequential repair (CASSANDRA-8193)
  * Use live sstables in snapshot repair if possible (CASSANDRA-8312)
-
+ * Fix hints serialized size calculation (CASSANDRA-8587)
 
 2.1.2
  * (cqlsh) parse_for_table_meta errors out on queries with undefined
