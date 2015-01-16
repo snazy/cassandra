@@ -76,10 +76,6 @@ public class CassandraAuthorizer implements IAuthorizer
                                                                                                                   ByteBufferUtil.bytes(resource.getName()))));
             result = UntypedResultSet.create(rows.result);
         }
-        catch (RequestValidationException e)
-        {
-            throw new AssertionError(e); // not supposed to happen
-        }
         catch (RequestExecutionException e)
         {
             logger.warn("CassandraAuthorizer failed to authorize {} for {}", user, resource);
@@ -240,15 +236,8 @@ public class CassandraAuthorizer implements IAuthorizer
     {
         Auth.setupTable(PERMISSIONS_CF, PERMISSIONS_CF_SCHEMA);
 
-        try
-        {
-            String query = String.format("SELECT permissions FROM %s.%s WHERE username = ? AND resource = ?", Auth.AUTH_KS, PERMISSIONS_CF);
-            authorizeStatement = (SelectStatement) QueryProcessor.parseStatement(query).prepare().statement;
-        }
-        catch (RequestValidationException e)
-        {
-            throw new AssertionError(e); // not supposed to happen
-        }
+        String query = String.format("SELECT permissions FROM %s.%s WHERE username = ? AND resource = ?", Auth.AUTH_KS, PERMISSIONS_CF);
+        authorizeStatement = (SelectStatement) QueryProcessor.parseStatement(query).prepare().statement;
     }
 
     // We only worry about one character ('). Make sure it's properly escaped.

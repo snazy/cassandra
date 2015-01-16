@@ -108,10 +108,6 @@ public class PasswordAuthenticator implements ISaslAwareAuthenticator
                                                                                                   Lists.newArrayList(ByteBufferUtil.bytes(username))));
             result = UntypedResultSet.create(rows.result);
         }
-        catch (RequestValidationException e)
-        {
-            throw new AssertionError(e); // not supposed to happen
-        }
         catch (RequestExecutionException e)
         {
             throw new AuthenticationException(e.toString());
@@ -177,18 +173,11 @@ public class PasswordAuthenticator implements ISaslAwareAuthenticator
             }
         }, Auth.SUPERUSER_SETUP_DELAY, TimeUnit.MILLISECONDS);
 
-        try
-        {
-            String query = String.format("SELECT %s FROM %s.%s WHERE username = ?",
-                                         SALTED_HASH,
-                                         Auth.AUTH_KS,
-                                         CREDENTIALS_CF);
-            authenticateStatement = (SelectStatement) QueryProcessor.parseStatement(query).prepare().statement;
-        }
-        catch (RequestValidationException e)
-        {
-            throw new AssertionError(e); // not supposed to happen
-        }
+        String query = String.format("SELECT %s FROM %s.%s WHERE username = ?",
+                                     SALTED_HASH,
+                                     Auth.AUTH_KS,
+                                     CREDENTIALS_CF);
+        authenticateStatement = (SelectStatement) QueryProcessor.parseStatement(query).prepare().statement;
     }
 
     public SaslAuthenticator newAuthenticator()

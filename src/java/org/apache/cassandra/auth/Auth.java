@@ -198,15 +198,8 @@ public class Auth implements AuthMBean
             }
         }, SUPERUSER_SETUP_DELAY, TimeUnit.MILLISECONDS);
 
-        try
-        {
-            String query = String.format("SELECT * FROM %s.%s WHERE name = ?", AUTH_KS, USERS_CF);
-            selectUserStatement = (SelectStatement) QueryProcessor.parseStatement(query).prepare().statement;
-        }
-        catch (RequestValidationException e)
-        {
-            throw new AssertionError(e); // not supposed to happen
-        }
+        String query = String.format("SELECT * FROM %s.%s WHERE name = ?", AUTH_KS, USERS_CF);
+        selectUserStatement = (SelectStatement) QueryProcessor.parseStatement(query).prepare().statement;
     }
 
     // Only use QUORUM cl for the default superuser.
@@ -222,15 +215,8 @@ public class Auth implements AuthMBean
     {
         if (Schema.instance.getKSMetaData(AUTH_KS) == null)
         {
-            try
-            {
-                KSMetaData ksm = KSMetaData.newKeyspace(AUTH_KS, SimpleStrategy.class.getName(), ImmutableMap.of("replication_factor", "1"), true);
-                MigrationManager.announceNewKeyspace(ksm, 0, false);
-            }
-            catch (Exception e)
-            {
-                throw new AssertionError(e); // shouldn't ever happen.
-            }
+            KSMetaData ksm = KSMetaData.newKeyspace(AUTH_KS, SimpleStrategy.class.getName(), ImmutableMap.of("replication_factor", "1"), true);
+            MigrationManager.announceNewKeyspace(ksm, 0, false);
         }
     }
 
@@ -244,19 +230,12 @@ public class Auth implements AuthMBean
     {
         if (Schema.instance.getCFMetaData(AUTH_KS, name) == null)
         {
-            try
-            {
-                CFStatement parsed = (CFStatement)QueryProcessor.parseStatement(cql);
-                parsed.prepareKeyspace(AUTH_KS);
-                CreateTableStatement statement = (CreateTableStatement) parsed.prepare().statement;
-                CFMetaData cfm = statement.getCFMetaData().copy(CFMetaData.generateLegacyCfId(AUTH_KS, name));
-                assert cfm.cfName.equals(name);
-                MigrationManager.announceNewColumnFamily(cfm);
-            }
-            catch (Exception e)
-            {
-                throw new AssertionError(e);
-            }
+            CFStatement parsed = (CFStatement)QueryProcessor.parseStatement(cql);
+            parsed.prepareKeyspace(AUTH_KS);
+            CreateTableStatement statement = (CreateTableStatement) parsed.prepare().statement;
+            CFMetaData cfm = statement.getCFMetaData().copy(CFMetaData.generateLegacyCfId(AUTH_KS, name));
+            assert cfm.cfName.equals(name);
+            MigrationManager.announceNewColumnFamily(cfm);
         }
     }
 
@@ -300,21 +279,10 @@ public class Auth implements AuthMBean
 
     private static UntypedResultSet selectUser(String username)
     {
-        try
-        {
-            ResultMessage.Rows rows = selectUserStatement.execute(QueryState.forInternalCalls(),
-                                                                  QueryOptions.forInternalCalls(consistencyForUser(username),
-                                                                                                Lists.newArrayList(ByteBufferUtil.bytes(username))));
-            return UntypedResultSet.create(rows.result);
-        }
-        catch (RequestValidationException e)
-        {
-            throw new AssertionError(e); // not supposed to happen
-        }
-        catch (RequestExecutionException e)
-        {
-            throw new RuntimeException(e);
-        }
+        ResultMessage.Rows rows = selectUserStatement.execute(QueryState.forInternalCalls(),
+                                                              QueryOptions.forInternalCalls(consistencyForUser(username),
+                                                                                            Lists.newArrayList(ByteBufferUtil.bytes(username))));
+        return UntypedResultSet.create(rows.result);
     }
 
     /**
