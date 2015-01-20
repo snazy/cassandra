@@ -695,4 +695,9 @@ public class FBUtilities
     {
         return OPERATING_SYSTEM.contains("nix") || OPERATING_SYSTEM.contains("nux") || OPERATING_SYSTEM.contains("aix");
     }
+
+    public static long align(long val, int boundary)
+    {
+        return (val + boundary) & ~(boundary - 1);
+    }
 }

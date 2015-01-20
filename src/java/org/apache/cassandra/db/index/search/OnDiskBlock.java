@@ -3,22 +3,17 @@ package org.apache.cassandra.db.index.search;
 import java.nio.ByteBuffer;
 
 import org.apache.cassandra.db.marshal.AbstractType;
-import org.apache.cassandra.io.util.RandomAccessReader;
 
 public abstract class OnDiskBlock<T extends Suffix>
 {
     // this contains offsets of the suffixes and suffix data
     protected final ByteBuffer blockIndex;
     protected final int blockIndexSize;
-    protected final RandomAccessReader source;
-    protected final long auxiliarySectionOffset;
 
-    public OnDiskBlock(ByteBuffer blockIndex, RandomAccessReader source)
+    public OnDiskBlock(ByteBuffer blockIndex)
     {
         this.blockIndex = blockIndex;
         this.blockIndexSize = blockIndex.getInt() * 2;
-        this.source = source;
-        this.auxiliarySectionOffset = source.getFilePointer();
     }
 
     public SearchResult<T> search(AbstractType<?> comparator, ByteBuffer query)

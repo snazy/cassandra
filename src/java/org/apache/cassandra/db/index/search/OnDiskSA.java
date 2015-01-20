@@ -1,16 +1,12 @@
 package org.apache.cassandra.db.index.search;
 
-import java.io.Closeable;
-import java.io.File;
-import java.io.IOException;
-import java.io.PrintStream;
+import java.io.*;
 import java.nio.ByteBuffer;
+import java.nio.MappedByteBuffer;
+import java.nio.channels.FileChannel;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
-
-import com.google.common.base.Function;
-import com.google.common.collect.AbstractIterator;
 
 import com.google.common.collect.Iterators;
 import org.apache.cassandra.db.DecoratedKey;
@@ -19,12 +15,17 @@ import org.apache.cassandra.db.index.utils.LazyMergeSortIterator;
 import org.apache.cassandra.db.index.utils.SkippableIterator;
 import org.apache.cassandra.db.marshal.AbstractType;
 import org.apache.cassandra.io.FSReadError;
-import org.apache.cassandra.io.util.RandomAccessReader;
+import org.apache.cassandra.io.util.FileUtils;
+import org.apache.cassandra.utils.ByteBufferUtil;
+import org.apache.cassandra.utils.FBUtilities;
 
-import static org.apache.cassandra.db.index.utils.LazyMergeSortIterator.OperationType;
+import com.google.common.base.Function;
+import com.google.common.collect.AbstractIterator;
+
 import static org.apache.cassandra.db.index.search.container.TokenTree.Token;
-
+import static org.apache.cassandra.db.index.search.OnDiskSABuilder.BLOCK_SIZE;
 import static org.apache.cassandra.db.index.search.OnDiskBlock.SearchResult;
+import static org.apache.cassandra.db.index.utils.LazyMergeSortIterator.OperationType;
 
 public class OnDiskSA implements Iterable<OnDiskSA.DataSuffix>, Closeable
 {
@@ -54,7 +55,9 @@ public class OnDiskSA implements Iterable<OnDiskSA.DataSuffix>, Closeable
     }
 
     protected final AbstractType<?> comparator;
-    protected final RandomAccessReader file;
+    protected final MappedByteBuffer indexFile;
+    protected final int indexSize;
+
     protected final Function<Long, DecoratedKey> keyFetcher;
 
     protected final String indexPath;
@@ -62,31 +65,74 @@ public class OnDiskSA implements Iterable<OnDiskSA.DataSuffix>, Closeable
     protected final PointerLevel[] levels;
     protected final DataLevel dataLevel;
 
-    public OnDiskSA(File index, AbstractType<?> cmp, Function<Long, DecoratedKey> keyReader) throws IOException
+    protected final ByteBuffer minSuffix, maxSuffix, minKey, maxKey;
+
+    public OnDiskSA(File index, AbstractType<?> cmp, Function<Long, DecoratedKey> keyReader)
     {
         keyFetcher = keyReader;
 
         comparator = cmp;
         indexPath = index.getAbsolutePath();
 
-        file = RandomAccessReader.open(index, OnDiskSABuilder.BLOCK_SIZE, null);
-
-        file.seek(file.length() - 8);
-
-        // start of the levels
-        file.seek(file.readLong());
-
-        int numLevels = file.readInt();
-        levels = new PointerLevel[numLevels];
-        for (int i = 0; i < levels.length; i++)
+        RandomAccessFile backingFile = null;
+        try
         {
-            int blockCount = file.readInt();
-            levels[i] = new PointerLevel(file.getFilePointer(), blockCount);
-            file.skipBytes(blockCount * 8);
-        }
+            backingFile = new RandomAccessFile(index, "r");
 
-        int blockCount = file.readInt();
-        dataLevel = new DataLevel(file.getFilePointer(), blockCount);
+            assert backingFile.length() <= Integer.MAX_VALUE;
+
+            minSuffix = ByteBufferUtil.readWithShortLength(backingFile);
+            maxSuffix = ByteBufferUtil.readWithShortLength(backingFile);
+
+            minKey = ByteBufferUtil.readWithShortLength(backingFile);
+            maxKey = ByteBufferUtil.readWithShortLength(backingFile);
+
+            indexSize = (int) backingFile.length();
+            indexFile = backingFile.getChannel().map(FileChannel.MapMode.READ_ONLY, 0, indexSize);
+
+            // start of the levels
+            indexFile.position((int) indexFile.getLong(indexSize - 8));
+
+            int numLevels = indexFile.getInt();
+            levels = new PointerLevel[numLevels];
+            for (int i = 0; i < levels.length; i++)
+            {
+                int blockCount = indexFile.getInt();
+                levels[i] = new PointerLevel(indexFile.position(), blockCount);
+                indexFile.position(indexFile.position() + blockCount * 8);
+            }
+
+            int blockCount = indexFile.getInt();
+            dataLevel = new DataLevel(indexFile.position(), blockCount);
+        }
+        catch (IOException e)
+        {
+            throw new FSReadError(e, index);
+        }
+        finally
+        {
+            FileUtils.closeQuietly(backingFile);
+        }
+    }
+
+    public ByteBuffer minSuffix()
+    {
+        return minSuffix;
+    }
+
+    public ByteBuffer maxSuffix()
+    {
+        return maxSuffix;
+    }
+
+    public ByteBuffer minKey()
+    {
+        return minKey;
+    }
+
+    public ByteBuffer maxKey()
+    {
+        return maxKey;
     }
 
     public SkippableIterator<Long, Token> search(ByteBuffer suffix) throws IOException
@@ -95,7 +141,7 @@ public class OnDiskSA implements Iterable<OnDiskSA.DataSuffix>, Closeable
     }
 
     public SkippableIterator<Long, Token> search(ByteBuffer lower, boolean lowerInclusive,
-                                                        ByteBuffer upper, boolean upperInclusive)
+                                                 ByteBuffer upper, boolean upperInclusive)
     {
         IteratorOrder order = lower == null ? IteratorOrder.ASC : IteratorOrder.DESC;
         Iterator<DataSuffix> suffixes = lower == null
@@ -148,9 +194,7 @@ public class OnDiskSA implements Iterable<OnDiskSA.DataSuffix>, Closeable
 
     @Override
     public void close() throws IOException
-    {
-        file.close();
-    }
+    {}
 
     private PointerSuffix findPointer(ByteBuffer query)
     {
@@ -194,9 +238,9 @@ public class OnDiskSA implements Iterable<OnDiskSA.DataSuffix>, Closeable
         }
 
         @Override
-        protected PointerBlock cast(ByteBuffer block, RandomAccessReader source)
+        protected PointerBlock cast(ByteBuffer block)
         {
-            return new PointerBlock(block, source);
+            return new PointerBlock(block);
         }
     }
 
@@ -208,9 +252,9 @@ public class OnDiskSA implements Iterable<OnDiskSA.DataSuffix>, Closeable
         }
 
         @Override
-        protected DataBlock cast(ByteBuffer block, RandomAccessReader source)
+        protected DataBlock cast(ByteBuffer block)
         {
-            return new DataBlock(block, source);
+            return new DataBlock(block);
         }
     }
 
@@ -229,52 +273,34 @@ public class OnDiskSA implements Iterable<OnDiskSA.DataSuffix>, Closeable
         {
             assert idx >= 0 && idx < blockCount;
 
-            byte[] block = new byte[OnDiskSABuilder.BLOCK_SIZE];
-
-            try
-            {
-                // seek to the block offset in the level index
-                // this is done to save memory for long[] because
-                // the number of blocks in the level is dependent on the
-                // block size (which, by default, is 4K), as we align all of the blocks
-                // and index is pre-faulted on construction this seek shouldn't be
-                // performance problem.
-                file.seek(blockOffsets + idx * 8);
-
-                // read block offset and move there
-                file.seek(file.readLong());
-                file.read(block);
-            }
-            catch (IOException e)
-            {
-                throw new FSReadError(e, indexPath);
-            }
-
-            return cast(ByteBuffer.wrap(block), file);
+            // calculate block offset and move there
+            // (long is intentional, we'll just need mmap implementation which supports long positions)
+            long blockOffset = indexFile.getLong((int) (blockOffsets + idx * 8));
+            return cast((ByteBuffer) indexFile.duplicate().position((int) blockOffset));
         }
 
-        protected abstract T cast(ByteBuffer block, RandomAccessReader source);
+        protected abstract T cast(ByteBuffer block);
     }
 
     protected class DataBlock extends OnDiskBlock<DataSuffix>
     {
-        public DataBlock(ByteBuffer data, RandomAccessReader source)
+        public DataBlock(ByteBuffer data)
         {
-            super(data, source);
+            super(data);
         }
 
         @Override
         protected DataSuffix cast(ByteBuffer data)
         {
-            return new DataSuffix(data, source, auxiliarySectionOffset);
+            return new DataSuffix(data);
         }
     }
 
     protected static class PointerBlock extends OnDiskBlock<PointerSuffix>
     {
-        public PointerBlock(ByteBuffer block, RandomAccessReader source)
+        public PointerBlock(ByteBuffer block)
         {
-            super(block, source);
+            super(block);
         }
 
         @Override
@@ -286,14 +312,9 @@ public class OnDiskSA implements Iterable<OnDiskSA.DataSuffix>, Closeable
 
     public class DataSuffix extends Suffix
     {
-        private final RandomAccessReader file;
-        private final long auxSectionOffset;
-
-        protected DataSuffix(ByteBuffer content, RandomAccessReader file, long auxSectionOffset)
+        protected DataSuffix(ByteBuffer content)
         {
             super(content);
-            this.file = file;
-            this.auxSectionOffset = auxSectionOffset;
 
         }
 
@@ -305,16 +326,8 @@ public class OnDiskSA implements Iterable<OnDiskSA.DataSuffix>, Closeable
 
         public SkippableIterator<Long, Token> getOffsets()
         {
-            file.seek(auxSectionOffset + getOffset());
-
-            try
-            {
-                return new TokenTree(file).iterator(keyFetcher);
-            }
-            catch (IOException e)
-            {
-                throw new FSReadError(e, file.getPath());
-            }
+            int blockEnd = (int) FBUtilities.align(content.position(), BLOCK_SIZE);
+            return new TokenTree((ByteBuffer) indexFile.duplicate().position(blockEnd + getOffset())).iterator(keyFetcher);
         }
     }
 

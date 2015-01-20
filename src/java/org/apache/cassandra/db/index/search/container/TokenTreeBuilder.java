@@ -7,15 +7,15 @@ import java.util.*;
 
 import org.apache.cassandra.db.DecoratedKey;
 import org.apache.cassandra.db.index.SuffixArraySecondaryIndex;
-import org.apache.cassandra.db.index.search.OnDiskSABuilder;
 import org.apache.cassandra.utils.ByteBufferUtil;
+import org.apache.cassandra.utils.FBUtilities;
 import org.apache.cassandra.utils.MurmurHash;
 import org.apache.cassandra.utils.Pair;
 
 import com.google.common.collect.AbstractIterator;
 
-public class TokenTreeBuilder {
-
+public class TokenTreeBuilder
+{
     public static final int BLOCK_BYTES = 4096;
     public static final int BLOCK_HEADER_BYTES = 64;
     public static final int TOKENS_PER_BLOCK = 248; // TODO (jwest): calculate using other constants
@@ -107,7 +107,7 @@ public class TokenTreeBuilder {
     {
         long curPos = buffer.position();
         if ((curPos & (blockSize - 1)) != 0) // align on the block boundary if needed
-            buffer.position((int) OnDiskSABuilder.align(curPos, blockSize));
+            buffer.position((int) FBUtilities.align(curPos, blockSize));
     }
 
     private void bulkLoad()

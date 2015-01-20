@@ -14,6 +14,7 @@ import org.apache.cassandra.io.util.FileUtils;
 import org.apache.cassandra.io.util.SequentialWriter;
 import org.apache.cassandra.utils.ByteBufferDataOutput;
 import org.apache.cassandra.utils.ByteBufferUtil;
+import org.apache.cassandra.utils.FBUtilities;
 import org.apache.cassandra.utils.Pair;
 
 import com.carrotsearch.hppc.LongArrayList;
@@ -104,7 +105,6 @@ public class OnDiskSABuilder
                 l.flush(); // flush all of the buffers
 
             // and finally write levels index
-
             final long levelIndexPosition = out.getFilePointer();
 
             out.writeInt(levels.size());
@@ -477,7 +477,7 @@ public class OnDiskSABuilder
         {
             long endOfBlock = out.getFilePointer();
             if ((endOfBlock & (BLOCK_SIZE - 1)) != 0) // align on the block boundary if needed
-                out.skipBytes((int) (align(endOfBlock, BLOCK_SIZE) - endOfBlock));
+                out.skipBytes((int) (FBUtilities.align(endOfBlock, BLOCK_SIZE) - endOfBlock));
         }
     }
 
@@ -558,12 +558,6 @@ public class OnDiskSABuilder
             suffix.serialize(buffer);
             buffer.writeInt(offset);
         }
-    }
-
-    // TODO (jwest): move somewhere
-    public static long align(long val, int boundary)
-    {
-        return (val + boundary) & ~(boundary - 1);
     }
 
     public static abstract class SuffixIterator extends AbstractIterator<Pair<ByteBuffer, TokenTreeBuilder>>

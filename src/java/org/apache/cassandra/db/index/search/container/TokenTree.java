@@ -1,6 +1,7 @@
 package org.apache.cassandra.db.index.search.container;
 
 import java.io.IOException;
+import java.nio.ByteBuffer;
 import java.util.*;
 
 import com.google.common.base.Function;
@@ -8,31 +9,33 @@ import com.google.common.collect.AbstractIterator;
 import org.apache.cassandra.db.DecoratedKey;
 import org.apache.cassandra.db.index.utils.CombinedValue;
 import org.apache.cassandra.db.index.utils.SkippableIterator;
-import org.apache.cassandra.io.FSReadError;
-import org.apache.cassandra.io.util.RandomAccessReader;
 import org.apache.cassandra.utils.Pair;
 
 import com.google.common.primitives.Longs;
 import org.apache.commons.lang3.builder.HashCodeBuilder;
 
-public class TokenTree {
-
-    private final RandomAccessReader file;
-    private final long startPos;
+// Note: all of the seek-able offsets contained in TokenTree should be sizeof(long)
+// even if currently only lower int portion of them if used, because that makes
+// it possible to switch to mmap implementation which supports log positions
+// without any on-disk format changes and/or re-indexing if one day we'll have a need to.
+public class TokenTree
+{
+    private final ByteBuffer file;
+    private final int startPos;
     private final TokenRange tokenRange = new TokenRange();
     private final long tokenCount;
 
-    public TokenTree(RandomAccessReader f) throws IOException
+    public TokenTree(ByteBuffer tokenTree)
     {
 
-        file = f;
-        startPos = file.getFilePointer();
+        file = tokenTree;
+        startPos = file.position();
 
-        file.skipBytes(19); // TODO (jwest): don't hardcode block shared header size
-        tokenCount = file.readLong();
+        file.position(startPos + 19); // TODO (jwest): don't hardcode block shared header size
+        tokenCount = file.getLong();
 
-        long minToken = file.readLong();
-        long maxToken = file.readLong();
+        long minToken = file.getLong();
+        long maxToken = file.getLong();
         tokenRange.setRange(minToken, maxToken);
     }
 
@@ -41,6 +44,7 @@ public class TokenTree {
         return new TokenTreeIterator(keyFetcher);
     }
 
+    /*
     public long getTokenCount()
     {
         return tokenCount;
@@ -55,71 +59,74 @@ public class TokenTree {
     {
         return tokenRange.maxToken;
     }
+    */
 
     // finds leaf that *could* contain token
     // TODO (jwest): deal w/ when token < minToken or > maxToken
-    private void seekToLeaf(long token) throws IOException
+    private void seekToLeaf(long token)
     {
-
         // this loop always seeks forward except for the first iteration
         // where it may seek back to the root
-        long blockStart = startPos;
-        while (true) {
-            file.seek(blockStart);
+        int blockStart = startPos;
+        while (true)
+        {
+            file.position(blockStart);
 
-            byte info = file.readByte();
+            byte info = file.get();
             boolean isLeaf = (info & 1) == 1;
 
-            if (isLeaf) {
-                file.seek(blockStart);
+            if (isLeaf)
+            {
+                file.position(blockStart);
                 break;
             }
 
-            short tokenCount = file.readShort();
-            long minToken = file.readLong();
-            long maxToken = file.readLong();
+            short tokenCount = file.getShort();
+
+            long minToken = file.getLong();
+            long maxToken = file.getLong();
 
             if (minToken > token)
             {
                 // seek to beginning of child offsets to locate first child
-                long seekTo = blockStart +
+                int seekTo = blockStart +
                         TokenTreeBuilder.BLOCK_HEADER_BYTES +
                         tokenCount * (Long.SIZE / 8);
 
-                file.seek(seekTo);
-                blockStart = (startPos + file.readLong());
+                file.position(seekTo);
+                blockStart = (startPos + (int) file.getLong());
             }
-            else if(maxToken < token)
+            else if (maxToken < token)
             {
                 // seek to end of child offsets to locate last child
-                long seekTo = blockStart +
+                int seekTo = blockStart +
                         TokenTreeBuilder.BLOCK_HEADER_BYTES +
                         (2 * tokenCount) * (Long.SIZE / 8);
 
-                file.seek(seekTo);
-                blockStart = (startPos + file.readLong());
+                file.position(seekTo);
+                blockStart = (startPos + (int) file.getLong());
             }
             else
             {
                 // skip to end of block header/start of interior block tokens
-                file.seek(blockStart + TokenTreeBuilder.BLOCK_HEADER_BYTES);
+                file.position(blockStart + TokenTreeBuilder.BLOCK_HEADER_BYTES);
 
                 short offsetIndex = searchBlock(token, tokenCount);
 
                 // file pointer is now at beginning of offsets
-                file.skipBytes(((tokenCount - offsetIndex - 1) + offsetIndex) * (Long.SIZE / 8));
-                blockStart = (startPos + file.readLong());
+                file.position(file.position() + ((tokenCount - offsetIndex - 1) + offsetIndex) * (Long.SIZE / 8));
+                blockStart = (startPos + (int) file.getLong());
             }
         }
     }
 
     // TODO (jwest): binary instead of linear search
-    private short searchBlock(long searchToken, short tokenCount) throws IOException
+    private short searchBlock(long searchToken, short tokenCount)
     {
         short offsetIndex = 0;
         for (int i = 0; i < tokenCount; i++)
         {
-            long readToken = file.readLong();
+            long readToken = file.getLong();
             if (searchToken < readToken)
                 break;
 
@@ -133,7 +140,7 @@ public class TokenTree {
     {
         private final Function<Long, DecoratedKey> keyFetcher;
 
-        private long currentLeafStart;
+        private int currentLeafStart;
         private int currentTokenIndex;
         private List<Token> tokens;
         private Token lastToken;
@@ -145,15 +152,8 @@ public class TokenTree {
         {
             this.keyFetcher = keyFetcher;
 
-            try
-            {
-                seekToLeaf(tokenRange.minToken);
-                setupBlock();
-            }
-            catch (IOException e)
-            {
-                throw new FSReadError(e, file.getPath());
-            }
+            seekToLeaf(tokenRange.minToken);
+            setupBlock();
         }
 
         @Override
@@ -168,7 +168,7 @@ public class TokenTree {
             if (currentTokenIndex >= leafSize && lastLeaf)
                 throw new NoSuchElementException();
 
-            try
+            if (currentTokenIndex < leafSize) // tokens remaining in this leaf
             {
                 // ensure we always are at the place in the file we expect to be
                 if (currentTokenIndex < leafSize) // tokens remaining in this leaf
@@ -186,12 +186,14 @@ public class TokenTree {
                     setupBlock();
                     return next();
                 }
-
-
             }
-            catch (IOException e)
+            else // no more tokens remaining in this leaf
             {
-                throw new FSReadError(e, file.getPath());
+                assert !lastLeaf;
+
+                seekToNextLeaf();
+                setupBlock();
+                return next();
             }
         }
 
@@ -201,24 +203,16 @@ public class TokenTree {
             if (lastToken != null && token <= lastToken.token)
                 return;
 
-            try
+            if (token <= leafRange.maxToken) // next is in this leaf block
             {
-                if (token <= leafRange.maxToken) // next is in this leaf block
-                {
-                    searchLeaf(token);
-                }
-                else // next is in a leaf block that needs to be found
-                {
-                    seekToLeaf(token);
-                    setupBlock();
-                    findNearest(token);
-                }
+                searchLeaf(token);
             }
-            catch (IOException e)
+            else // next is in a leaf block that needs to be found
             {
-                throw new FSReadError(e, file.getPath());
+                seekToLeaf(token);
+                setupBlock();
+                findNearest(token);
             }
-
         }
 
         @Override
@@ -227,36 +221,35 @@ public class TokenTree {
             throw new UnsupportedOperationException();
         }
 
-        private void setupBlock() throws IOException
+        private void setupBlock()
         {
-            currentLeafStart = file.getFilePointer();
+            currentLeafStart = file.position();
             currentTokenIndex = 0;
 
             // TODO (jwest): don't hardcode last leaf indicator pos
-            lastLeaf = (file.readByte() & (1 << 1)) > 0;
-            leafSize = file.readShort();
+            lastLeaf = (file.get() & (1 << 1)) > 0;
+            leafSize = file.getShort();
 
             leafRange = new TokenRange();
-            long minToken = file.readLong();
-            long maxToken = file.readLong();
+            long minToken = file.getLong();
+            long maxToken = file.getLong();
             leafRange.setRange(minToken, maxToken);
 
             // seek to end of leaf header/start of data
-            file.seek(currentLeafStart + TokenTreeBuilder.BLOCK_HEADER_BYTES);
+            file.position(currentLeafStart + TokenTreeBuilder.BLOCK_HEADER_BYTES);
 
             tokens = new ArrayList<>(leafSize);
             for (int i = 0; i < leafSize; i++)
             {
                 // TODO (jwest): deal with collisions
-                int infoAndPack = file.readInt();
-                long token = file.readLong();
-                int offset = file.readInt();
+                int infoAndPack = file.getInt();
+                long token = file.getLong();
+                int offset = file.getInt();
                 tokens.add(new Token(token, Pair.create(keyFetcher, new long[]{ offset })));
             }
-
         }
 
-        private void findNearest(Long next) throws IOException
+        private void findNearest(Long next)
         {
             if (leafRange.maxToken < next && !lastLeaf)
             {
@@ -271,12 +264,15 @@ public class TokenTree {
         }
 
         // TODO (jwest): binary instead of linear search
-        private void searchLeaf(Long next) throws IOException
+        private void searchLeaf(Long next)
         {
             for (int i = currentTokenIndex; i < leafSize; i++)
             {
                 if (tokens.get(currentTokenIndex).token >= next)
                     break;
+
+                // 4 byte int - collision
+                file.getInt();
 
                 currentTokenIndex++;
             }
@@ -285,9 +281,8 @@ public class TokenTree {
 
         private void seekToNextLeaf()
         {
-            file.seek(currentLeafStart + TokenTreeBuilder.BLOCK_BYTES);
+            file.position(currentLeafStart + TokenTreeBuilder.BLOCK_BYTES);
         }
-
 
         @Override
         public void close() throws IOException
