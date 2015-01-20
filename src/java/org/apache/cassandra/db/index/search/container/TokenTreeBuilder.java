@@ -5,25 +5,33 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.*;
 
-import org.apache.cassandra.db.DecoratedKey;
-import org.apache.cassandra.db.index.SuffixArraySecondaryIndex;
 import org.apache.cassandra.utils.ByteBufferUtil;
 import org.apache.cassandra.utils.FBUtilities;
-import org.apache.cassandra.utils.MurmurHash;
 import org.apache.cassandra.utils.Pair;
 
 import com.google.common.collect.AbstractIterator;
+import com.carrotsearch.hppc.LongArrayList;
+import com.carrotsearch.hppc.LongSet;
+import com.carrotsearch.hppc.cursors.LongCursor;
 
 public class TokenTreeBuilder
 {
+    // note: ordinal positions are used here, do not change order
+    enum EntryType
+    {
+        SIMPLE, FACTORED, PACKED, OVERFLOW
+    }
+
     public static final int BLOCK_BYTES = 4096;
     public static final int BLOCK_HEADER_BYTES = 64;
+    public static final int OVERFLOW_TRAILER_BYTES = 64;
+    public static final int OVERFLOW_TRAILER_CAPACITY = OVERFLOW_TRAILER_BYTES / 8;
     public static final int TOKENS_PER_BLOCK = 248; // TODO (jwest): calculate using other constants
-    //public static final int TOKENS_PER_BLOCK = 2;
+    public static final long MAX_OFFSET = (1L << 47) - 1; // 48 bits for (signed) offset
 
     // TODO (jwest): merge iterator would be better here but bc duplicate keys just use SortedMap.putAll? how can we coalesce duplicates?
     // TODO (jwest): use a comparator for DK
-    private final SortedMap<DecoratedKey, long[]> tokens = new TreeMap<>(SuffixArraySecondaryIndex.TOKEN_COMPARATOR);
+    private final SortedMap<Long, LongSet> tokens = new TreeMap<>();
     private int numBlocks;
 
 
@@ -34,29 +42,40 @@ public class TokenTreeBuilder
     private long tokenCount = 0;
     private TokenRange treeTokenRange = new TokenRange();
 
-    public TokenTreeBuilder(SortedMap<DecoratedKey, long[]> data)
+    public TokenTreeBuilder(SortedMap<Long, LongSet> data)
     {
         add(data);
     }
 
-    public void add(SortedMap<DecoratedKey, long[]> data)
+    public void add(SortedMap<Long, LongSet> data)
     {
-        // TODO (jwest): deal with collisions
-        tokens.putAll(data);
+        for (Map.Entry<Long, LongSet> newEntry : data.entrySet())
+        {
+            LongSet found = tokens.get(newEntry.getKey());
+            if (found != null)
+                for (LongCursor offset : newEntry.getValue())
+                    found.add(offset.value);
+            else
+                tokens.put(newEntry.getKey(), newEntry.getValue());
+        }
+    }
+
+    public TokenTreeBuilder finish()
+    {
+        maybeBulkLoad();
+        return this;
     }
 
     public int serializedSize()
     {
-        maybeBulkLoad();
-
-        return numBlocks * BLOCK_BYTES;
+        if (numBlocks == 1)
+            return (BLOCK_HEADER_BYTES + ((int) tokenCount * 16));
+        else
+            return numBlocks * BLOCK_BYTES;
     }
 
     public void write(DataOutput out) throws IOException
     {
-
-        maybeBulkLoad();
-
         ByteBuffer blockBuffer = ByteBuffer.allocate(BLOCK_BYTES);
         Iterator<Node> levelIterator = root.levelIterator();
         long childBlockIndex = 1;
@@ -73,7 +92,7 @@ public class TokenTreeBuilder
                     firstChild = ((InteriorNode) block).children.get(0);
 
                 block.serialize(childBlockIndex, blockBuffer);
-                flushBuffer(blockBuffer, out);
+                flushBuffer(blockBuffer, out, numBlocks != 1);
 
                 childBlockIndex += block.childCount();
             }
@@ -82,9 +101,8 @@ public class TokenTreeBuilder
         }
     }
 
-    public Iterator<Pair<DecoratedKey, long[]>> iterator()
+    public Iterator<Pair<Long, LongSet>> iterator()
     {
-        maybeBulkLoad();
         return new TokenIterator(leftmostLeaf.levelIterator());
     }
 
@@ -94,10 +112,12 @@ public class TokenTreeBuilder
             bulkLoad();
     }
 
-    private void flushBuffer(ByteBuffer buffer, DataOutput o) throws IOException
+    private void flushBuffer(ByteBuffer buffer, DataOutput o, boolean align) throws IOException
     {
         // seek to end of last block before flushing
-        alignBuffer(buffer, BLOCK_BYTES);
+        if (align)
+            alignBuffer(buffer, BLOCK_BYTES);
+
         buffer.flip();
         ByteBufferUtil.write(buffer, o);
         buffer.clear();
@@ -113,7 +133,7 @@ public class TokenTreeBuilder
     private void bulkLoad()
     {
         tokenCount = tokens.size();
-        treeTokenRange.setRange(stripDK(tokens.firstKey()), stripDK(tokens.lastKey()));
+        treeTokenRange.setRange(tokens.firstKey(), tokens.lastKey());
         numBlocks = 1;
 
         // special case the tree that only has a single block in it (so we don't create a useless root)
@@ -130,10 +150,10 @@ public class TokenTreeBuilder
 
             int i = 0;
             Leaf lastLeaf = null;
-            DecoratedKey firstToken = tokens.firstKey();
-            DecoratedKey finalToken = tokens.lastKey();
-            DecoratedKey lastToken = null;
-            for (DecoratedKey token : tokens.keySet())
+            Long firstToken = tokens.firstKey();
+            Long finalToken = tokens.lastKey();
+            Long lastToken;
+            for (Long token : tokens.keySet())
             {
                 if (i == 0 || (i % TOKENS_PER_BLOCK != 0 && i != (tokenCount - 1)))
                 {
@@ -168,12 +188,6 @@ public class TokenTreeBuilder
             }
 
         }
-    }
-
-    // TODO (jwest): rename me
-    private Long stripDK(DecoratedKey k)
-    {
-        return MurmurHash.hash2_64(k.key, k.key.position(), k.key.remaining(), 0);
     }
 
     private abstract class Node
@@ -281,12 +295,13 @@ public class TokenTreeBuilder
 
     private class Leaf extends Node
     {
-        private SortedMap<DecoratedKey, long[]> tokens;
+        private final SortedMap<Long, LongSet> tokens;
+        private LongArrayList overflowCollisions;
 
         // TODO (jwest): enforce toks length <= TOKENS_PER_BLOCK;
-        Leaf(SortedMap<DecoratedKey, long[]> data)
+        Leaf(SortedMap<Long, LongSet> data)
         {
-            tokenRange.setRange(stripDK(data.firstKey()), stripDK(data.lastKey()));
+            tokenRange.setRange(data.firstKey(), data.lastKey());
             tokens = data;
         }
 
@@ -295,11 +310,11 @@ public class TokenTreeBuilder
             return tokenRange.maxToken;
         }
 
-        // TODO (jwest): deal with collisions
         public void serialize(long childBlockIndex, ByteBuffer buf)
         {
             serializeHeader(buf);
             serializeData(buf);
+            serializeOverflowCollisions(buf);
         }
 
         public int childCount()
@@ -317,21 +332,210 @@ public class TokenTreeBuilder
             return tokenRange.minToken;
         }
 
-        public Iterator<Map.Entry<DecoratedKey, long[]>> tokenIterator()
+        public Iterator<Map.Entry<Long, LongSet>> tokenIterator()
         {
             return tokens.entrySet().iterator();
         }
 
-        // TODO (jwest): deal w/ collisions
-        // TODO (jwest): deal w/ offsets greater than Integer.MAX_VALUE
         private void serializeData(ByteBuffer buf)
         {
-//            for (Long token : tokens.keySet())
-//                buf.putLong(token);
-            for (Map.Entry<DecoratedKey, long[]> entry : tokens.entrySet())
-                buf.putInt(0)                                // entry info byte & unused collision pack bytes
-                        .putLong(stripDK(entry.getKey()))
-                        .putInt((int) entry.getValue()[0]);
+            for (Map.Entry<Long, LongSet> entry : tokens.entrySet())
+                createEntry(entry.getKey(), entry.getValue()).serialize(buf);
+        }
+
+        private void serializeOverflowCollisions(ByteBuffer buf)
+        {
+            if (overflowCollisions != null)
+                for (LongCursor offset : overflowCollisions)
+                    buf.putLong(offset.value);
+        }
+
+
+        private LeafEntry createEntry(final long tok, final LongSet offsets)
+        {
+            int offsetCount = offsets.size();
+            switch (offsetCount)
+            {
+                case 0:
+                    throw new AssertionError("no offsets for token " + tok);
+                case 1:
+                    long offset = offsets.toArray()[0];
+                    if (offset > MAX_OFFSET)
+                        throw new AssertionError("offset " + offset + " cannot be greater than " + MAX_OFFSET);
+                    else if (offset <= Integer.MAX_VALUE)
+                        return new SimpleLeafEntry(tok, offset);
+                    else
+                        return new FactoredOffsetLeafEntry(tok, offset);
+                case 2:
+                    long[] rawOffsets = offsets.toArray();
+                    if (rawOffsets[0] <= Integer.MAX_VALUE && rawOffsets[1] <= Integer.MAX_VALUE &&
+                            (rawOffsets[0] <= Short.MAX_VALUE || rawOffsets[1] <= Short.MAX_VALUE))
+                        return new PackedCollisionLeafEntry(tok, rawOffsets);
+                    else
+                        return createOverflowEntry(tok, offsetCount, offsets);
+                default:
+                    return createOverflowEntry(tok, offsetCount, offsets);
+            }
+        }
+
+        private LeafEntry createOverflowEntry(final long tok, final int offsetCount, final LongSet offsets)
+        {
+            if (overflowCollisions == null)
+                overflowCollisions = new LongArrayList();
+
+            LeafEntry entry = new OverflowCollisionLeafEntry(tok, (short) overflowCollisions.size(), (short) offsetCount);
+            for (LongCursor o : offsets) {
+                if (overflowCollisions.size() == OVERFLOW_TRAILER_CAPACITY)
+                    throw new AssertionError("cannot have more than " + OVERFLOW_TRAILER_CAPACITY + " overflow collisions per leaf");
+                else
+                    overflowCollisions.add(o.value);
+            }
+            return entry;
+        }
+
+        private abstract class LeafEntry
+        {
+            protected final long token;
+
+            abstract public EntryType type();
+            abstract public int offsetData();
+            abstract public short offsetExtra();
+
+            public LeafEntry(final long tok)
+            {
+                token = tok;
+            }
+
+            public void serialize(ByteBuffer buf)
+            {
+                buf.putShort((short) type().ordinal())
+                        .putShort(offsetExtra())
+                        .putLong(token)
+                        .putInt(offsetData());
+            }
+
+        }
+
+
+        // assumes there is a single offset and the offset is <= Integer.MAX_VALUE
+        private class SimpleLeafEntry extends LeafEntry
+        {
+            private final long offset;
+
+            public SimpleLeafEntry(final long tok, final long off)
+            {
+                super(tok);
+                offset = off;
+            }
+
+            public EntryType type()
+            {
+                return EntryType.SIMPLE;
+            }
+
+            public int offsetData()
+            {
+                return (int) offset;
+            }
+
+            public short offsetExtra()
+            {
+                return 0;
+            }
+        }
+
+        // assumes there is a single offset and Integer.MAX_VALUE < offset <= MAX_OFFSET
+        // take the middle 32 bits of offset (or the top 32 when considering offset is max 48 bits)
+        // and store where offset is normally stored. take bottom 16 bits of offset and store in entry header
+        private class FactoredOffsetLeafEntry extends LeafEntry
+        {
+            private final long offset;
+
+            public FactoredOffsetLeafEntry(final long tok, final long off)
+            {
+                super(tok);
+                offset = off;
+            }
+
+            public EntryType type()
+            {
+                return EntryType.FACTORED;
+            }
+
+            public int offsetData()
+            {
+                return (int) (offset >>> Short.SIZE);
+            }
+
+            public short offsetExtra()
+            {
+                return (short) offset;
+            }
+        }
+
+        // holds an entry with two offsets that can be packed in an int & a short
+        // the int offset is stored where offset is normally stored. short offset is
+        // stored in entry header
+        private class PackedCollisionLeafEntry extends LeafEntry
+        {
+            private short smallerOffset;
+            private int largerOffset;
+
+            public PackedCollisionLeafEntry(final long tok, final long[] offs)
+            {
+                super(tok);
+
+                smallerOffset = (short) Math.min(offs[0], offs[1]);
+                largerOffset = (int) Math.max(offs[0], offs[1]);
+            }
+
+            public EntryType type()
+            {
+                return EntryType.PACKED;
+            }
+
+            public int offsetData()
+            {
+                return largerOffset;
+            }
+
+            public short offsetExtra()
+            {
+                return smallerOffset;
+            }
+        }
+
+        // holds an entry with three or more offsets, or two offsets that cannot
+        // be packed into an int & a short. the index into the overflow list
+        // is stored where the offset is normally stored. the number of overflowed offsets
+        // for the entry is stored in the entry header
+        private class OverflowCollisionLeafEntry extends LeafEntry
+        {
+            private final short startIndex;
+            private final short count;
+
+            public OverflowCollisionLeafEntry(final long tok, final short collisionStartIndex, final short collisionCount)
+            {
+                super(tok);
+                startIndex = collisionStartIndex;
+                count = collisionCount;
+            }
+
+            public EntryType type()
+            {
+                return EntryType.OVERFLOW;
+            }
+
+            public int offsetData()
+            {
+                return startIndex;
+            }
+
+            public short offsetExtra()
+            {
+                return count;
+            }
+
         }
 
     }
@@ -444,18 +648,16 @@ public class TokenTreeBuilder
 
         protected Pair<Long, InteriorNode> splitBlock()
         {
-
-            // TODO (jwest): this only works when TOKENS_PER_BLOCK is even
-            final int middlePosition = TOKENS_PER_BLOCK / 2;
+            final int splitPosition = TOKENS_PER_BLOCK - 2;
             InteriorNode sibling = new InteriorNode();
             sibling.parent = parent;
             next = sibling;
 
-            Long middleValue = tokens.get(middlePosition);
+            Long middleValue = tokens.get(splitPosition);
 
-            for (int i = middlePosition; i < TOKENS_PER_BLOCK; i++)
+            for (int i = splitPosition; i < TOKENS_PER_BLOCK; i++)
             {
-                if (i != TOKENS_PER_BLOCK && i != middlePosition)
+                if (i != TOKENS_PER_BLOCK && i != splitPosition)
                 {
                     long token = tokens.get(i);
                     sibling.tokenRange.updateRange(token);
@@ -468,17 +670,16 @@ public class TokenTreeBuilder
                 sibling.position++;
             }
 
-            for (int i = TOKENS_PER_BLOCK; i >= middlePosition; i--)
+            for (int i = TOKENS_PER_BLOCK; i >= splitPosition; i--)
             {
                 if (i != TOKENS_PER_BLOCK)
                     tokens.remove(i);
 
-                if (i != middlePosition)
+                if (i != splitPosition)
                     children.remove(i);
             }
 
-            // TODO (jwest): avoid token iteration here
-            tokenRange.setRange(smallestToken(), Collections.max(tokens));
+            tokenRange.setRange(smallestToken(), tokens.get(tokens.size() - 1));
             numBlocks++;
 
             return Pair.create(middleValue, sibling);
@@ -526,10 +727,10 @@ public class TokenTreeBuilder
 
     }
 
-    public static class TokenIterator extends AbstractIterator<Pair<DecoratedKey, long[]>>
+    public static class TokenIterator extends AbstractIterator<Pair<Long, LongSet>>
     {
         private Iterator<Node> levelIterator;
-        private Iterator<Map.Entry<DecoratedKey, long[]>> currentIterator;
+        private Iterator<Map.Entry<Long, LongSet>> currentIterator;
 
         TokenIterator(Iterator<Node> level)
         {
@@ -539,11 +740,11 @@ public class TokenTreeBuilder
         }
 
         @Override
-        public Pair<DecoratedKey, long[]> computeNext()
+        public Pair<Long, LongSet> computeNext()
         {
             if (currentIterator != null && currentIterator.hasNext())
             {
-                Map.Entry<DecoratedKey, long[]> next = currentIterator.next();
+                Map.Entry<Long, LongSet> next = currentIterator.next();
                 return Pair.create(next.getKey(), next.getValue());
             }
             else

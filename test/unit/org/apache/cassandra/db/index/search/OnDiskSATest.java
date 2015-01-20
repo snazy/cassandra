@@ -4,6 +4,9 @@ import java.io.File;
 import java.nio.ByteBuffer;
 import java.util.*;
 
+import com.carrotsearch.hppc.LongOpenHashSet;
+import com.carrotsearch.hppc.LongSet;
+import com.carrotsearch.hppc.cursors.LongCursor;
 import com.google.common.base.Function;
 import org.apache.cassandra.db.DecoratedKey;
 import org.apache.cassandra.db.index.search.container.TokenTree;
@@ -25,7 +28,7 @@ public class OnDiskSATest
     @Test
     public void testStringSAConstruction() throws Exception
     {
-        Map<ByteBuffer, NavigableMap<DecoratedKey, Long>> data = new HashMap<ByteBuffer, NavigableMap<DecoratedKey, Long>>()
+        Map<ByteBuffer, NavigableMap<Long, LongSet>> data = new HashMap<ByteBuffer, NavigableMap<Long, LongSet>>()
         {{
                 put(UTF8Type.instance.decompose("scat"), keyBuilder(1L));
                 put(UTF8Type.instance.decompose("mat"),  keyBuilder(2L));
@@ -38,8 +41,8 @@ public class OnDiskSATest
                 put(UTF8Type.instance.decompose("michael"), keyBuilder(11L, 12L, 1L));
         }};
 
-        OnDiskSABuilder builder = new OnDiskSABuilder(UTF8Type.instance, UTF8Type.instance, OnDiskSABuilder.Mode.SUFFIX);
-        for (Map.Entry<ByteBuffer, NavigableMap<DecoratedKey, Long>> e : data.entrySet())
+        OnDiskSABuilder builder = new OnDiskSABuilder(UTF8Type.instance, OnDiskSABuilder.Mode.SUFFIX);
+        for (Map.Entry<ByteBuffer, NavigableMap<Long, LongSet>> e : data.entrySet())
             builder.add(e.getKey(), e.getValue());
 
         File index = File.createTempFile("on-disk-sa-string", "db");
@@ -50,12 +53,12 @@ public class OnDiskSATest
         OnDiskSA onDisk = new OnDiskSA(index, UTF8Type.instance, new KeyConverter());
 
         // first check if we can find exact matches
-        for (Map.Entry<ByteBuffer, NavigableMap<DecoratedKey, Long>> e : data.entrySet())
+        for (Map.Entry<ByteBuffer, NavigableMap<Long, LongSet>> e : data.entrySet())
         {
             if (UTF8Type.instance.getString(e.getKey()).equals("cat"))
                 continue; // cat is embedded into scat, we'll test it in next section
 
-            Assert.assertEquals("Key was: " + UTF8Type.instance.compose(e.getKey()), e.getValue().keySet(), convert(onDisk.search(e.getKey())));
+            Assert.assertEquals("Key was: " + UTF8Type.instance.compose(e.getKey()), convert(e.getValue()), convert(onDisk.search(e.getKey())));
         }
 
         // check that cat returns positions for scat & cat
@@ -80,7 +83,7 @@ public class OnDiskSATest
     @Test
     public void testIntegerSAConstruction() throws Exception
     {
-        final Map<ByteBuffer, NavigableMap<DecoratedKey, Long>> data = new HashMap<ByteBuffer, NavigableMap<DecoratedKey, Long>>()
+        final Map<ByteBuffer, NavigableMap<Long, LongSet>> data = new HashMap<ByteBuffer, NavigableMap<Long, LongSet>>()
         {{
                 put(Int32Type.instance.decompose(5),  keyBuilder(1L));
                 put(Int32Type.instance.decompose(7),  keyBuilder(2L));
@@ -93,8 +96,8 @@ public class OnDiskSATest
                 put(Int32Type.instance.decompose(0),  keyBuilder(11L, 12L, 1L));
         }};
 
-        OnDiskSABuilder builder = new OnDiskSABuilder(UTF8Type.instance, Int32Type.instance, OnDiskSABuilder.Mode.ORIGINAL);
-        for (Map.Entry<ByteBuffer, NavigableMap<DecoratedKey, Long>> e : data.entrySet())
+        OnDiskSABuilder builder = new OnDiskSABuilder(Int32Type.instance, OnDiskSABuilder.Mode.ORIGINAL);
+        for (Map.Entry<ByteBuffer, NavigableMap<Long, LongSet>> e : data.entrySet())
             builder.add(e.getKey(), e.getValue());
 
         File index = File.createTempFile("on-disk-sa-int", "db");
@@ -104,9 +107,9 @@ public class OnDiskSATest
 
         OnDiskSA onDisk = new OnDiskSA(index, Int32Type.instance, new KeyConverter());
 
-        for (Map.Entry<ByteBuffer, NavigableMap<DecoratedKey, Long>> e : data.entrySet())
+        for (Map.Entry<ByteBuffer, NavigableMap<Long, LongSet>> e : data.entrySet())
         {
-            Assert.assertEquals(e.getValue().keySet(), convert(onDisk.search(e.getKey())));
+            Assert.assertEquals(convert(e.getValue()), convert(onDisk.search(e.getKey())));
         }
 
         List<ByteBuffer> sortedNumbers = new ArrayList<ByteBuffer>()
@@ -130,7 +133,7 @@ public class OnDiskSATest
         {
             ByteBuffer number = sortedNumbers.get(idx++);
             Assert.assertEquals(number, suffix.getSuffix());
-            Assert.assertEquals(data.get(number).keySet(), convert(suffix.getOffsets()));
+            Assert.assertEquals(convert(data.get(number)), convert(suffix.getOffsets()));
         }
 
         // test partial iteration (descending)
@@ -142,7 +145,7 @@ public class OnDiskSATest
             ByteBuffer number = sortedNumbers.get(idx++);
 
             Assert.assertEquals(number, suffix.getSuffix());
-            Assert.assertEquals(data.get(number).keySet(), convert(suffix.getOffsets()));
+            Assert.assertEquals(convert(data.get(number)), convert(suffix.getOffsets()));
         }
 
         idx = 3; // start from the 3rd element exclusive
@@ -153,7 +156,7 @@ public class OnDiskSATest
             ByteBuffer number = sortedNumbers.get(idx++);
 
             Assert.assertEquals(number, suffix.getSuffix());
-            Assert.assertEquals(data.get(number).keySet(), convert(suffix.getOffsets()));
+            Assert.assertEquals(convert(data.get(number)), convert(suffix.getOffsets()));
         }
 
         // test partial iteration (ascending)
@@ -165,7 +168,7 @@ public class OnDiskSATest
             ByteBuffer number = sortedNumbers.get(idx--);
 
             Assert.assertEquals(number, suffix.getSuffix());
-            Assert.assertEquals(data.get(number).keySet(), convert(suffix.getOffsets()));
+            Assert.assertEquals(convert(data.get(number)), convert(suffix.getOffsets()));
         }
 
         idx = 6; // start from the 6rd element exclusive
@@ -176,7 +179,7 @@ public class OnDiskSATest
             ByteBuffer number = sortedNumbers.get(idx--);
 
             Assert.assertEquals(number, suffix.getSuffix());
-            Assert.assertEquals(data.get(number).keySet(), convert(suffix.getOffsets()));
+            Assert.assertEquals(convert(data.get(number)), convert(suffix.getOffsets()));
         }
 
         onDisk.close();
@@ -189,7 +192,7 @@ public class OnDiskSATest
             add(Int32Type.instance.decompose(42));
         }};
 
-        OnDiskSABuilder iterTest = new OnDiskSABuilder(UTF8Type.instance, Int32Type.instance, OnDiskSABuilder.Mode.ORIGINAL);
+        OnDiskSABuilder iterTest = new OnDiskSABuilder(Int32Type.instance, OnDiskSABuilder.Mode.ORIGINAL);
         for (int i = 0; i < iterCheckNums.size(); i++)
             iterTest.add(iterCheckNums.get(i), keyBuilder((long) i));
 
@@ -236,7 +239,7 @@ public class OnDiskSATest
     @Test
     public void testMultiSuffixMatches() throws Exception
     {
-        OnDiskSABuilder builder = new OnDiskSABuilder(UTF8Type.instance, UTF8Type.instance, OnDiskSABuilder.Mode.SUFFIX)
+        OnDiskSABuilder builder = new OnDiskSABuilder(UTF8Type.instance, OnDiskSABuilder.Mode.SUFFIX)
         {{
                 add(UTF8Type.instance.decompose("Eliza"), keyBuilder(1L, 2L));
                 add(UTF8Type.instance.decompose("Elizabeth"), keyBuilder(3L, 4L));
@@ -325,24 +328,28 @@ public class OnDiskSATest
         return StorageService.getPartitioner().decorateKey(ByteBuffer.wrap(("key" + key).getBytes()));
     }
 
-    private static NavigableMap<DecoratedKey, Long> keyBuilder(Long... keys)
+    private static NavigableMap<Long, LongSet> keyBuilder(Long... keys)
     {
-        NavigableMap<DecoratedKey, Long> builder = new TreeMap<>(new Comparator<DecoratedKey>()
+        NavigableMap<Long, LongSet> builder = new TreeMap<>();
+
+        for (final Long key : keys)
         {
-            @Override
-            public int compare(DecoratedKey a, DecoratedKey b)
-            {
-                long tokenA = MurmurHash.hash2_64(a.key, a.key.position(), a.key.remaining(), 0);
-                long tokenB = MurmurHash.hash2_64(b.key, b.key.position(), b.key.remaining(), 0);
-
-                return Long.compare(tokenA, tokenB);
-            }
-        });
-
-        for (Long key : keys)
-            builder.put(keyAt(key), key);
+            DecoratedKey dk = keyAt(key);
+            builder.put(MurmurHash.hash2_64(dk.key, dk.key.position(), dk.key.remaining(), 0), new LongOpenHashSet() {{ add(key); }});
+        }
 
         return builder;
+    }
+
+    private static Set<DecoratedKey> convert(NavigableMap<Long, LongSet> offsets)
+    {
+        Set<DecoratedKey> result = new HashSet<>();
+        for (LongSet v : offsets.values())
+        {
+            for (LongCursor offset : v)
+                result.add(keyAt(offset.value));
+        }
+        return result;
     }
 
     private static Set<DecoratedKey> convert(long... keyOffsets)

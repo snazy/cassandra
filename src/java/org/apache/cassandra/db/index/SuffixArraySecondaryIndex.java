@@ -7,6 +7,8 @@ import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicReference;
 
+import com.carrotsearch.hppc.LongOpenHashSet;
+import com.carrotsearch.hppc.LongSet;
 import com.google.common.base.Function;
 import org.apache.cassandra.concurrent.JMXEnabledThreadPoolExecutor;
 import org.apache.cassandra.concurrent.NamedThreadFactory;
@@ -53,18 +55,6 @@ import static org.apache.cassandra.db.index.search.container.TokenTree.Token;
 public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements SSTableWriterListenable
 {
     private static final Logger logger = LoggerFactory.getLogger(SuffixArraySecondaryIndex.class);
-
-    public static final Comparator<DecoratedKey> TOKEN_COMPARATOR = new Comparator<DecoratedKey>()
-    {
-        @Override
-        public int compare(DecoratedKey a, DecoratedKey b)
-        {
-            long tokenA = MurmurHash.hash2_64(a.key, a.key.position(), a.key.remaining(), 0);
-            long tokenB = MurmurHash.hash2_64(b.key, b.key.position(), b.key.remaining(), 0);
-
-            return Long.compare(tokenA, tokenB);
-        }
-    };
 
     private static final Set<AbstractType<?>> TOKENIZABLE_TYPES = new HashSet<AbstractType<?>>()
     {{
@@ -359,7 +349,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
             private final ColumnDefinition column;
             private final String outputFile;
             private final AbstractTokenizer tokenizer;
-            private final Map<ByteBuffer, NavigableMap<DecoratedKey, Long>> keysPerTerm;
+            private final Map<ByteBuffer, NavigableMap<Long, LongSet>> keysPerTerm;
 
             // key range of the per-column index
             private DecoratedKey min, max;
@@ -378,15 +368,21 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
 
             private void add(ByteBuffer term, DecoratedKey key, long keyPosition)
             {
+                final long keyToken = MurmurHash.hash2_64(key.key, key.key.position(), key.key.remaining(), 0);
+
                 tokenizer.reset(term);
                 while (tokenizer.hasNext())
                 {
                     ByteBuffer token = tokenizer.next();
-                    NavigableMap<DecoratedKey, Long> keys = keysPerTerm.get(token);
+                    NavigableMap<Long, LongSet> keys = keysPerTerm.get(token);
                     if (keys == null)
-                        keysPerTerm.put(token, (keys = new TreeMap<>(TOKEN_COMPARATOR)));
+                        keysPerTerm.put(token, (keys = new TreeMap<>()));
 
-                    keys.put(key, keyPosition);
+                    LongSet offsets = keys.get(keyToken);
+                    if (offsets == null)
+                        keys.put(keyToken, (offsets = new LongOpenHashSet()));
+
+                    offsets.add(keyPosition);
                 }
 
                 /* calculate key range (based on actual key values) for current index */
@@ -401,9 +397,9 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
                                                 ? OnDiskSABuilder.Mode.SUFFIX
                                                 : OnDiskSABuilder.Mode.ORIGINAL;
 
-                OnDiskSABuilder builder = new OnDiskSABuilder(keyComparator, column.getValidator(), mode);
+                OnDiskSABuilder builder = new OnDiskSABuilder(column.getValidator(), mode);
 
-                for (Map.Entry<ByteBuffer, NavigableMap<DecoratedKey, Long>> e : keysPerTerm.entrySet())
+                for (Map.Entry<ByteBuffer, NavigableMap<Long, LongSet>> e : keysPerTerm.entrySet())
                     builder.add(e.getKey(), e.getValue());
 
                 // since everything added to the builder, it's time to drop references to the data
@@ -861,9 +857,9 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
                 logger.info("Interval.create(field: {}, minSuffix: {}, maxSuffix: {}, minKey: {}, maxKey: {}, sstable: {})",
                             name,
                             validator.getString(index.minSuffix()),
+                            validator.getString(index.maxSuffix()),
                             keyComparator.getString(index.minKey()),
                             keyComparator.getString(index.maxKey()),
-                            validator.getString(index.maxSuffix()),
                             sstable);
 
                 termIntervals.add(Interval.create(index.minSuffix(), index.maxSuffix(), index));

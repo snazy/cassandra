@@ -3,15 +3,15 @@ package org.apache.cassandra.db.index.search;
 import java.nio.ByteBuffer;
 import java.util.NavigableMap;
 
-import org.apache.cassandra.db.DecoratedKey;
+import com.carrotsearch.hppc.LongSet;
 
 public class Term
 {
     public final int position;
     public final ByteBuffer value;
-    public final NavigableMap<DecoratedKey, Long> keys;
+    public final NavigableMap<Long, LongSet> keys;
 
-    public Term(int position, ByteBuffer value, NavigableMap<DecoratedKey, Long> keys)
+    public Term(int position, ByteBuffer value, NavigableMap<Long, LongSet> keys)
     {
         this.position = position;
         this.value = value;
