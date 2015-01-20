@@ -18,12 +18,10 @@ import org.apache.cassandra.utils.FBUtilities;
 import org.apache.cassandra.utils.Pair;
 
 import com.carrotsearch.hppc.LongArrayList;
+import com.carrotsearch.hppc.LongSet;
 import com.carrotsearch.hppc.ShortArrayList;
 import com.google.common.collect.AbstractIterator;
-import com.google.common.collect.BiMap;
-import com.google.common.collect.HashBiMap;
 import net.mintern.primitive.Primitive;
-import net.mintern.primitive.comparators.IntComparator;
 import net.mintern.primitive.comparators.LongComparator;
 
 /**
@@ -44,15 +42,13 @@ public class OnDiskSABuilder
     private MutableLevel<InMemoryDataSuffix> dataLevel;
 
     private final SA sa;
-    private final Mode mode;
 
-    public OnDiskSABuilder(AbstractType<?> keyComparator, AbstractType<?> comparator, Mode mode)
+    public OnDiskSABuilder(AbstractType<?> comparator, Mode mode)
     {
-        this.sa = new SA(keyComparator, comparator, mode);
-        this.mode = mode;
+        this.sa = new SA(comparator, mode);
     }
 
-    public OnDiskSABuilder add(ByteBuffer term, NavigableMap<DecoratedKey, Long> keys)
+    public OnDiskSABuilder add(ByteBuffer term, NavigableMap<Long, LongSet> keys)
     {
         sa.add(term, keys);
         return this;
@@ -93,7 +89,7 @@ public class OnDiskSABuilder
 
             out.skipBytes((int) (BLOCK_SIZE - out.getFilePointer()));
 
-            dataLevel = new MutableLevel<>(out, new MutableDataBlock(mode));
+            dataLevel = new MutableLevel<>(out, new MutableDataBlock());
             while (suffixes.hasNext())
             {
                 Pair<ByteBuffer, TokenTreeBuilder> suffix = suffixes.next();
@@ -198,19 +194,18 @@ public class OnDiskSABuilder
     private static class SA
     {
         private final List<Term> terms = new ArrayList<>();
-        private final AbstractType<?> keyComparator, comparator;
+        private final AbstractType<?> comparator;
         private final Mode mode;
 
         private int charCount = 0;
 
-        public SA(AbstractType<?> keyComparator, AbstractType<?> comparator, Mode mode)
+        public SA(AbstractType<?> comparator, Mode mode)
         {
-            this.keyComparator = keyComparator;
             this.comparator = comparator;
             this.mode = mode;
         }
 
-        public void add(ByteBuffer term, NavigableMap<DecoratedKey, Long> keys)
+        public void add(ByteBuffer term, NavigableMap<Long, LongSet> keys)
         {
             terms.add(new Term(charCount, term, keys));
             charCount += term.remaining();
@@ -268,7 +263,7 @@ public class OnDiskSABuilder
                     return endOfData();
 
                 Term term = termIterator.next();
-                return Pair.create(term.value, new TokenTreeBuilder(transformKeysMap(term.keys)));
+                return Pair.create(term.value, new TokenTreeBuilder(term.keys).finish());
             }
         }
 
@@ -311,7 +306,7 @@ public class OnDiskSABuilder
                 });
             }
 
-            private Pair<ByteBuffer, NavigableMap<DecoratedKey, Long>> suffixAt(int position)
+            private Pair<ByteBuffer, NavigableMap<Long, LongSet>> suffixAt(int position)
             {
                 long index = suffixes[position];
                 Term term = terms.get((int) (index >>> 32));
@@ -346,24 +341,24 @@ public class OnDiskSABuilder
                         return result;
                     }
 
-                    Pair<ByteBuffer, NavigableMap<DecoratedKey, Long>> suffix = suffixAt(current++);
+                    Pair<ByteBuffer, NavigableMap<Long, LongSet>> suffix = suffixAt(current++);
 
                     if (lastProcessedSuffix == null)
                     {
                         lastProcessedSuffix = suffix.left;
-                        container = new TokenTreeBuilder(transformKeysMap(suffix.right));
+                        container = new TokenTreeBuilder(suffix.right);
                     }
                     else if (comparator.compare(lastProcessedSuffix, suffix.left) == 0)
                     {
                         lastProcessedSuffix = suffix.left;
-                        container.add(transformKeysMap(suffix.right));
+                        container.add(suffix.right);
                     }
                     else
                     {
                         Pair<ByteBuffer, TokenTreeBuilder> result = finishSuffix();
 
                         lastProcessedSuffix = suffix.left;
-                        container = new TokenTreeBuilder(transformKeysMap(suffix.right));
+                        container = new TokenTreeBuilder(suffix.right);
 
                         return result;
                     }
@@ -372,7 +367,7 @@ public class OnDiskSABuilder
 
             private Pair<ByteBuffer, TokenTreeBuilder> finishSuffix()
             {
-                return Pair.create(lastProcessedSuffix, container);
+                return Pair.create(lastProcessedSuffix, container.finish());
             }
         }
     }
@@ -483,39 +478,15 @@ public class OnDiskSABuilder
 
     private static class MutableDataBlock extends MutableBlock<InMemoryDataSuffix>
     {
-        private final Mode mode;
-        // we need a sorted map based on offsets here because it's required to write KeyContainerBuilder in "offset" order.
-        // This map helps to find containers much quicker than iterating over whole set as we'd have to do with list.
-        private final BiMap<TokenTreeBuilder, Integer> containers = HashBiMap.create();
-
         private int offset = 0;
-
-        public MutableDataBlock(Mode mode)
-        {
-            this.mode = mode;
-        }
+        private final List<TokenTreeBuilder> containers = new ArrayList<>();
 
         @Override
         protected void addInternal(InMemoryDataSuffix suffix) throws IOException
         {
-            // checking for the equal keys only makes
-            // sense in the mode.SUFFIX case because
-            // in that mode words are split into multiple suffixes
-            // and suffixes are stored separately this way
-            // suffixes share keys from the original word which could be optimized.
-            if (mode == Mode.SUFFIX)
-            {
-                Integer existingOffset = containers.get(suffix.keys);
-                if (existingOffset != null)
-                {
-                    writeSuffix(suffix, existingOffset);
-                    return;
-                }
-            }
-
-            containers.put(suffix.keys, offset);
             writeSuffix(suffix, offset);
             offset += suffix.keys.serializedSize();
+            containers.add(suffix.keys);
         }
 
         @Override
@@ -529,24 +500,8 @@ public class OnDiskSABuilder
         {
             super.flushAndClear(out);
 
-            BiMap<Integer, TokenTreeBuilder> inverse = containers.inverse();
-
-            int pos = 0;
-            int[] offsets = new int[inverse.size()];
-            for (int offset : inverse.keySet())
-                offsets[pos++] = offset;
-
-            Primitive.sort(offsets, new IntComparator()
-            {
-                @Override
-                public int compare(int a, int b)
-                {
-                    return Integer.compare(a, b);
-                }
-            });
-
-            for (int off : offsets)
-                inverse.get(off).write(out);
+            for (TokenTreeBuilder tokens : containers)
+                tokens.write(out);
 
             super.alignToBlock(out);
             containers.clear();
@@ -564,15 +519,5 @@ public class OnDiskSABuilder
     {
         public abstract ByteBuffer minSuffix();
         public abstract ByteBuffer maxSuffix();
-
-        // TODO (jwest): this makes me sad and probably needs to go away
-        protected SortedMap<DecoratedKey, long[]> transformKeysMap(SortedMap<DecoratedKey, Long> keys)
-        {
-            SortedMap<DecoratedKey, long[]> keyMap = new TreeMap<>();
-            for (Map.Entry<DecoratedKey, Long> entry : keys.entrySet())
-                keyMap.put(entry.getKey(), new long[]{entry.getValue()});
-
-            return keyMap;
-        }
     }
 }
