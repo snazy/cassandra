@@ -3,6 +3,7 @@ package org.apache.cassandra.db.index.search.container;
 import java.io.File;
 import java.io.IOException;
 import java.nio.ByteBuffer;
+import java.nio.channels.FileChannel;
 import java.util.*;
 
 import com.google.common.base.Function;
@@ -170,7 +171,7 @@ public class TokenTreeTest
         writer.close();
 
         final RandomAccessReader reader = RandomAccessReader.open(treeFile);
-        final TokenTree tokenTree = new TokenTree(reader);
+        final TokenTree tokenTree = new TokenTree(reader.getChannel().map(FileChannel.MapMode.READ_ONLY, 0, reader.length()));
 
 //        final Iterator<Long> listIterator = tokens.keySet().iterator();
 //        while(tokenIterator.hasNext() && listIterator.hasNext())
@@ -208,7 +209,7 @@ public class TokenTreeTest
         writer.close();
 
         final RandomAccessReader reader = RandomAccessReader.open(treeFile);
-        final TokenTree tokenTree = new TokenTree(reader);
+        final TokenTree tokenTree = new TokenTree(reader.getChannel().map(FileChannel.MapMode.READ_ONLY, 0, reader.length()));
 
         final SkippableIterator<Long, Token> treeIterator = tokenTree.iterator(new KeyConverter());
         final SkippableIterator<Long, TokenWithOffsets> listIterator = new EntrySetSkippableIterator(tokens.entrySet().iterator());
@@ -261,7 +262,7 @@ public class TokenTreeTest
         writer.close();
 
         final RandomAccessReader reader = RandomAccessReader.open(treeFile);
-        final SkippableIterator<Long, Token> tokenTree = new TokenTree(reader).iterator(new KeyConverter());
+        final SkippableIterator<Long, Token> tokenTree = new TokenTree(reader.getChannel().map(FileChannel.MapMode.READ_ONLY, 0, reader.length())).iterator(new KeyConverter());
 
         // TODO (jwest): dont hardcode this value, get it from tokens4
         tokenTree.skipTo(1000L);

@@ -2,7 +2,6 @@ package org.apache.cassandra.db.index;
 
 import java.io.File;
 import java.io.IOException;
-import java.io.RandomAccessFile;
 import java.nio.ByteBuffer;
 import java.util.*;
 import java.util.concurrent.*;
@@ -459,63 +458,51 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
             List<Pair<ByteBuffer, Expression>> expressions = analyzeQuery(filter.getClause());
             List<Pair<ByteBuffer, Expression>> expressionsImmutable = ImmutableList.copyOf(expressions);
 
-            List<SSTableReader> primarySSTables = null;
+            List<SSTableIndex> primaryIndexes = null;
             Pair<ByteBuffer, Expression> primaryExpression = null;
 
             for (Pair<ByteBuffer, Expression> e : expressions)
             {
                 Expression expression = e.right;
-                IntervalTree<ByteBuffer, SSTableReader, Interval<ByteBuffer, SSTableReader>> intervals = intervalTrees.get(e.left).view.get().termIntervalTree;
+                IntervalTree<ByteBuffer, SSTableIndex, Interval<ByteBuffer, SSTableIndex>> intervals = intervalTrees.get(e.left).view.get().termIntervalTree;
 
-                List<SSTableReader> sstables = (expression.lower == null || expression.upper == null)
+                List<SSTableIndex> indexes = (expression.lower == null || expression.upper == null)
                             ? intervals.search((expression.lower == null ? expression.upper : expression.lower).value)
-                            : intervals.search(Interval.create(expression.lower.value, expression.upper.value, (SSTableReader) null));
+                            : intervals.search(Interval.create(expression.lower.value, expression.upper.value, (SSTableIndex) null));
 
-                if (primarySSTables == null || primarySSTables.size() > sstables.size())
+                if (primaryIndexes == null || primaryIndexes.size() > indexes.size())
                 {
-                    primarySSTables = sstables;
+                    primaryIndexes = indexes;
                     primaryExpression = e;
                 }
             }
 
-            if (primarySSTables == null || primarySSTables.size() == 0)
+            if (primaryIndexes == null || primaryIndexes.size() == 0)
                 return Collections.emptyList();
 
             expressions.remove(primaryExpression);
 
-            logger.info("Primary: Field: " + baseCfs.getComparator().getString(primaryExpression.left) + ", SSTables: " + primarySSTables);
-            Map<ByteBuffer, Set<SSTableReader>> narrowedCandidates = new HashMap<>(expressionsImmutable.size());
+            logger.info("Primary: Field: " + baseCfs.getComparator().getString(primaryExpression.left) + ", SSTables: " + primaryIndexes);
+            Map<ByteBuffer, Set<SSTableIndex>> narrowedCandidates = new HashMap<>(expressionsImmutable.size());
 
             // add primary expression first
-            narrowedCandidates.put(primaryExpression.left, new HashSet<>(primarySSTables));
-            Set<SSTableReader> uniqueNarrowedCandidates = new HashSet<>();
+            narrowedCandidates.put(primaryExpression.left, new HashSet<>(primaryIndexes));
+            Set<SSTableIndex> uniqueNarrowedCandidates = new HashSet<>();
 
             for (Pair<ByteBuffer, Expression> e : expressions)
             {
                 final AbstractType<?> validator = baseCfs.metadata.getColumnDefinitionFromColumnName(e.left).getValidator();
                 if (validator.compare(primaryExpression.left, e.left) == 0)
                 {
-                    narrowedCandidates.put(e.left, new HashSet<>(primarySSTables));
-                    uniqueNarrowedCandidates.addAll(primarySSTables);
+                    narrowedCandidates.put(e.left, new HashSet<>(primaryIndexes));
+                    uniqueNarrowedCandidates.addAll(primaryIndexes);
                     continue;
                 }
 
-                Set<SSTableReader> readers = new HashSet<>();
-                String name = baseCfs.getComparator().getString(e.left);
-                IntervalTree<ByteBuffer, SSTableReader, Interval<ByteBuffer, SSTableReader>> it = intervalTrees.get(e.left).view.get().keyIntervalTree;
-                for (SSTableReader reader : primarySSTables)
-                {
-                    try (RandomAccessFile index = new RandomAccessFile(new File(reader.descriptor.filenameFor(String.format(FILE_NAME_FORMAT, name))), "r"))
-                    {
-                        // read past the min/max terms
-                        ByteBufferUtil.readWithShortLength(index);
-                        ByteBufferUtil.readWithShortLength(index);
-                        ByteBuffer minKey = ByteBufferUtil.readWithShortLength(index);
-                        ByteBuffer maxKey = ByteBufferUtil.readWithShortLength(index);
-
-                        readers.addAll(it.search(Interval.create(minKey, maxKey, (SSTableReader) null)));
-                    }
-                }
+                Set<SSTableIndex> readers = new HashSet<>();
+                IntervalTree<ByteBuffer, SSTableIndex, Interval<ByteBuffer, SSTableIndex>> it = intervalTrees.get(e.left).view.get().keyIntervalTree;
+                for (SSTableIndex index : primaryIndexes)
+                   readers.addAll(it.search(Interval.create(index.minKey(), index.maxKey(), (SSTableIndex) null)));
 
                 // might not want to fail the entire search if we fail to acquire references - maybe retry (but will need updated SADataTracker) ??
                 if (readers.isEmpty())
@@ -526,12 +513,11 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
             }
 
             // might not want to fail the entire search if we fail to acquire references - maybe retry (but will need updated SADataTracker) ??
-            if (!SSTableReader.acquireReferences(uniqueNarrowedCandidates))
+            if (!acquireReferences(uniqueNarrowedCandidates))
             {
                 logger.warn("unable to acquire sstable references for search");
                 return Collections.emptyList();
             }
-
 
             SkippableIterator<Long, Token> joiner = null;
             try
@@ -540,7 +526,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
                 for (Pair<ByteBuffer, Expression> expression : expressionsImmutable)
                 {
                     ByteBuffer name = expression.left;
-                    suffixes.add(new SuffixIterator(name, expression.right, narrowedCandidates.get(name)));
+                    suffixes.add(new SuffixIterator(expression.right, narrowedCandidates.get(name)));
                 }
 
                 joiner = new LazyMergeSortIterator<>(OperationType.AND, suffixes);
@@ -565,7 +551,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
             finally
             {
                 FileUtils.closeQuietly(joiner);
-                SSTableReader.releaseReferences(uniqueNarrowedCandidates);
+                releaseReferences(uniqueNarrowedCandidates);
             }
 
             return rows;
@@ -762,37 +748,19 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
     private class SuffixIterator extends AbstractIterator<Token> implements SkippableIterator<Long, Token>
     {
         private final SkippableIterator<Long, Token> union;
-        private final List<OnDiskSA> indexes = new ArrayList<>();
 
-        public SuffixIterator(ByteBuffer columnName, Expression expression, final Set<SSTableReader> sstables)
+        public SuffixIterator(Expression expression, final Set<SSTableIndex> perSSTableIndexes)
         {
-            AbstractType<?> validator = getValidator(columnName);
-            assert validator != null;
+            List<SkippableIterator<Long, Token>> keys = new ArrayList<>(perSSTableIndexes.size());
 
-            String name = (String) baseCfs.getComparator().compose(columnName);
-            List<SkippableIterator<Long, Token>> keys = new ArrayList<>(sstables.size());
-
-            for (final SSTableReader sstable : sstables)
+            for (final SSTableIndex index : perSSTableIndexes)
             {
-                File indexFile = new File(sstable.descriptor.filenameFor(String.format(FILE_NAME_FORMAT, name)));
-                assert indexFile.exists() : "SSTable " + sstable.getFilename() + " should have index " + name;
+                ByteBuffer lower = (expression.lower == null) ? null : expression.lower.value;
+                ByteBuffer upper = (expression.upper == null) ? null : expression.upper.value;
 
-                try
-                {
-                    OnDiskSA index = new OnDiskSA(indexFile, validator, new DecoratedKeyFetcher(sstable));
+                keys.add(index.search(lower, lower == null || expression.lower.inclusive,
+                                      upper, upper == null || expression.upper.inclusive));
 
-                    ByteBuffer lower = (expression.lower == null) ? null : expression.lower.value;
-                    ByteBuffer upper = (expression.upper == null) ? null : expression.upper.value;
-
-                    keys.add(index.search(lower, lower == null || expression.lower.inclusive,
-                                          upper, upper == null || expression.upper.inclusive));
-
-                    indexes.add(index);
-                }
-                catch (IOException e)
-                {
-                    throw new FSReadError(e, indexFile.getAbsolutePath());
-                }
             }
 
             union = new LazyMergeSortIterator<>(OperationType.OR, keys);
@@ -813,8 +781,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
         @Override
         public void close()
         {
-            for (OnDiskSA index : indexes)
-                FileUtils.closeQuietly(index);
+            FileUtils.closeQuietly(union);
         }
     }
 
@@ -852,8 +819,8 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
     private class SAView
     {
         private final ByteBuffer col;
-        final IntervalTree<ByteBuffer, SSTableReader, Interval<ByteBuffer, SSTableReader>> termIntervalTree;
-        final IntervalTree<ByteBuffer, SSTableReader, Interval<ByteBuffer, SSTableReader>> keyIntervalTree;
+        final IntervalTree<ByteBuffer, SSTableIndex, Interval<ByteBuffer, SSTableIndex>> termIntervalTree;
+        final IntervalTree<ByteBuffer, SSTableIndex, Interval<ByteBuffer, SSTableIndex>> keyIntervalTree;
 
         public SAView(ByteBuffer col, Set<SSTableReader> sstables)
         {
@@ -867,46 +834,40 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
             String name = baseCfs.getComparator().getString(col);
             final AbstractType<?> validator = baseCfs.metadata.getColumnDefinitionFromColumnName(col).getValidator();
 
-            Predicate<Interval<ByteBuffer, SSTableReader>> predicate = new Predicate<Interval<ByteBuffer, SSTableReader>>()
+            Predicate<Interval<ByteBuffer, SSTableIndex>> predicate = new Predicate<Interval<ByteBuffer, SSTableIndex>>()
             {
-                public boolean apply(Interval<ByteBuffer, SSTableReader> interval)
+                public boolean apply(Interval<ByteBuffer, SSTableIndex> interval)
                 {
-                    return !toRemove.contains(interval.data);
+                    return !toRemove.contains(interval.data.sstable);
                 }
             };
 
-            List<Interval<ByteBuffer, SSTableReader>> termIntervals = new ArrayList<>();
-            List<Interval<ByteBuffer, SSTableReader>> keyIntervals = new ArrayList<>();
+            List<Interval<ByteBuffer, SSTableIndex>> termIntervals = new ArrayList<>();
+            List<Interval<ByteBuffer, SSTableIndex>> keyIntervals = new ArrayList<>();
 
             // reuse entries from the previously constructed view to avoid reloading from disk or keep (yet another) cache of the sstreader -> intervals
             if (previous != null)
             {
-                for (Interval<ByteBuffer, SSTableReader> interval : Iterables.filter(previous.keyIntervalTree, predicate))
+                for (Interval<ByteBuffer, SSTableIndex> interval : Iterables.filter(previous.keyIntervalTree, predicate))
                     keyIntervals.add(interval);
-                for (Interval<ByteBuffer, SSTableReader> interval : Iterables.filter(previous.termIntervalTree, predicate))
+                for (Interval<ByteBuffer, SSTableIndex> interval : Iterables.filter(previous.termIntervalTree, predicate))
                     termIntervals.add(interval);
             }
 
             for (SSTableReader sstable : toAdd)
             {
-                try (RandomAccessFile index = new RandomAccessFile(new File(sstable.descriptor.filenameFor(String.format(FILE_NAME_FORMAT, name))), "r"))
-                {
-                    ByteBuffer minTerm = ByteBufferUtil.readWithShortLength(index);
-                    ByteBuffer maxTerm = ByteBufferUtil.readWithShortLength(index);
+                SSTableIndex index = new SSTableIndex(col, sstable);
 
-                    logger.info("(term) Interval.create(field: " + name + ", min: " + validator.getString(minTerm) + ", max: " + validator.getString(maxTerm) + ", sstable: " + sstable + ")");
-                    termIntervals.add(Interval.create(minTerm, maxTerm, sstable));
+                logger.info("Interval.create(field: {}, minSuffix: {}, maxSuffix: {}, minKey: {}, maxKey: {}, sstable: {})",
+                            name,
+                            validator.getString(index.minSuffix()),
+                            keyComparator.getString(index.minKey()),
+                            keyComparator.getString(index.maxKey()),
+                            validator.getString(index.maxSuffix()),
+                            sstable);
 
-                    ByteBuffer minKey = ByteBufferUtil.readWithShortLength(index);
-                    ByteBuffer maxKey = ByteBufferUtil.readWithShortLength(index);
-
-                    logger.info("(key) Interval.create(field: " + name + ", min: " + keyComparator.getString(minKey) + ", max: " + keyComparator.getString(maxKey) + ", sstable: " + sstable + ")");
-                    keyIntervals.add(Interval.create(minKey, maxKey, sstable));
-                }
-                catch (IOException ioe)
-                {
-                    logger.warn("unable to read SA file - ignoring", ioe);
-                }
+                termIntervals.add(Interval.create(index.minSuffix(), index.maxSuffix(), index));
+                keyIntervals.add(Interval.create(index.minKey(), index.maxKey(), index));
             }
 
             termIntervalTree = IntervalTree.build(termIntervals, new Comparator<ByteBuffer>()
@@ -937,7 +898,8 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
             return new SAView(this, col, toRemove, toAdd);
         }
 
-        private int assertCorrectSizing(IntervalTree<ByteBuffer, SSTableReader, Interval<ByteBuffer, SSTableReader>> tree, Collection<SSTableReader> oldSSTables, Collection<SSTableReader> newReaders)
+        private int assertCorrectSizing(IntervalTree<ByteBuffer, SSTableIndex, Interval<ByteBuffer, SSTableIndex>> tree,
+                                        Collection<SSTableReader> oldSSTables, Collection<SSTableReader> newReaders)
         {
             int newSSTablesSize = tree.intervalCount() - oldSSTables.size() + newReaders.size();
             assert newSSTablesSize >= newReaders.size() :
@@ -1006,6 +968,82 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
             return other instanceof DecoratedKeyFetcher
                     && sstable.descriptor.equals(((DecoratedKeyFetcher) other).sstable.descriptor);
         }
+    }
+
+    private class SSTableIndex
+    {
+        private final ByteBuffer column;
+        private final SSTableReader sstable;
+        private final OnDiskSA index;
+
+        public SSTableIndex(ByteBuffer name, SSTableReader referent)
+        {
+            column = name;
+            sstable = referent;
+
+            String columnName = (String) baseCfs.getComparator().compose(column);
+            AbstractType<?> validator = getValidator(column);
+            assert validator != null;
+
+            File indexFile = new File(sstable.descriptor.filenameFor(String.format(FILE_NAME_FORMAT, columnName)));
+            assert indexFile.exists() : "SSTable " + sstable.getFilename() + " should have index " + columnName;
+
+            index = new OnDiskSA(indexFile, validator, new DecoratedKeyFetcher(sstable));
+        }
+
+        public ByteBuffer minSuffix()
+        {
+            return index.minSuffix();
+        }
+
+        public ByteBuffer maxSuffix()
+        {
+            return index.maxSuffix();
+        }
+
+        public ByteBuffer minKey()
+        {
+            return index.minKey();
+        }
+
+        public ByteBuffer maxKey()
+        {
+            return index.maxKey();
+        }
+
+        public SkippableIterator<Long, Token> search(ByteBuffer lower, boolean lowerInclusive,
+                                                     ByteBuffer upper, boolean upperInclusive)
+        {
+            return index.search(lower, lowerInclusive, upper, upperInclusive);
+        }
+
+        @Override
+        public String toString()
+        {
+            return String.format("SSTableIndex(column: %s, SSTable: %s)", baseCfs.getComparator().getString(column), sstable.descriptor);
+        }
+    }
+
+    private static Iterable<SSTableReader> extractSSTables(Iterable<SSTableIndex> indexes)
+    {
+        return Iterables.transform(indexes, new Function<SSTableIndex, SSTableReader>()
+        {
+            @Override
+            public SSTableReader apply(SSTableIndex index)
+            {
+                return index.sstable;
+            }
+        });
+    }
+
+    private static boolean acquireReferences(Iterable<SSTableIndex> indexes)
+    {
+        return SSTableReader.acquireReferences(extractSSTables(indexes));
+    }
+
+    private static void releaseReferences(Iterable<SSTableIndex> indexes)
+    {
+        SSTableReader.releaseReferences(extractSSTables(indexes));
     }
 }
 
