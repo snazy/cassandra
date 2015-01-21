@@ -143,7 +143,12 @@ public abstract class SSTable
             if (component.equals(Component.DATA) || component.equals(Component.COMPACTED_MARKER) || component.equals(Component.SUMMARY))
                 continue;
 
-            FileUtils.deleteWithConfirm(desc.filenameFor(component));
+            String componentPath = desc.filenameFor(component);
+            // some of the SI components could be missing but that just means that SSTable didn't have those columns
+            if (component.type.equals(Component.Type.SECONDARY_INDEX) && !new File(componentPath).exists())
+                continue;
+
+            FileUtils.deleteWithConfirm(componentPath);
         }
         // remove the COMPACTED_MARKER component last if it exists
         // Note: newly created sstable should not have a marker, but we keep this for now to make sure
