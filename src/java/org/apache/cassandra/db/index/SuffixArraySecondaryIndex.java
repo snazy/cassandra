@@ -852,7 +852,12 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
 
             for (SSTableReader sstable : toAdd)
             {
-                SSTableIndex index = new SSTableIndex(col, sstable);
+                String columnName = baseCfs.getComparator().getString(col);
+                File indexFile = new File(sstable.descriptor.filenameFor(String.format(FILE_NAME_FORMAT, columnName)));
+                if (!indexFile.exists())
+                    continue;
+
+                SSTableIndex index = new SSTableIndex(col, indexFile, sstable);
 
                 logger.info("Interval.create(field: {}, minSuffix: {}, maxSuffix: {}, minKey: {}, maxKey: {}, sstable: {})",
                             name,
@@ -972,17 +977,17 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
         private final SSTableReader sstable;
         private final OnDiskSA index;
 
-        public SSTableIndex(ByteBuffer name, SSTableReader referent)
+        public SSTableIndex(ByteBuffer name, File indexFile, SSTableReader referent)
         {
             column = name;
             sstable = referent;
 
-            String columnName = (String) baseCfs.getComparator().compose(column);
             AbstractType<?> validator = getValidator(column);
-            assert validator != null;
 
-            File indexFile = new File(sstable.descriptor.filenameFor(String.format(FILE_NAME_FORMAT, columnName)));
-            assert indexFile.exists() : "SSTable " + sstable.getFilename() + " should have index " + columnName;
+            assert validator != null;
+            assert indexFile.exists() : String.format("SSTable %s should have index %s.",
+                                                      sstable.getFilename(),
+                                                      baseCfs.getComparator().getString(column));
 
             index = new OnDiskSA(indexFile, validator, new DecoratedKeyFetcher(sstable));
         }

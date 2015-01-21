@@ -1263,6 +1263,11 @@ public class SSTableReader extends SSTable implements Closeable
         {
             File sourceFile = new File(descriptor.filenameFor(component));
             File targetLink = new File(snapshotDirectoryPath, sourceFile.getName());
+
+            // some of the SI components could be missing but that just means that SSTable didn't have those columns
+            if (component.type.equals(Component.Type.SECONDARY_INDEX) && !sourceFile.exists())
+                continue;
+
             FileUtils.createHardLink(sourceFile, targetLink);
         }
     }

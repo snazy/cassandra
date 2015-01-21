@@ -424,7 +424,15 @@ public class SSTableWriter extends SSTable
     {
         for (Component component : Sets.difference(components, Sets.newHashSet(Component.DATA, Component.SUMMARY)))
         {
-            FileUtils.renameWithConfirm(tmpdesc.filenameFor(component), newdesc.filenameFor(component));
+            String tmpComponentPath = tmpdesc.filenameFor(component);
+
+            // if current component is an SI it doesn't necessary mean that it's going to be present for
+            // given SSTable because indexes are build based on the data contained by SSTable but we still need to
+            // register all of the index components upfront, so we have to check existence here instead of failing rename.
+            if (component.type.equals(Component.Type.SECONDARY_INDEX) && !new File(tmpComponentPath).exists())
+                continue;
+
+            FileUtils.renameWithConfirm(tmpComponentPath, newdesc.filenameFor(component));
         }
 
         // do -Data last because -Data present should mean the sstable was completely renamed before crash
