@@ -760,4 +760,9 @@ public class TokenTreeBuilder
 
         }
     }
+
+    public SortedMap<Long, LongSet> getTokens()
+    {
+        return tokens;
+    }
 }
