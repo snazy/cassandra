@@ -89,14 +89,15 @@ public class OnDiskSABuilder
 
             out.skipBytes((int) (BLOCK_SIZE - out.getFilePointer()));
 
-            dataLevel = new MutableLevel<>(out, new MutableDataBlock());
+            dataLevel = sa.mode == Mode.ORIGINAL ? new DataBuilderLevel(out, new MutableDataBlock())
+                                                 : new MutableLevel<>(out, new MutableDataBlock());
             while (suffixes.hasNext())
             {
                 Pair<ByteBuffer, TokenTreeBuilder> suffix = suffixes.next();
                 addSuffix(new InMemoryDataSuffix(suffix.left, suffix.right), out);
             }
 
-            dataLevel.flush();
+            dataLevel.finalFlush();
             for (MutableLevel l : levels)
                 l.flush(); // flush all of the buffers
 
@@ -136,6 +137,13 @@ public class OnDiskSABuilder
         return levels.get(idx);
     }
 
+    protected static void alignToBlock(SequentialWriter out) throws IOException
+    {
+        long endOfBlock = out.getFilePointer();
+        if ((endOfBlock & (BLOCK_SIZE - 1)) != 0) // align on the block boundary if needed
+            out.skipBytes((int) (FBUtilities.align(endOfBlock, BLOCK_SIZE) - endOfBlock));
+    }
+
     private static class InMemorySuffix
     {
         protected final ByteBuffer suffix;
@@ -158,12 +166,12 @@ public class OnDiskSABuilder
 
     private static class InMemoryPointerSuffix extends InMemorySuffix
     {
-        protected final int blockIdx;
+        protected final int blockCnt;
 
-        public InMemoryPointerSuffix(ByteBuffer suffix, int blockIdx)
+        public InMemoryPointerSuffix(ByteBuffer suffix, int blockCnt)
         {
             super(suffix);
-            this.blockIdx = blockIdx;
+            this.blockCnt = blockCnt;
         }
 
         @Override
@@ -176,7 +184,7 @@ public class OnDiskSABuilder
         public void serialize(DataOutput out) throws IOException
         {
             super.serialize(out);
-            out.writeInt(blockIdx);
+            out.writeInt(blockCnt);
         }
     }
 
@@ -376,7 +384,7 @@ public class OnDiskSABuilder
     {
         private final LongArrayList blockOffsets = new LongArrayList();
 
-        private final SequentialWriter out;
+        protected final SequentialWriter out;
 
         private final MutableBlock<T> inProcessBlock;
         private InMemoryPointerSuffix lastSuffix;
@@ -387,6 +395,9 @@ public class OnDiskSABuilder
             this.inProcessBlock = block;
         }
 
+        /**
+         * @return If we flushed a block, return the last suffix of that block; else, null.
+         */
         public InMemoryPointerSuffix add(T suffix) throws IOException
         {
             InMemoryPointerSuffix toPromote = null;
@@ -409,11 +420,77 @@ public class OnDiskSABuilder
             inProcessBlock.flushAndClear(out);
         }
 
+        public void finalFlush() throws IOException
+        {
+            flush();
+        }
+
         public void flushMetadata() throws IOException
         {
-            out.writeInt(blockOffsets.size());
-            for (int i = 0; i < blockOffsets.size(); i++)
-                out.writeLong(blockOffsets.get(i));
+            flushMetadata(blockOffsets);
+        }
+
+        protected void flushMetadata(LongArrayList longArrayList) throws IOException
+        {
+            out.writeInt(longArrayList.size());
+            for (int i = 0; i < longArrayList.size(); i++)
+                out.writeLong(longArrayList.get(i));
+        }
+    }
+
+    /** builds standard data blocks and super blocks, as well */
+    private static class DataBuilderLevel extends MutableLevel<InMemoryDataSuffix>
+    {
+        // TODO:JEB make this constant (or at least configurable)
+        private static final int SUPER_BLOCK_SIZE = 4;
+
+        private final LongArrayList superBlockOffsets = new LongArrayList();
+
+        /** count of regular data blocks writen since current super block was init'd */
+        private int dataBlocksCnt;
+        private TokenTreeBuilder superBlockTree;
+
+        public DataBuilderLevel(SequentialWriter out, MutableBlock<InMemoryDataSuffix> block)
+        {
+            super(out, block);
+            superBlockTree = new TokenTreeBuilder(new TreeMap());
+        }
+
+        public InMemoryPointerSuffix add(InMemoryDataSuffix suffix) throws IOException
+        {
+            InMemoryPointerSuffix ptr = super.add(suffix);
+            if (ptr != null)
+            {
+                dataBlocksCnt++;
+                flushSuperBlock(false);
+            }
+            superBlockTree.add(suffix.keys.getTokens());
+            return ptr;
+        }
+
+        public void flushSuperBlock(boolean force) throws IOException
+        {
+            if (dataBlocksCnt == SUPER_BLOCK_SIZE || (force && !superBlockTree.getTokens().isEmpty()))
+            {
+                superBlockOffsets.add(out.getFilePointer());
+                superBlockTree.finish().write(out);
+                alignToBlock(out);
+
+                dataBlocksCnt = 0;
+                superBlockTree = new TokenTreeBuilder(new TreeMap());
+            }
+        }
+
+        public void finalFlush() throws IOException
+        {
+            super.flush();
+            flushSuperBlock(true);
+        }
+
+        public void flushMetadata() throws IOException
+        {
+            super.flushMetadata();
+            flushMetadata(superBlockOffsets);
         }
     }
 
@@ -467,13 +544,6 @@ public class OnDiskSABuilder
             offsets.clear();
             buffer.clear();
         }
-
-        protected void alignToBlock(SequentialWriter out) throws IOException
-        {
-            long endOfBlock = out.getFilePointer();
-            if ((endOfBlock & (BLOCK_SIZE - 1)) != 0) // align on the block boundary if needed
-                out.skipBytes((int) (FBUtilities.align(endOfBlock, BLOCK_SIZE) - endOfBlock));
-        }
     }
 
     private static class MutableDataBlock extends MutableBlock<InMemoryDataSuffix>
@@ -503,7 +573,7 @@ public class OnDiskSABuilder
             for (TokenTreeBuilder tokens : containers)
                 tokens.write(out);
 
-            super.alignToBlock(out);
+            alignToBlock(out);
             containers.clear();
             offset = 0;
         }

@@ -323,6 +323,37 @@ public class OnDiskSATest
     }
     */
 
+    @Test
+    public void testSuperBlocks() throws Exception
+    {
+        Map<ByteBuffer, NavigableMap<Long, LongSet>> terms = new HashMap<>();
+        terms.put(UTF8Type.instance.decompose("1234"), keyBuilder(1L, 2L));
+        terms.put(UTF8Type.instance.decompose("2345"), keyBuilder(3L, 4L));
+        terms.put(UTF8Type.instance.decompose("3456"), keyBuilder(5L, 6L));
+        terms.put(UTF8Type.instance.decompose("4567"), keyBuilder(7L, 8L));
+        terms.put(UTF8Type.instance.decompose("5678"), keyBuilder(9L, 10L));
+
+        OnDiskSABuilder builder = new OnDiskSABuilder(Int32Type.instance, OnDiskSABuilder.Mode.ORIGINAL);
+        for (Map.Entry<ByteBuffer, NavigableMap<Long, LongSet>> entry : terms.entrySet())
+            builder.add(entry.getKey(), entry.getValue());
+
+        File index = File.createTempFile("on-disk-sa-multi-suffix-match", ".db");
+        index.deleteOnExit();
+
+        builder.finish(Pair.create(keyAt(1), keyAt(10)), index);
+
+        OnDiskSA onDisk = new OnDiskSA(index, UTF8Type.instance, new KeyConverter());
+        OnDiskSA.OnDiskSuperBlock superBlock = onDisk.dataLevel.getSuperBlock(0);
+        Iterator<TokenTree.Token> iter = superBlock.iterator();
+        while (iter.hasNext())
+        {
+            TokenTree.Token token = iter.next();
+            // TODO: add in an assert that is sensible, but for now, knowing that the super block
+            // iterator can be loaded is a good first step
+            //Assert.assertTrue(terms.containsKey(token));
+        }
+    }
+
     private static DecoratedKey keyAt(long key)
     {
         return StorageService.getPartitioner().decorateKey(ByteBuffer.wrap(("key" + key).getBytes()));

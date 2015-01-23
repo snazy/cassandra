@@ -246,15 +246,43 @@ public class OnDiskSA implements Iterable<OnDiskSA.DataSuffix>, Closeable
 
     protected class DataLevel extends Level<DataBlock>
     {
+        protected final int superBlockCnt;
+        protected final long superBlocksOffset;
+
         public DataLevel(long offset, int count)
         {
             super(offset, count);
+            long baseOffset = blockOffsets + blockCount * 8;
+            superBlockCnt = indexFile.getInt((int)baseOffset);
+            superBlocksOffset = baseOffset + 4;
         }
 
         @Override
         protected DataBlock cast(ByteBuffer block)
         {
             return new DataBlock(block);
+        }
+
+        public OnDiskSuperBlock getSuperBlock(int idx)
+        {
+            assert idx < superBlockCnt : String.format("requested index %d is greater than super block count %d", idx, superBlockCnt);
+            long blockOffset = indexFile.getLong((int) (superBlocksOffset + idx * 8));
+            return new OnDiskSuperBlock((ByteBuffer)indexFile.duplicate().position((int)blockOffset));
+        }
+    }
+
+    protected class OnDiskSuperBlock
+    {
+        private final TokenTree tokenTree;
+
+        public OnDiskSuperBlock(ByteBuffer buffer)
+        {
+            tokenTree = new TokenTree(buffer);
+        }
+
+        public SkippableIterator<Long, Token> iterator()
+        {
+            return tokenTree.iterator(keyFetcher);
         }
     }
 
