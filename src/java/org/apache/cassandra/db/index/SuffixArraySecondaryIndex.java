@@ -5,6 +5,7 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.*;
 import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 import com.carrotsearch.hppc.LongOpenHashSet;
@@ -90,20 +91,25 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
 
     private final BiMap<ByteBuffer, Component> columnDefComponents;
 
-    private final Map<ByteBuffer, SADataTracker> intervalTrees;
+    private final ConcurrentMap<ByteBuffer, SADataTracker> intervalTrees;
 
     private final Map<ByteBuffer, Mode> indexingModes = new HashMap<>();
+    private final ConcurrentMap<Descriptor, CopyOnWriteArrayList<SSTableIndex>> currentIndexes;
 
     private AbstractType<?> keyComparator;
+    private boolean isInitialized;
 
     public SuffixArraySecondaryIndex()
     {
         columnDefComponents = HashBiMap.create();
         intervalTrees = new ConcurrentHashMap<>();
+        currentIndexes = new ConcurrentHashMap<>();
     }
 
     public void init()
     {
+        isInitialized = true;
+
         // init() is called by SIM only on the instance that it will keep around, but will call addColumnDef on any instance
         // that it happens to create (and subsequently/immediately throw away)
         addComponent(columnDefs);
@@ -123,6 +129,11 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
 
     private void addComponent(Set<ColumnDefinition> defs)
     {
+        // if SI hasn't been initialized that means that this instance
+        // was created for validation purposes only, so we don't have do anything here
+        if (!isInitialized)
+            return;
+
         // only reason baseCfs would be null is if coming through the CFMetaData.validate() path, which only
         // checks that the SI 'looks' legit, but then throws away any created instances - fml, this 2I api sux
         if (baseCfs == null)
@@ -500,7 +511,6 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
 
             // add primary expression first
             narrowedCandidates.put(primaryExpression.left, new HashSet<>(primaryIndexes));
-            Set<SSTableIndex> uniqueNarrowedCandidates = new HashSet<>();
 
             for (Pair<ByteBuffer, Expression> e : expressions)
             {
@@ -508,7 +518,6 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
                 if (validator.compare(primaryExpression.left, e.left) == 0)
                 {
                     narrowedCandidates.put(e.left, new HashSet<>(primaryIndexes));
-                    uniqueNarrowedCandidates.addAll(primaryIndexes);
                     continue;
                 }
 
@@ -522,14 +531,6 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
                     return Collections.emptyList();
 
                 narrowedCandidates.put(e.left, readers);
-                uniqueNarrowedCandidates.addAll(readers);
-            }
-
-            // might not want to fail the entire search if we fail to acquire references - maybe retry (but will need updated SADataTracker) ??
-            if (!acquireReferences(uniqueNarrowedCandidates))
-            {
-                logger.warn("unable to acquire sstable references for search");
-                return Collections.emptyList();
             }
 
             SkippableIterator<Long, Token> joiner = null;
@@ -563,7 +564,6 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
             finally
             {
                 FileUtils.closeQuietly(joiner);
-                releaseReferences(uniqueNarrowedCandidates);
             }
 
             return rows;
@@ -760,6 +760,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
     private class SuffixIterator extends AbstractIterator<Token> implements SkippableIterator<Long, Token>
     {
         private final SkippableIterator<Long, Token> union;
+        private final List<SSTableIndex> referencedIndexes = new ArrayList<>();
 
         public SuffixIterator(Expression expression, final Set<SSTableIndex> perSSTableIndexes)
         {
@@ -767,12 +768,16 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
 
             for (final SSTableIndex index : perSSTableIndexes)
             {
+                if (!index.reference())
+                    continue;
+
                 ByteBuffer lower = (expression.lower == null) ? null : expression.lower.value;
                 ByteBuffer upper = (expression.upper == null) ? null : expression.upper.value;
 
                 keys.add(index.search(lower, lower == null || expression.lower.inclusive,
                                       upper, upper == null || expression.upper.inclusive));
 
+                referencedIndexes.add(index);
             }
 
             union = new LazyMergeSortIterator<>(OperationType.OR, keys);
@@ -794,6 +799,8 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
         public void close()
         {
             FileUtils.closeQuietly(union);
+            for (SSTableIndex index : referencedIndexes)
+                index.release();
         }
     }
 
@@ -820,11 +827,22 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
                 //TODO: handle this slightly more elegantly, but don't bother trying to remove tables from an empty tree
                 if (currentView.keyIntervalTree.intervalCount() == 0 && oldSSTables.size() > 0)
                     return;
+
                 newView = currentView.update(oldSSTables, newSSTables);
                 if (newView == null)
                     break;
             }
             while (!view.compareAndSet(currentView, newView));
+
+            for (SSTableReader sstable : oldSSTables)
+            {
+                CopyOnWriteArrayList<SSTableIndex> indexes = currentIndexes.remove(sstable.descriptor);
+                if (indexes == null)
+                    continue;
+
+                for (SSTableIndex index : indexes)
+                    index.release();
+            }
         }
     }
 
@@ -882,6 +900,17 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
                             keyComparator.getString(index.minKey()),
                             keyComparator.getString(index.maxKey()),
                             sstable);
+
+                CopyOnWriteArrayList<SSTableIndex> openIndexes = currentIndexes.get(sstable.descriptor);
+                if (openIndexes == null)
+                {
+                    CopyOnWriteArrayList<SSTableIndex> newList = new CopyOnWriteArrayList<>();
+                    openIndexes = currentIndexes.putIfAbsent(sstable.descriptor, newList);
+                    if (openIndexes == null)
+                        openIndexes = newList;
+                }
+
+                openIndexes.add(index);
 
                 termIntervals.add(Interval.create(index.minSuffix(), index.maxSuffix(), index));
                 keyIntervals.add(Interval.create(index.minKey(), index.maxKey(), index));
@@ -992,11 +1021,14 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
         private final ByteBuffer column;
         private final SSTableReader sstable;
         private final OnDiskSA index;
+        private final AtomicInteger references = new AtomicInteger(1);
 
         public SSTableIndex(ByteBuffer name, File indexFile, SSTableReader referent)
         {
             column = name;
             sstable = referent;
+
+            assert sstable.acquireReference();
 
             AbstractType<?> validator = getValidator(column);
 
@@ -1034,33 +1066,33 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
             return index.search(lower, lowerInclusive, upper, upperInclusive);
         }
 
+        public boolean reference()
+        {
+            while (true)
+            {
+                int n = references.get();
+                if (n <= 0)
+                    return false;
+                if (references.compareAndSet(n, n + 1))
+                    return true;
+            }
+        }
+
+        public void release()
+        {
+            int n = references.decrementAndGet();
+            if (n == 0)
+            {
+                FileUtils.closeQuietly(index);
+                sstable.releaseReference();
+            }
+        }
+
         @Override
         public String toString()
         {
             return String.format("SSTableIndex(column: %s, SSTable: %s)", baseCfs.getComparator().getString(column), sstable.descriptor);
         }
-    }
-
-    private static Iterable<SSTableReader> extractSSTables(Iterable<SSTableIndex> indexes)
-    {
-        return Iterables.transform(indexes, new Function<SSTableIndex, SSTableReader>()
-        {
-            @Override
-            public SSTableReader apply(SSTableIndex index)
-            {
-                return index.sstable;
-            }
-        });
-    }
-
-    private static boolean acquireReferences(Iterable<SSTableIndex> indexes)
-    {
-        return SSTableReader.acquireReferences(extractSSTables(indexes));
-    }
-
-    private static void releaseReferences(Iterable<SSTableIndex> indexes)
-    {
-        SSTableReader.releaseReferences(extractSSTables(indexes));
     }
 }
 

@@ -312,7 +312,12 @@ public class OnDiskSA implements Iterable<OnDiskSA.DataSuffix>, Closeable
 
     @Override
     public void close() throws IOException
-    {}
+    {
+        if (!FileUtils.isCleanerAvailable())
+            return;
+
+        FileUtils.clean(indexFile);
+    }
 
     private PointerSuffix findPointer(ByteBuffer query)
     {
