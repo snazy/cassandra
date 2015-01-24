@@ -28,11 +28,13 @@ import org.apache.cassandra.db.marshal.AsciiType;
 import org.apache.cassandra.db.marshal.UTF8Type;
 import org.apache.cassandra.dht.AbstractBounds;
 import org.apache.cassandra.dht.LongToken;
+import org.apache.cassandra.dht.Murmur3Partitioner;
 import org.apache.cassandra.exceptions.ConfigurationException;
 import org.apache.cassandra.io.FSReadError;
 import org.apache.cassandra.io.sstable.*;
 import org.apache.cassandra.io.util.FileUtils;
 import org.apache.cassandra.notifications.*;
+import org.apache.cassandra.service.StorageService;
 import org.apache.cassandra.thrift.IndexExpression;
 import org.apache.cassandra.thrift.IndexOperator;
 import org.apache.cassandra.utils.*;
@@ -108,6 +110,9 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
 
     public void init()
     {
+        if (!(StorageService.getPartitioner() instanceof Murmur3Partitioner))
+            throw new UnsupportedOperationException("SASI supported only with Murmur3Partitioner.");
+
         isInitialized = true;
 
         // init() is called by SIM only on the instance that it will keep around, but will call addColumnDef on any instance
@@ -400,7 +405,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
 
             private void add(ByteBuffer term, DecoratedKey key, long keyPosition)
             {
-                final long keyToken = MurmurHash.hash2_64(key.key, key.key.position(), key.key.remaining(), 0);
+                final Long keyToken = ((LongToken) key.getToken()).token;
 
                 tokenizer.reset(term);
                 while (tokenizer.hasNext())
