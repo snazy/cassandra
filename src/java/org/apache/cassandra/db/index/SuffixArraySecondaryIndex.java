@@ -26,6 +26,7 @@ import org.apache.cassandra.db.marshal.AbstractType;
 import org.apache.cassandra.db.marshal.AsciiType;
 import org.apache.cassandra.db.marshal.UTF8Type;
 import org.apache.cassandra.dht.AbstractBounds;
+import org.apache.cassandra.dht.LongToken;
 import org.apache.cassandra.exceptions.ConfigurationException;
 import org.apache.cassandra.io.FSReadError;
 import org.apache.cassandra.io.sstable.*;
@@ -45,6 +46,7 @@ import org.slf4j.LoggerFactory;
 
 import static org.apache.cassandra.db.index.utils.LazyMergeSortIterator.OperationType;
 import static org.apache.cassandra.db.index.search.container.TokenTree.Token;
+import static org.apache.cassandra.db.index.search.OnDiskSABuilder.Mode;
 
 /**
  * Note: currently does not work with cql3 tables (unless 'WITH COMPACT STORAGE' is declared when creating the table).
@@ -90,6 +92,8 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
 
     private final Map<ByteBuffer, SADataTracker> intervalTrees;
 
+    private final Map<ByteBuffer, Mode> indexingModes = new HashMap<>();
+
     private AbstractType<?> keyComparator;
 
     public SuffixArraySecondaryIndex()
@@ -110,6 +114,10 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
     void addColumnDef(ColumnDefinition columnDef)
     {
         super.addColumnDef(columnDef);
+
+        String mode = columnDef.getIndexOptions().get("mode");
+        indexingModes.put(columnDef.name, mode == null ? Mode.ORIGINAL : Mode.mode(mode));
+
         addComponent(Collections.singleton(columnDef));
     }
 
@@ -144,7 +152,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
         for (ColumnDefinition columnDefinition : defs)
         {
             SADataTracker dataTracker = intervalTrees.get(columnDefinition.name);
-            dataTracker.update(Collections.EMPTY_LIST, readers);
+            dataTracker.update(Collections.<SSTableReader>emptyList(), readers);
         }
     }
 
@@ -152,7 +160,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
     {
         for (Map.Entry<ByteBuffer, SADataTracker> entry : intervalTrees.entrySet())
         {
-            entry.getValue().update(readers, Collections.EMPTY_LIST);
+            entry.getValue().update(readers, Collections.<SSTableReader>emptyList());
         }
     }
 
@@ -208,7 +216,8 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
         // better yet, the index rebuild path can be bypassed by overriding buildIndexAsync(), and just return
         // some empty Future - all current callers of buildIndexAsync() ignore the returned Future.
         // seems a little dangerous (not future proof) but good enough for a v1
-        logger.trace("received an index() call");
+        if (logger.isTraceEnabled())
+            logger.trace("received an index() call");
     }
 
     /**
@@ -405,11 +414,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
 
             public void blockingFlush()
             {
-                OnDiskSABuilder.Mode mode = TOKENIZABLE_TYPES.contains(column.getValidator())
-                                                ? OnDiskSABuilder.Mode.SUFFIX
-                                                : OnDiskSABuilder.Mode.ORIGINAL;
-
-                OnDiskSABuilder builder = new OnDiskSABuilder(column.getValidator(), mode);
+                OnDiskSABuilder builder = new OnDiskSABuilder(column.getValidator(), indexingModes.get(column.name));
 
                 for (Map.Entry<ByteBuffer, NavigableMap<Long, LongSet>> e : keysPerTerm.entrySet())
                     builder.add(e.getKey(), e.getValue());
@@ -539,16 +544,15 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
 
                 joiner = new LazyMergeSortIterator<>(OperationType.AND, suffixes);
 
+                joiner.skipTo(((LongToken) requestedRange.left.getToken()).token);
+
                 intersection:
                 while (joiner.hasNext())
                 {
                     for (DecoratedKey key : joiner.next())
                     {
-                        if (rows.size() >= maxRows)
+                        if (!requestedRange.contains(key) || rows.size() >= maxRows)
                             break intersection;
-
-                        if (!requestedRange.contains(key))
-                            continue;
 
                         Row row = getRow(key, filter, expressionsImmutable);
                         if (row != null)
@@ -832,7 +836,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
 
         public SAView(ByteBuffer col, Set<SSTableReader> sstables)
         {
-            this(null, col, Collections.EMPTY_LIST, sstables);
+            this(null, col, Collections.<SSTableReader>emptyList(), sstables);
         }
 
         private SAView(SAView previous, ByteBuffer col, final Collection<SSTableReader> toRemove, Collection<SSTableReader> toAdd)

@@ -5,14 +5,15 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.*;
 
+import com.carrotsearch.hppc.LongOpenHashSet;
 import org.apache.cassandra.utils.ByteBufferUtil;
 import org.apache.cassandra.utils.FBUtilities;
 import org.apache.cassandra.utils.Pair;
 
-import com.google.common.collect.AbstractIterator;
 import com.carrotsearch.hppc.LongArrayList;
 import com.carrotsearch.hppc.LongSet;
 import com.carrotsearch.hppc.cursors.LongCursor;
+import com.google.common.collect.AbstractIterator;
 
 public class TokenTreeBuilder
 {
@@ -42,6 +43,9 @@ public class TokenTreeBuilder
     private long tokenCount = 0;
     private TokenRange treeTokenRange = new TokenRange();
 
+    public TokenTreeBuilder()
+    {}
+
     public TokenTreeBuilder(SortedMap<Long, LongSet> data)
     {
         add(data);
@@ -52,11 +56,11 @@ public class TokenTreeBuilder
         for (Map.Entry<Long, LongSet> newEntry : data.entrySet())
         {
             LongSet found = tokens.get(newEntry.getKey());
-            if (found != null)
-                for (LongCursor offset : newEntry.getValue())
-                    found.add(offset.value);
-            else
-                tokens.put(newEntry.getKey(), newEntry.getValue());
+            if (found == null)
+                tokens.put(newEntry.getKey(), (found = new LongOpenHashSet()));
+
+            for (LongCursor offset : newEntry.getValue())
+                found.add(offset.value);
         }
     }
 
@@ -64,6 +68,16 @@ public class TokenTreeBuilder
     {
         maybeBulkLoad();
         return this;
+    }
+
+    public SortedMap<Long, LongSet> getTokens()
+    {
+        return tokens;
+    }
+
+    public long getTokenCount()
+    {
+        return tokenCount;
     }
 
     public int serializedSize()
@@ -759,10 +773,5 @@ public class TokenTreeBuilder
             }
 
         }
-    }
-
-    public SortedMap<Long, LongSet> getTokens()
-    {
-        return tokens;
     }
 }
