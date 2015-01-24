@@ -39,6 +39,7 @@ import org.apache.cassandra.db.marshal.AbstractType;
 import org.apache.cassandra.io.sstable.SSTableMetadata;
 import org.apache.cassandra.io.sstable.SSTableReader;
 import org.apache.cassandra.io.sstable.SSTableWriter;
+import org.apache.cassandra.io.sstable.SSTableWriterListenable;
 import org.apache.cassandra.io.util.DiskAwareRunnable;
 import org.github.jamm.MemoryMeter;
 
@@ -421,7 +422,8 @@ public class Memtable
                                      rows.size(),
                                      cfs.metadata,
                                      cfs.partitioner,
-                                     sstableMetadataCollector);
+                                     sstableMetadataCollector,
+                                     SSTableWriterListenable.Source.MEMTABLE);
         }
     }
 
