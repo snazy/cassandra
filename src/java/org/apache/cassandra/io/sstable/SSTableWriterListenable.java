@@ -2,5 +2,6 @@ package org.apache.cassandra.io.sstable;
 
 public interface SSTableWriterListenable
 {
-    SSTableWriterListener getListener(Descriptor descriptor);
+    public enum Source { MEMTABLE, COMPACTION }
+    SSTableWriterListener getListener(Descriptor descriptor, Source source);
 }

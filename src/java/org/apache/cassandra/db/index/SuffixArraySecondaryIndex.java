@@ -68,15 +68,22 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
     private static final int MAX_ROWS = 10000;
 
     private static final String FILE_NAME_FORMAT = "SI_%s.db";
-    private static final ThreadPoolExecutor INDEX_FLUSHER;
+    private static final ThreadPoolExecutor INDEX_FLUSHER_MEMTABLE;
+    private static final ThreadPoolExecutor INDEX_FLUSHER_GENERAL;
 
     static
     {
-        INDEX_FLUSHER = new JMXEnabledThreadPoolExecutor(1, 8, 60, TimeUnit.SECONDS,
-                                                         new LinkedBlockingQueue<Runnable>(),
-                                                         new NamedThreadFactory("SuffixArrayBuilder"),
-                                                         "internal");
-        INDEX_FLUSHER.allowCoreThreadTimeOut(true);
+        INDEX_FLUSHER_GENERAL = new JMXEnabledThreadPoolExecutor(1, 8, 60, TimeUnit.SECONDS,
+                                                                 new LinkedBlockingQueue<Runnable>(),
+                                                                 new NamedThreadFactory("SuffixArrayBuilder-General"),
+                                                                 "internal");
+        INDEX_FLUSHER_GENERAL.allowCoreThreadTimeOut(true);
+
+        INDEX_FLUSHER_MEMTABLE = new JMXEnabledThreadPoolExecutor(1, 8, 60, TimeUnit.SECONDS,
+                                                                 new LinkedBlockingQueue<Runnable>(),
+                                                                 new NamedThreadFactory("SuffixArrayBuilder-Memtable"),
+                                                                 "internal");
+        INDEX_FLUSHER_MEMTABLE.allowCoreThreadTimeOut(true);
     }
 
     private final BiMap<ByteBuffer, Component> columnDefComponents;
@@ -115,7 +122,9 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
         else if (keyComparator == null)
             keyComparator = this.baseCfs.metadata.getKeyValidator();
 
-        INDEX_FLUSHER.setCorePoolSize(columnDefs.size() * 2);
+        INDEX_FLUSHER_GENERAL.setCorePoolSize(columnDefs.size());
+        INDEX_FLUSHER_GENERAL.setMaximumPoolSize(columnDefs.size() * 2);
+        INDEX_FLUSHER_MEMTABLE.setMaximumPoolSize(columnDefs.size());
 
         AbstractType<?> type = baseCfs.getComparator();
         for (ColumnDefinition def : defs)
@@ -242,9 +251,9 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
         return ImmutableList.<Component>builder().addAll(columnDefComponents.values()).build();
     }
 
-    public SSTableWriterListener getListener(Descriptor descriptor)
+    public SSTableWriterListener getListener(Descriptor descriptor, Source source)
     {
-        return new PerSSTableIndexWriter(descriptor);
+        return new PerSSTableIndexWriter(descriptor, source);
     }
 
     private AbstractType<?> getValidator(ByteBuffer columnName)
@@ -256,6 +265,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
     protected class PerSSTableIndexWriter implements SSTableWriterListener
     {
         private final Descriptor descriptor;
+        private final Source source;
 
         // need one entry for each term we index
         private final Map<ByteBuffer, ColumnIndex> indexPerColumn;
@@ -263,9 +273,10 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
         private DecoratedKey currentKey;
         private long currentKeyPosition;
 
-        public PerSSTableIndexWriter(Descriptor descriptor)
+        public PerSSTableIndexWriter(Descriptor descriptor, Source source)
         {
             this.descriptor = descriptor;
+            this.source = source;
             this.indexPerColumn = new HashMap<>();
         }
 
@@ -309,7 +320,8 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
                 for (final ColumnIndex index : indexPerColumn.values())
                 {
                     logger.info("Submitting {} for concurrent SA'ing", index.outputFile);
-                    INDEX_FLUSHER.submit(new Runnable()
+                    ThreadPoolExecutor executor = source == Source.MEMTABLE ? INDEX_FLUSHER_MEMTABLE : INDEX_FLUSHER_GENERAL;
+                    executor.submit(new Runnable()
                     {
                         @Override
                         public void run()

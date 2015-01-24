@@ -35,6 +35,7 @@ import org.apache.cassandra.db.index.SecondaryIndex;
 import org.apache.cassandra.dht.IPartitioner;
 import org.apache.cassandra.io.FSWriteError;
 import org.apache.cassandra.io.compress.CompressedSequentialWriter;
+import org.apache.cassandra.io.sstable.SSTableWriterListenable.Source;
 import org.apache.cassandra.io.util.*;
 import org.apache.cassandra.service.StorageService;
 import org.apache.cassandra.utils.ByteBufferUtil;
@@ -108,6 +109,16 @@ public class SSTableWriter extends SSTable
                          IPartitioner<?> partitioner,
                          SSTableMetadata.Collector sstableMetadataCollector)
     {
+        this(filename, keyCount, metadata, partitioner, sstableMetadataCollector, Source.COMPACTION);
+    }
+
+    public SSTableWriter(String filename,
+        long keyCount,
+        CFMetaData metadata,
+        IPartitioner<?> partitioner,
+        SSTableMetadata.Collector sstableMetadataCollector,
+        Source source)
+    {
         super(Descriptor.fromFilename(filename),
               components(metadata),
               metadata,
@@ -137,7 +148,7 @@ public class SSTableWriter extends SSTable
         if (!metadata.cfName.contains(".")) // hack to make sure current SSTW is not for a native, in-built secondary index
         {
             ColumnFamilyStore cfs = Keyspace.open(metadata.ksName).getColumnFamilyStore(metadata.cfName);
-            listeners = cfs.indexManager.getSSTableWriterListsners(descriptor);
+            listeners = cfs.indexManager.getSSTableWriterListsners(descriptor, source);
             for (SSTableWriterListener listener : listeners)
                 listener.begin();
         }

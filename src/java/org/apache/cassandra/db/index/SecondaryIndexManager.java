@@ -54,6 +54,7 @@ import org.apache.cassandra.io.sstable.Descriptor;
 import org.apache.cassandra.io.sstable.ReducingKeyIterator;
 import org.apache.cassandra.io.sstable.SSTableReader;
 import org.apache.cassandra.io.sstable.SSTableWriterListenable;
+import org.apache.cassandra.io.sstable.SSTableWriterListenable.Source;
 import org.apache.cassandra.io.sstable.SSTableWriterListener;
 import org.apache.cassandra.io.util.RandomAccessReader;
 import org.apache.cassandra.thrift.IndexExpression;
@@ -614,11 +615,11 @@ public class SecondaryIndexManager
      * @return a immutable view of the current SSTableWriter listeners
      * @param descriptor
      */
-    public Set<SSTableWriterListener> getSSTableWriterListsners(Descriptor descriptor)
+    public Set<SSTableWriterListener> getSSTableWriterListsners(Descriptor descriptor, Source source)
     {
         ImmutableSet.Builder<SSTableWriterListener> set = ImmutableSet.builder();
         for (SSTableWriterListenable listenable : writerListenables)
-            set.add(listenable.getListener(descriptor));
+            set.add(listenable.getListener(descriptor, source));
         return set.build();
     }
 
