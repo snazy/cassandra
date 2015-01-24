@@ -33,10 +33,16 @@ public class OnDiskSABuilder
 {
     public static enum Mode
     {
-        SUFFIX, ORIGINAL
+        SUFFIX, ORIGINAL, SPARSE;
+
+        public static Mode mode(String mode)
+        {
+            return Mode.valueOf(mode.toUpperCase());
+        }
     }
 
     public static final int BLOCK_SIZE = 4096;
+    public static final int SUPER_BLOCK_SIZE = 64;
 
     private final List<MutableLevel<InMemoryPointerSuffix>> levels = new ArrayList<>();
     private MutableLevel<InMemoryDataSuffix> dataLevel;
@@ -87,10 +93,12 @@ public class OnDiskSABuilder
             ByteBufferUtil.writeWithShortLength(range.left.key, out);
             ByteBufferUtil.writeWithShortLength(range.right.key, out);
 
+            out.writeUTF(sa.mode.toString());
+
             out.skipBytes((int) (BLOCK_SIZE - out.getFilePointer()));
 
-            dataLevel = sa.mode == Mode.ORIGINAL ? new DataBuilderLevel(out, new MutableDataBlock())
-                                                 : new MutableLevel<>(out, new MutableDataBlock());
+            dataLevel = sa.mode == Mode.SPARSE ? new DataBuilderLevel(out, new MutableDataBlock(sa.mode))
+                                               : new MutableLevel<>(out, new MutableDataBlock(sa.mode));
             while (suffixes.hasNext())
             {
                 Pair<ByteBuffer, TokenTreeBuilder> suffix = suffixes.next();
@@ -227,6 +235,7 @@ public class OnDiskSABuilder
                     return new SASuffixIterator();
 
                 case ORIGINAL:
+                case SPARSE:
                     return new IntegralSuffixIterator();
 
                 default:
@@ -441,19 +450,16 @@ public class OnDiskSABuilder
     /** builds standard data blocks and super blocks, as well */
     private static class DataBuilderLevel extends MutableLevel<InMemoryDataSuffix>
     {
-        // TODO:JEB make this constant (or at least configurable)
-        private static final int SUPER_BLOCK_SIZE = 4;
-
         private final LongArrayList superBlockOffsets = new LongArrayList();
 
-        /** count of regular data blocks writen since current super block was init'd */
+        /** count of regular data blocks written since current super block was init'd */
         private int dataBlocksCnt;
         private TokenTreeBuilder superBlockTree;
 
         public DataBuilderLevel(SequentialWriter out, MutableBlock<InMemoryDataSuffix> block)
         {
             super(out, block);
-            superBlockTree = new TokenTreeBuilder(new TreeMap());
+            superBlockTree = new TokenTreeBuilder();
         }
 
         public InMemoryPointerSuffix add(InMemoryDataSuffix suffix) throws IOException
@@ -477,7 +483,7 @@ public class OnDiskSABuilder
                 alignToBlock(out);
 
                 dataBlocksCnt = 0;
-                superBlockTree = new TokenTreeBuilder(new TreeMap());
+                superBlockTree = new TokenTreeBuilder();
             }
         }
 
@@ -548,21 +554,45 @@ public class OnDiskSABuilder
 
     private static class MutableDataBlock extends MutableBlock<InMemoryDataSuffix>
     {
+        private final Mode mode;
+
         private int offset = 0;
+        private int sparseValueSuffixes = 0;
+
         private final List<TokenTreeBuilder> containers = new ArrayList<>();
+        private TokenTreeBuilder combinedIndex = new TokenTreeBuilder();
+
+        public MutableDataBlock(Mode mode)
+        {
+            this.mode = mode;
+        }
 
         @Override
         protected void addInternal(InMemoryDataSuffix suffix) throws IOException
         {
-            writeSuffix(suffix, offset);
-            offset += suffix.keys.serializedSize();
-            containers.add(suffix.keys);
+            TokenTreeBuilder keys = suffix.keys;
+
+            if (mode == Mode.SPARSE && keys.getTokenCount() <= 5)
+            {
+                writeSuffix(suffix, keys);
+                sparseValueSuffixes++;
+            }
+            else
+            {
+                writeSuffix(suffix, offset);
+
+                offset += keys.serializedSize();
+                containers.add(keys);
+            }
+
+            if (mode == Mode.SPARSE)
+                combinedIndex.add(keys.getTokens());
         }
 
         @Override
         protected int sizeAfter(InMemoryDataSuffix element)
         {
-            return super.sizeAfter(element) + 4;
+            return super.sizeAfter(element) + ptrLength(element);
         }
 
         @Override
@@ -570,17 +600,49 @@ public class OnDiskSABuilder
         {
             super.flushAndClear(out);
 
-            for (TokenTreeBuilder tokens : containers)
-                tokens.write(out);
+            out.writeInt((sparseValueSuffixes == 0) ? -1 : offset);
+
+            if (containers.size() > 0)
+            {
+                for (TokenTreeBuilder tokens : containers)
+                    tokens.write(out);
+            }
+
+            if (sparseValueSuffixes > 0)
+            {
+                combinedIndex.finish().write(out);
+            }
 
             alignToBlock(out);
+
             containers.clear();
+            combinedIndex = new TokenTreeBuilder();
+
             offset = 0;
+            sparseValueSuffixes = 0;
+        }
+
+        private int ptrLength(InMemoryDataSuffix suffix)
+        {
+            return (suffix.keys.getTokenCount() > 5)
+                    ? 5 // 1 byte type + 4 byte offset to the tree
+                    : 1 + (8 * (int) suffix.keys.getTokenCount()); // 1 byte size + n 8 byte tokens
+        }
+
+        private void writeSuffix(InMemorySuffix suffix, TokenTreeBuilder keys) throws IOException
+        {
+            suffix.serialize(buffer);
+            buffer.writeByte((byte) keys.getTokenCount());
+
+            Iterator<Pair<Long, LongSet>> tokens = keys.iterator();
+            while (tokens.hasNext())
+                buffer.writeLong(tokens.next().left);
         }
 
         private void writeSuffix(InMemorySuffix suffix, int offset) throws IOException
         {
             suffix.serialize(buffer);
+            buffer.writeByte(0x0);
             buffer.writeInt(offset);
         }
     }

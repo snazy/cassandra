@@ -3,20 +3,22 @@ package org.apache.cassandra.db.index.search;
 import java.io.File;
 import java.nio.ByteBuffer;
 import java.util.*;
+import java.util.concurrent.ThreadLocalRandom;
 
-import com.carrotsearch.hppc.LongOpenHashSet;
-import com.carrotsearch.hppc.LongSet;
-import com.carrotsearch.hppc.cursors.LongCursor;
-import com.google.common.base.Function;
 import org.apache.cassandra.db.DecoratedKey;
 import org.apache.cassandra.db.index.search.container.TokenTree;
 import org.apache.cassandra.db.index.utils.SkippableIterator;
 import org.apache.cassandra.db.marshal.Int32Type;
+import org.apache.cassandra.db.marshal.LongType;
 import org.apache.cassandra.db.marshal.UTF8Type;
 import org.apache.cassandra.service.StorageService;
 import org.apache.cassandra.utils.MurmurHash;
 import org.apache.cassandra.utils.Pair;
 
+import com.carrotsearch.hppc.LongOpenHashSet;
+import com.carrotsearch.hppc.LongSet;
+import com.carrotsearch.hppc.cursors.LongCursor;
+import com.google.common.base.Function;
 import com.google.common.collect.Iterators;
 
 import junit.framework.Assert;
@@ -133,7 +135,7 @@ public class OnDiskSATest
         {
             ByteBuffer number = sortedNumbers.get(idx++);
             Assert.assertEquals(number, suffix.getSuffix());
-            Assert.assertEquals(convert(data.get(number)), convert(suffix.getOffsets()));
+            Assert.assertEquals(convert(data.get(number)), convert(suffix.getTokens()));
         }
 
         // test partial iteration (descending)
@@ -145,7 +147,7 @@ public class OnDiskSATest
             ByteBuffer number = sortedNumbers.get(idx++);
 
             Assert.assertEquals(number, suffix.getSuffix());
-            Assert.assertEquals(convert(data.get(number)), convert(suffix.getOffsets()));
+            Assert.assertEquals(convert(data.get(number)), convert(suffix.getTokens()));
         }
 
         idx = 3; // start from the 3rd element exclusive
@@ -156,7 +158,7 @@ public class OnDiskSATest
             ByteBuffer number = sortedNumbers.get(idx++);
 
             Assert.assertEquals(number, suffix.getSuffix());
-            Assert.assertEquals(convert(data.get(number)), convert(suffix.getOffsets()));
+            Assert.assertEquals(convert(data.get(number)), convert(suffix.getTokens()));
         }
 
         // test partial iteration (ascending)
@@ -168,7 +170,7 @@ public class OnDiskSATest
             ByteBuffer number = sortedNumbers.get(idx--);
 
             Assert.assertEquals(number, suffix.getSuffix());
-            Assert.assertEquals(convert(data.get(number)), convert(suffix.getOffsets()));
+            Assert.assertEquals(convert(data.get(number)), convert(suffix.getTokens()));
         }
 
         idx = 6; // start from the 6rd element exclusive
@@ -179,7 +181,7 @@ public class OnDiskSATest
             ByteBuffer number = sortedNumbers.get(idx--);
 
             Assert.assertEquals(number, suffix.getSuffix());
-            Assert.assertEquals(convert(data.get(number)), convert(suffix.getOffsets()));
+            Assert.assertEquals(convert(data.get(number)), convert(suffix.getTokens()));
         }
 
         onDisk.close();
@@ -333,25 +335,84 @@ public class OnDiskSATest
         terms.put(UTF8Type.instance.decompose("4567"), keyBuilder(7L, 8L));
         terms.put(UTF8Type.instance.decompose("5678"), keyBuilder(9L, 10L));
 
-        OnDiskSABuilder builder = new OnDiskSABuilder(Int32Type.instance, OnDiskSABuilder.Mode.ORIGINAL);
+        OnDiskSABuilder builder = new OnDiskSABuilder(Int32Type.instance, OnDiskSABuilder.Mode.SPARSE);
         for (Map.Entry<ByteBuffer, NavigableMap<Long, LongSet>> entry : terms.entrySet())
             builder.add(entry.getKey(), entry.getValue());
 
-        File index = File.createTempFile("on-disk-sa-multi-suffix-match", ".db");
+        File index = File.createTempFile("on-disk-sa-try-superblocks", ".db");
         index.deleteOnExit();
 
         builder.finish(Pair.create(keyAt(1), keyAt(10)), index);
 
-        OnDiskSA onDisk = new OnDiskSA(index, UTF8Type.instance, new KeyConverter());
+        OnDiskSA onDisk = new OnDiskSA(index, Int32Type.instance, new KeyConverter());
         OnDiskSA.OnDiskSuperBlock superBlock = onDisk.dataLevel.getSuperBlock(0);
         Iterator<TokenTree.Token> iter = superBlock.iterator();
+
+        Long lastToken = null;
         while (iter.hasNext())
         {
             TokenTree.Token token = iter.next();
-            // TODO: add in an assert that is sensible, but for now, knowing that the super block
-            // iterator can be loaded is a good first step
-            //Assert.assertTrue(terms.containsKey(token));
+
+            if (lastToken != null)
+                Assert.assertTrue(lastToken.compareTo(token.get()) < 0);
+
+            lastToken = token.get();
         }
+    }
+
+    @Test
+    public void testSuperBlockRetrieval() throws Exception
+    {
+        OnDiskSABuilder builder = new OnDiskSABuilder(LongType.instance, OnDiskSABuilder.Mode.SPARSE);
+        for (long i = 0; i < 100000; i++)
+            builder.add(LongType.instance.decompose(i), keyBuilder((long) i));
+
+        File index = File.createTempFile("on-disk-sa-multi-superblock-match", ".db");
+        index.deleteOnExit();
+
+        builder.finish(Pair.create(keyAt(0), keyAt(100000)), index);
+
+        OnDiskSA onDiskSA = new OnDiskSA(index, LongType.instance, new KeyConverter());
+
+        testSearchRangeWithSuperBlocks(onDiskSA, 0, 500);
+        testSearchRangeWithSuperBlocks(onDiskSA, 300, 93456);
+        testSearchRangeWithSuperBlocks(onDiskSA, 210, 1700);
+        testSearchRangeWithSuperBlocks(onDiskSA, 530, 3200);
+
+        Random random = new Random(0xdeadbeef);
+        for (int i = 0; i < 100000; i += random.nextInt(1500)) // random steps with max of 1500 elements
+        {
+            for (int j = 0; j < 3; j++)
+                testSearchRangeWithSuperBlocks(onDiskSA, i, ThreadLocalRandom.current().nextInt(i, 100000));
+        }
+    }
+
+    private void testSearchRangeWithSuperBlocks(OnDiskSA onDiskSA, long start, long end)
+    {
+        SkippableIterator<Long, TokenTree.Token> tokens = onDiskSA.search(LongType.instance.decompose(start), true,
+                                                                          LongType.instance.decompose(end), false);
+
+        int keyCount = 0;
+        Long lastToken = null;
+        while (tokens.hasNext())
+        {
+            TokenTree.Token token = tokens.next();
+            Iterator<DecoratedKey> keys = token.iterator();
+
+            // each of the values should have exactly a single key
+            Assert.assertTrue(keys.hasNext());
+            keys.next();
+            Assert.assertFalse(keys.hasNext());
+
+            // and it's last should always smaller than current
+            if (lastToken != null)
+                Assert.assertTrue("last should be less than current", lastToken.compareTo(token.get()) < 0);
+
+            lastToken = token.get();
+            keyCount++;
+        }
+
+        Assert.assertEquals(end - start, keyCount);
     }
 
     private static DecoratedKey keyAt(long key)

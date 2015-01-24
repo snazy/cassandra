@@ -2,7 +2,10 @@ package org.apache.cassandra.db.index.search;
 
 import java.nio.ByteBuffer;
 
+import org.apache.cassandra.db.index.search.container.TokenTree;
 import org.apache.cassandra.db.marshal.AbstractType;
+
+import static org.apache.cassandra.db.index.search.OnDiskSABuilder.BLOCK_SIZE;
 
 public abstract class OnDiskBlock<T extends Suffix>
 {
@@ -10,10 +13,22 @@ public abstract class OnDiskBlock<T extends Suffix>
     protected final ByteBuffer blockIndex;
     protected final int blockIndexSize;
 
-    public OnDiskBlock(ByteBuffer blockIndex)
+    protected final boolean hasCombinedIndex;
+    protected final TokenTree combinedIndex;
+
+    public OnDiskBlock(ByteBuffer block)
     {
-        this.blockIndex = blockIndex;
-        this.blockIndexSize = blockIndex.getInt() * 2;
+        blockIndex = block;
+
+        int blockOffset = block.position();
+        int combinedIndexOffset = block.getInt(blockOffset + BLOCK_SIZE);
+
+        hasCombinedIndex = (combinedIndexOffset >= 0);
+        int blockIndexOffset = blockOffset + BLOCK_SIZE + 4 + combinedIndexOffset;
+
+        combinedIndex = hasCombinedIndex ? new TokenTree((ByteBuffer) blockIndex.duplicate().position(blockIndexOffset)) : null;
+
+        blockIndexSize = block.getInt() * 2;
     }
 
     public SearchResult<T> search(AbstractType<?> comparator, ByteBuffer query)
@@ -27,11 +42,9 @@ public abstract class OnDiskBlock<T extends Suffix>
             element = getElement(middle);
 
             cmp = element.compareTo(comparator, query);
-            if (cmp == 0) {
+            if (cmp == 0)
                 return new SearchResult<>(element, cmp, middle);
-            }
-
-            if (cmp < 0)
+            else if (cmp < 0)
                 start = middle + 1;
             else
                 end = middle - 1;
@@ -69,6 +82,11 @@ public abstract class OnDiskBlock<T extends Suffix>
         idx *= 2;
         assert idx < indexSize;
         return data.position() + indexSize + data.getShort(data.position() + idx);
+    }
+
+    public TokenTree getBlockIndex()
+    {
+        return combinedIndex;
     }
 
     public static class SearchResult<T>

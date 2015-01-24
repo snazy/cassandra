@@ -26,6 +26,7 @@ import java.util.*;
 import org.apache.cassandra.db.index.PerRowSecondaryIndexTest;
 import org.apache.cassandra.db.index.SecondaryIndex;
 import org.apache.cassandra.db.index.SuffixArraySecondaryIndex;
+import org.apache.cassandra.db.index.search.OnDiskSABuilder;
 import org.junit.AfterClass;
 import org.junit.BeforeClass;
 import org.slf4j.Logger;
@@ -389,7 +390,11 @@ public class SchemaLoader
                         put(cName, new ColumnDefinition(cName,
                                 UTF8Type.instance,
                                 IndexType.CUSTOM,
-                                indexOptions,
+                                new HashMap<String, String>()
+                                {{
+                                    put(SecondaryIndex.CUSTOM_INDEX_OPTION_NAME, SuffixArraySecondaryIndex.class.getName());
+                                    put("mode", OnDiskSABuilder.Mode.SUFFIX.toString());
+                                }},
                                 UTF8Type.instance.compose(cName),
                                 null, ColumnDefinition.Type.REGULAR));
 
@@ -397,7 +402,23 @@ public class SchemaLoader
                         put(cName, new ColumnDefinition(cName,
                                 Int32Type.instance,
                                 IndexType.CUSTOM,
-                                indexOptions,
+                                new HashMap<String, String>()
+                                {{
+                                    put(SecondaryIndex.CUSTOM_INDEX_OPTION_NAME, SuffixArraySecondaryIndex.class.getName());
+                                    put("mode", OnDiskSABuilder.Mode.ORIGINAL.toString());
+                                }},
+                                UTF8Type.instance.compose(cName),
+                                null, ColumnDefinition.Type.REGULAR));
+
+                        cName = UTF8Type.instance.decompose("timestamp");
+                        put(cName, new ColumnDefinition(cName,
+                                LongType.instance,
+                                IndexType.CUSTOM,
+                                new HashMap<String, String>()
+                                {{
+                                    put(SecondaryIndex.CUSTOM_INDEX_OPTION_NAME, SuffixArraySecondaryIndex.class.getName());
+                                    put("mode", OnDiskSABuilder.Mode.SPARSE.toString());
+                                }},
                                 UTF8Type.instance.compose(cName),
                                 null, ColumnDefinition.Type.REGULAR));
                 }});
