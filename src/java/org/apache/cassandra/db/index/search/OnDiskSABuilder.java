@@ -54,7 +54,7 @@ public class OnDiskSABuilder
         this.sa = new SA(comparator, mode);
     }
 
-    public OnDiskSABuilder add(ByteBuffer term, NavigableMap<Long, LongSet> keys)
+    public OnDiskSABuilder add(ByteBuffer term, TokenTreeBuilder keys)
     {
         sa.add(term, keys);
         return this;
@@ -221,7 +221,7 @@ public class OnDiskSABuilder
             this.mode = mode;
         }
 
-        public void add(ByteBuffer term, NavigableMap<Long, LongSet> keys)
+        public void add(ByteBuffer term, TokenTreeBuilder keys)
         {
             terms.add(new Term(charCount, term, keys));
             charCount += term.remaining();
@@ -280,7 +280,7 @@ public class OnDiskSABuilder
                     return endOfData();
 
                 Term term = termIterator.next();
-                return Pair.create(term.value, new TokenTreeBuilder(term.keys).finish());
+                return Pair.create(term.value, term.keys.finish());
             }
         }
 
@@ -323,7 +323,7 @@ public class OnDiskSABuilder
                 });
             }
 
-            private Pair<ByteBuffer, NavigableMap<Long, LongSet>> suffixAt(int position)
+            private Pair<ByteBuffer, TokenTreeBuilder> suffixAt(int position)
             {
                 long index = suffixes[position];
                 Term term = terms.get((int) (index >>> 32));
@@ -358,24 +358,24 @@ public class OnDiskSABuilder
                         return result;
                     }
 
-                    Pair<ByteBuffer, NavigableMap<Long, LongSet>> suffix = suffixAt(current++);
+                    Pair<ByteBuffer, TokenTreeBuilder> suffix = suffixAt(current++);
 
                     if (lastProcessedSuffix == null)
                     {
                         lastProcessedSuffix = suffix.left;
-                        container = new TokenTreeBuilder(suffix.right);
+                        container = new TokenTreeBuilder(suffix.right.getTokens());
                     }
                     else if (comparator.compare(lastProcessedSuffix, suffix.left) == 0)
                     {
                         lastProcessedSuffix = suffix.left;
-                        container.add(suffix.right);
+                        container.add(suffix.right.getTokens());
                     }
                     else
                     {
                         Pair<ByteBuffer, TokenTreeBuilder> result = finishSuffix();
 
                         lastProcessedSuffix = suffix.left;
-                        container = new TokenTreeBuilder(suffix.right);
+                        container = new TokenTreeBuilder(suffix.right.getTokens());
 
                         return result;
                     }

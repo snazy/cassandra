@@ -8,9 +8,6 @@ import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
-import com.carrotsearch.hppc.LongOpenHashSet;
-import com.carrotsearch.hppc.LongSet;
-import com.google.common.base.Function;
 import org.apache.cassandra.concurrent.JMXEnabledThreadPoolExecutor;
 import org.apache.cassandra.concurrent.NamedThreadFactory;
 import org.apache.cassandra.config.ColumnDefinition;
@@ -18,6 +15,7 @@ import org.apache.cassandra.db.*;
 import org.apache.cassandra.db.filter.ExtendedFilter;
 import org.apache.cassandra.db.index.search.OnDiskSA;
 import org.apache.cassandra.db.index.search.OnDiskSABuilder;
+import org.apache.cassandra.db.index.search.container.TokenTreeBuilder;
 import org.apache.cassandra.db.index.search.tokenization.AbstractTokenizer;
 import org.apache.cassandra.db.index.search.tokenization.NoOpTokenizer;
 import org.apache.cassandra.db.index.search.tokenization.StandardTokenizer;
@@ -39,6 +37,7 @@ import org.apache.cassandra.thrift.IndexExpression;
 import org.apache.cassandra.thrift.IndexOperator;
 import org.apache.cassandra.utils.*;
 
+import com.google.common.base.Function;
 import com.google.common.base.Predicate;
 import com.google.common.collect.*;
 import com.google.common.util.concurrent.Futures;
@@ -386,7 +385,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
             private final ColumnDefinition column;
             private final String outputFile;
             private final AbstractTokenizer tokenizer;
-            private final Map<ByteBuffer, NavigableMap<Long, LongSet>> keysPerTerm;
+            private final Map<ByteBuffer, TokenTreeBuilder> keysPerTerm;
 
             // key range of the per-column index
             private DecoratedKey min, max;
@@ -411,15 +410,11 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
                 while (tokenizer.hasNext())
                 {
                     ByteBuffer token = tokenizer.next();
-                    NavigableMap<Long, LongSet> keys = keysPerTerm.get(token);
+                    TokenTreeBuilder keys = keysPerTerm.get(token);
                     if (keys == null)
-                        keysPerTerm.put(token, (keys = new TreeMap<>()));
+                        keysPerTerm.put(token, (keys = new TokenTreeBuilder()));
 
-                    LongSet offsets = keys.get(keyToken);
-                    if (offsets == null)
-                        keys.put(keyToken, (offsets = new LongOpenHashSet()));
-
-                    offsets.add(keyPosition);
+                    keys.add(Pair.create(keyToken, keyPosition));
                 }
 
                 /* calculate key range (based on actual key values) for current index */
@@ -432,7 +427,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
             {
                 OnDiskSABuilder builder = new OnDiskSABuilder(column.getValidator(), indexingModes.get(column.name));
 
-                for (Map.Entry<ByteBuffer, NavigableMap<Long, LongSet>> e : keysPerTerm.entrySet())
+                for (Map.Entry<ByteBuffer, TokenTreeBuilder> e : keysPerTerm.entrySet())
                     builder.add(e.getKey(), e.getValue());
 
                 // since everything added to the builder, it's time to drop references to the data

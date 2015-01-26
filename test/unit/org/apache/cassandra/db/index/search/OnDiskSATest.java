@@ -7,6 +7,7 @@ import java.util.concurrent.ThreadLocalRandom;
 
 import org.apache.cassandra.db.DecoratedKey;
 import org.apache.cassandra.db.index.search.container.TokenTree;
+import org.apache.cassandra.db.index.search.container.TokenTreeBuilder;
 import org.apache.cassandra.db.index.utils.SkippableIterator;
 import org.apache.cassandra.db.marshal.Int32Type;
 import org.apache.cassandra.db.marshal.LongType;
@@ -15,7 +16,6 @@ import org.apache.cassandra.service.StorageService;
 import org.apache.cassandra.utils.MurmurHash;
 import org.apache.cassandra.utils.Pair;
 
-import com.carrotsearch.hppc.LongOpenHashSet;
 import com.carrotsearch.hppc.LongSet;
 import com.carrotsearch.hppc.cursors.LongCursor;
 import com.google.common.base.Function;
@@ -30,7 +30,7 @@ public class OnDiskSATest
     @Test
     public void testStringSAConstruction() throws Exception
     {
-        Map<ByteBuffer, NavigableMap<Long, LongSet>> data = new HashMap<ByteBuffer, NavigableMap<Long, LongSet>>()
+        Map<ByteBuffer, TokenTreeBuilder> data = new HashMap<ByteBuffer, TokenTreeBuilder>()
         {{
                 put(UTF8Type.instance.decompose("scat"), keyBuilder(1L));
                 put(UTF8Type.instance.decompose("mat"),  keyBuilder(2L));
@@ -44,7 +44,7 @@ public class OnDiskSATest
         }};
 
         OnDiskSABuilder builder = new OnDiskSABuilder(UTF8Type.instance, OnDiskSABuilder.Mode.SUFFIX);
-        for (Map.Entry<ByteBuffer, NavigableMap<Long, LongSet>> e : data.entrySet())
+        for (Map.Entry<ByteBuffer, TokenTreeBuilder> e : data.entrySet())
             builder.add(e.getKey(), e.getValue());
 
         File index = File.createTempFile("on-disk-sa-string", "db");
@@ -55,7 +55,7 @@ public class OnDiskSATest
         OnDiskSA onDisk = new OnDiskSA(index, UTF8Type.instance, new KeyConverter());
 
         // first check if we can find exact matches
-        for (Map.Entry<ByteBuffer, NavigableMap<Long, LongSet>> e : data.entrySet())
+        for (Map.Entry<ByteBuffer, TokenTreeBuilder> e : data.entrySet())
         {
             if (UTF8Type.instance.getString(e.getKey()).equals("cat"))
                 continue; // cat is embedded into scat, we'll test it in next section
@@ -85,7 +85,7 @@ public class OnDiskSATest
     @Test
     public void testIntegerSAConstruction() throws Exception
     {
-        final Map<ByteBuffer, NavigableMap<Long, LongSet>> data = new HashMap<ByteBuffer, NavigableMap<Long, LongSet>>()
+        final Map<ByteBuffer, TokenTreeBuilder> data = new HashMap<ByteBuffer, TokenTreeBuilder>()
         {{
                 put(Int32Type.instance.decompose(5),  keyBuilder(1L));
                 put(Int32Type.instance.decompose(7),  keyBuilder(2L));
@@ -99,7 +99,7 @@ public class OnDiskSATest
         }};
 
         OnDiskSABuilder builder = new OnDiskSABuilder(Int32Type.instance, OnDiskSABuilder.Mode.ORIGINAL);
-        for (Map.Entry<ByteBuffer, NavigableMap<Long, LongSet>> e : data.entrySet())
+        for (Map.Entry<ByteBuffer, TokenTreeBuilder> e : data.entrySet())
             builder.add(e.getKey(), e.getValue());
 
         File index = File.createTempFile("on-disk-sa-int", "db");
@@ -109,7 +109,7 @@ public class OnDiskSATest
 
         OnDiskSA onDisk = new OnDiskSA(index, Int32Type.instance, new KeyConverter());
 
-        for (Map.Entry<ByteBuffer, NavigableMap<Long, LongSet>> e : data.entrySet())
+        for (Map.Entry<ByteBuffer, TokenTreeBuilder> e : data.entrySet())
         {
             Assert.assertEquals(convert(e.getValue()), convert(onDisk.search(e.getKey())));
         }
@@ -328,7 +328,7 @@ public class OnDiskSATest
     @Test
     public void testSuperBlocks() throws Exception
     {
-        Map<ByteBuffer, NavigableMap<Long, LongSet>> terms = new HashMap<>();
+        Map<ByteBuffer, TokenTreeBuilder> terms = new HashMap<>();
         terms.put(UTF8Type.instance.decompose("1234"), keyBuilder(1L, 2L));
         terms.put(UTF8Type.instance.decompose("2345"), keyBuilder(3L, 4L));
         terms.put(UTF8Type.instance.decompose("3456"), keyBuilder(5L, 6L));
@@ -336,7 +336,7 @@ public class OnDiskSATest
         terms.put(UTF8Type.instance.decompose("5678"), keyBuilder(9L, 10L));
 
         OnDiskSABuilder builder = new OnDiskSABuilder(Int32Type.instance, OnDiskSABuilder.Mode.SPARSE);
-        for (Map.Entry<ByteBuffer, NavigableMap<Long, LongSet>> entry : terms.entrySet())
+        for (Map.Entry<ByteBuffer, TokenTreeBuilder> entry : terms.entrySet())
             builder.add(entry.getKey(), entry.getValue());
 
         File index = File.createTempFile("on-disk-sa-try-superblocks", ".db");
@@ -420,24 +420,28 @@ public class OnDiskSATest
         return StorageService.getPartitioner().decorateKey(ByteBuffer.wrap(("key" + key).getBytes()));
     }
 
-    private static NavigableMap<Long, LongSet> keyBuilder(Long... keys)
+    private static TokenTreeBuilder keyBuilder(Long... keys)
     {
-        NavigableMap<Long, LongSet> builder = new TreeMap<>();
+        TokenTreeBuilder builder = new TokenTreeBuilder();
 
         for (final Long key : keys)
         {
             DecoratedKey dk = keyAt(key);
-            builder.put(MurmurHash.hash2_64(dk.key, dk.key.position(), dk.key.remaining(), 0), new LongOpenHashSet() {{ add(key); }});
+            builder.add(Pair.create(MurmurHash.hash2_64(dk.key, dk.key.position(), dk.key.remaining(), 0), key));
         }
 
-        return builder;
+        return builder.finish();
     }
 
-    private static Set<DecoratedKey> convert(NavigableMap<Long, LongSet> offsets)
+    private static Set<DecoratedKey> convert(TokenTreeBuilder offsets)
     {
         Set<DecoratedKey> result = new HashSet<>();
-        for (LongSet v : offsets.values())
+
+        Iterator<Pair<Long, LongSet>> offsetIter = offsets.iterator();
+        while (offsetIter.hasNext())
         {
+            LongSet v = offsetIter.next().right;
+
             for (LongCursor offset : v)
                 result.add(keyAt(offset.value));
         }

@@ -51,13 +51,22 @@ public class TokenTreeBuilder
         add(data);
     }
 
+    public void add(Pair<Long, Long> key)
+    {
+        LongSet found = tokens.get(key.left);
+        if (found == null)
+            tokens.put(key.left, (found = new LongOpenHashSet(4)));
+
+        found.add(key.right);
+    }
+
     public void add(SortedMap<Long, LongSet> data)
     {
         for (Map.Entry<Long, LongSet> newEntry : data.entrySet())
         {
             LongSet found = tokens.get(newEntry.getKey());
             if (found == null)
-                tokens.put(newEntry.getKey(), (found = new LongOpenHashSet()));
+                tokens.put(newEntry.getKey(), (found = new LongOpenHashSet(4)));
 
             for (LongCursor offset : newEntry.getValue())
                 found.add(offset.value);

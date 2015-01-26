@@ -4,14 +4,15 @@ import java.nio.ByteBuffer;
 import java.util.NavigableMap;
 
 import com.carrotsearch.hppc.LongSet;
+import org.apache.cassandra.db.index.search.container.TokenTreeBuilder;
 
 public class Term
 {
     public final int position;
     public final ByteBuffer value;
-    public final NavigableMap<Long, LongSet> keys;
+    public final TokenTreeBuilder keys;
 
-    public Term(int position, ByteBuffer value, NavigableMap<Long, LongSet> keys)
+    public Term(int position, ByteBuffer value, TokenTreeBuilder keys)
     {
         this.position = position;
         this.value = value;
