@@ -24,9 +24,8 @@ import org.apache.cassandra.db.index.utils.SkippableIterator;
 import org.apache.cassandra.db.marshal.AbstractType;
 import org.apache.cassandra.db.marshal.AsciiType;
 import org.apache.cassandra.db.marshal.UTF8Type;
-import org.apache.cassandra.dht.AbstractBounds;
-import org.apache.cassandra.dht.LongToken;
-import org.apache.cassandra.dht.Murmur3Partitioner;
+import org.apache.cassandra.dht.*;
+import org.apache.cassandra.dht.Range;
 import org.apache.cassandra.exceptions.ConfigurationException;
 import org.apache.cassandra.io.FSReadError;
 import org.apache.cassandra.io.sstable.*;
@@ -498,66 +497,108 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
             if (primaryIndexes == null || primaryIndexes.size() == 0)
                 return Collections.emptyList();
 
+            /*
+               Once we've figured out what primary index SSTables are,
+               next thing we need to do is to bucket them based on overlapping key ranges,
+               so instead of searching whole set of indexes we can do it per bucket of
+               overlapping primary files which saves a lot of skipTo moves when multiple
+               indexes are merged together.
+
+               Also note that the final step in this process is sorting buckets
+               based on the "first key" of the backing SSTable which effectively puts them
+               into token sorted order because results have to be returned in that order.
+             */
+
+            // sort SSTables based on actual key order
+            Collections.sort(primaryIndexes, new Comparator<SSTableIndex>()
+            {
+                @Override
+                public int compare(SSTableIndex a, SSTableIndex b)
+                {
+                    return keyComparator.compare(a.sstable.first.key, b.sstable.first.key);
+                }
+            });
+
+            List<IndexBucket> primaryBuckets = new ArrayList<>();
+
+            SSTableIndex lastIndex = null;
+            IndexBucket currentBucket = new IndexBucket();
+
+            for (final SSTableIndex index : primaryIndexes)
+            {
+                DecoratedKey min = index.sstable.first;
+                DecoratedKey max = index.sstable.last;
+
+                if (!requestedRange.left.isMinimum() && !requestedRange.right.isMinimum())
+                {
+                    Range<RowPosition> indexRange = new Range<RowPosition>(min, max);
+
+                    // no intersection with primary range, avoid even considering current index
+                    if (!requestedRange.intersects(Collections.singleton(indexRange)))
+                        continue;
+                }
+
+                if (lastIndex != null && currentBucket.compareTo(min) < 0)
+                {
+                    primaryBuckets.add(currentBucket);
+                    currentBucket = new IndexBucket() {{ add(index); }};
+                }
+                else
+                {
+                    currentBucket.add(index);
+                }
+
+                lastIndex = index;
+            }
+
+            primaryBuckets.add(currentBucket);
+
+            // sort buckets based on the token because
+            // we need to return data in the token sorted order
+            Collections.sort(primaryBuckets);
+
             expressions.remove(primaryExpression);
 
-            logger.info("Primary: Field: " + baseCfs.getComparator().getString(primaryExpression.left) + ", SSTables: " + primaryIndexes);
-            Map<ByteBuffer, Set<SSTableIndex>> narrowedCandidates = new HashMap<>(expressionsImmutable.size());
-
-            // add primary expression first
-            narrowedCandidates.put(primaryExpression.left, new HashSet<>(primaryIndexes));
-
-            for (Pair<ByteBuffer, Expression> e : expressions)
+            intersection:
+            for (IndexBucket bucket : primaryBuckets)
             {
-                final AbstractType<?> validator = baseCfs.metadata.getColumnDefinitionFromColumnName(e.left).getValidator();
-                if (validator.compare(primaryExpression.left, e.left) == 0)
+                List<SkippableIterator<Long, Token>> unions = new ArrayList<>();
+
+                unions.add(new SuffixIterator(primaryExpression.right, bucket.bucket));
+
+                for (SSTableIndex primaryIndex : bucket)
                 {
-                    narrowedCandidates.put(e.left, new HashSet<>(primaryIndexes));
-                    continue;
-                }
-
-                Set<SSTableIndex> readers = new HashSet<>();
-                SAView view = intervalTrees.get(e.left).view.get();
-                for (SSTableIndex index : primaryIndexes)
-                    readers.addAll(view.match(index.minKey(), index.maxKey()));
-
-                // might not want to fail the entire search if we fail to acquire references - maybe retry (but will need updated SADataTracker) ??
-                if (readers.isEmpty())
-                    return Collections.emptyList();
-
-                narrowedCandidates.put(e.left, readers);
-            }
-
-            SkippableIterator<Long, Token> joiner = null;
-            try
-            {
-                List<SkippableIterator<Long, Token>> suffixes = new ArrayList<>(expressionsImmutable.size());
-                for (Pair<ByteBuffer, Expression> expression : expressionsImmutable)
-                {
-                    ByteBuffer name = expression.left;
-                    suffixes.add(new SuffixIterator(expression.right, narrowedCandidates.get(name)));
-                }
-
-                joiner = new LazyMergeSortIterator<>(OperationType.AND, suffixes);
-
-                joiner.skipTo(((LongToken) requestedRange.left.getToken()).token);
-
-                intersection:
-                while (joiner.hasNext())
-                {
-                    for (DecoratedKey key : joiner.next())
+                    for (Pair<ByteBuffer, Expression> expression : expressions)
                     {
-                        if (!requestedRange.contains(key) || rows.size() >= maxRows)
-                            break intersection;
-
-                        Row row = getRow(key, filter, expressionsImmutable);
-                        if (row != null)
-                            rows.add(row);
+                        SAView view = intervalTrees.get(expression.left).view.get();
+                        unions.add(new SuffixIterator(expression.right, view.match(primaryIndex.minKey(), primaryIndex.maxKey())));
                     }
                 }
-            }
-            finally
-            {
-                FileUtils.closeQuietly(joiner);
+
+                SkippableIterator<Long, Token> joiner = null;
+                try
+                {
+                    joiner = new LazyMergeSortIterator<>(OperationType.AND, unions);
+
+                    joiner.skipTo(((LongToken) requestedRange.left.getToken()).token);
+
+                    while (joiner.hasNext())
+                    {
+                        for (DecoratedKey key : joiner.next())
+                        {
+                            if (!requestedRange.contains(key) || rows.size() >= maxRows)
+                                break intersection;
+
+                            Row row = getRow(key, filter, expressionsImmutable);
+                            if (row != null)
+                                rows.add(row);
+                        }
+                    }
+                }
+                finally
+                {
+                    FileUtils.closeQuietly(joiner);
+                }
             }
 
             return rows;
@@ -756,7 +797,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
         private final SkippableIterator<Long, Token> union;
         private final List<SSTableIndex> referencedIndexes = new ArrayList<>();
 
-        public SuffixIterator(Expression expression, final Set<SSTableIndex> perSSTableIndexes)
+        public SuffixIterator(Expression expression, final List<SSTableIndex> perSSTableIndexes)
         {
             List<SkippableIterator<Long, Token>> keys = new ArrayList<>(perSSTableIndexes.size());
 
@@ -1114,6 +1155,45 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
         public String toString()
         {
             return String.format("SSTableIndex(column: %s, SSTable: %s)", baseCfs.getComparator().getString(column), sstable.descriptor);
+        }
+    }
+
+    private class IndexBucket implements Comparable<IndexBucket>, Iterable<SSTableIndex>
+    {
+        private final List<SSTableIndex> bucket;
+        private DecoratedKey minKey, maxKey;
+
+        public IndexBucket()
+        {
+            bucket = new ArrayList<>(1);
+        }
+
+        public void add(SSTableIndex index)
+        {
+            bucket.add(index);
+
+            DecoratedKey firstKey = index.sstable.first;
+            DecoratedKey lastKey  = index.sstable.last;
+
+            minKey = minKey == null || keyComparator.compare(minKey.key, firstKey.key) > 0 ? firstKey : minKey;
+            maxKey = maxKey == null || keyComparator.compare(maxKey.key, lastKey.key) < 0 ? lastKey : maxKey;
+        }
+
+        @Override
+        public int compareTo(IndexBucket bucket)
+        {
+            return minKey.compareTo(bucket.minKey);
+        }
+
+        public int compareTo(DecoratedKey key)
+        {
+            return keyComparator.compare(maxKey.key, key.key);
+        }
+
+        @Override
+        public Iterator<SSTableIndex> iterator()
+        {
+            return bucket.iterator();
         }
     }
 }
