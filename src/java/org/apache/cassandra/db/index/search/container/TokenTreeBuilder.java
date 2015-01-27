@@ -5,7 +5,6 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.*;
 
-import com.carrotsearch.hppc.LongOpenHashSet;
 import org.apache.cassandra.utils.ByteBufferUtil;
 import org.apache.cassandra.utils.FBUtilities;
 import org.apache.cassandra.utils.Pair;
@@ -13,6 +12,7 @@ import org.apache.cassandra.utils.Pair;
 import com.carrotsearch.hppc.LongArrayList;
 import com.carrotsearch.hppc.LongSet;
 import com.carrotsearch.hppc.cursors.LongCursor;
+import com.carrotsearch.hppc.LongOpenHashSet;
 import com.google.common.collect.AbstractIterator;
 
 public class TokenTreeBuilder
@@ -27,11 +27,12 @@ public class TokenTreeBuilder
     public static final int BLOCK_HEADER_BYTES = 64;
     public static final int OVERFLOW_TRAILER_BYTES = 64;
     public static final int OVERFLOW_TRAILER_CAPACITY = OVERFLOW_TRAILER_BYTES / 8;
-    public static final int TOKENS_PER_BLOCK = 248; // TODO (jwest): calculate using other constants
+    public static final int TOKENS_PER_BLOCK = (BLOCK_BYTES - BLOCK_HEADER_BYTES - OVERFLOW_TRAILER_BYTES) / 16;
     public static final long MAX_OFFSET = (1L << 47) - 1; // 48 bits for (signed) offset
+    public static final byte LAST_LEAF_SHIFT = 1;
+    public static final byte SHARED_HEADER_BYTES = 19;
+    public static final byte ENTRY_TYPE_MASK = 0x03;
 
-    // TODO (jwest): merge iterator would be better here but bc duplicate keys just use SortedMap.putAll? how can we coalesce duplicates?
-    // TODO (jwest): use a comparator for DK
     private final SortedMap<Long, LongSet> tokens = new TreeMap<>();
     private int numBlocks;
 
@@ -300,7 +301,6 @@ public class TokenTreeBuilder
             }
         }
 
-        // TODO (jwest): add collision information
         private class LeafHeader extends Header
         {
             // bit 0 set as leaf indicator
@@ -308,7 +308,7 @@ public class TokenTreeBuilder
             protected byte infoByte()
             {
                 byte infoByte = 1;
-                infoByte |= (isLastLeaf()) ? (1 << 1) : 0; // TODO (jwest): dont hardcode indicator pos
+                infoByte |= (isLastLeaf()) ? (1 << LAST_LEAF_SHIFT) : 0;
 
                 return infoByte;
             }
@@ -321,7 +321,6 @@ public class TokenTreeBuilder
         private final SortedMap<Long, LongSet> tokens;
         private LongArrayList overflowCollisions;
 
-        // TODO (jwest): enforce toks length <= TOKENS_PER_BLOCK;
         Leaf(SortedMap<Long, LongSet> data)
         {
             tokenRange.setRange(data.firstKey(), data.lastKey());

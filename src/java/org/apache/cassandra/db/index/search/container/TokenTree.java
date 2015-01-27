@@ -4,14 +4,14 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.*;
 
-import com.google.common.base.Function;
-import com.google.common.collect.AbstractIterator;
 import org.apache.cassandra.db.DecoratedKey;
 import org.apache.cassandra.db.index.utils.CombinedValue;
 import org.apache.cassandra.db.index.utils.SkippableIterator;
 import org.apache.cassandra.utils.Pair;
 
 import com.google.common.primitives.Longs;
+import com.google.common.base.Function;
+import com.google.common.collect.AbstractIterator;
 import org.apache.commons.lang3.builder.HashCodeBuilder;
 
 // Note: all of the seek-able offsets contained in TokenTree should be sizeof(long)
@@ -34,7 +34,7 @@ public class TokenTree
         file = tokenTree;
         startPos = file.position();
 
-        file.position(startPos + 19); // TODO (jwest): don't hardcode block shared header size
+        file.position(startPos + TokenTreeBuilder.SHARED_HEADER_BYTES);
         tokenCount = file.getLong();
 
         long minToken = file.getLong();
@@ -63,23 +63,6 @@ public class TokenTree
         else
             return null;
     }
-
-    /*
-    public long getTokenCount()
-    {
-        return tokenCount;
-    }
-
-    public Long minToken()
-    {
-        return tokenRange.minToken;
-    }
-
-    public Long maxToken()
-    {
-        return tokenRange.maxToken;
-    }
-    */
 
     // finds leaf that *could* contain token
     private void seekToLeaf(long token, ByteBuffer file)
@@ -274,8 +257,7 @@ public class TokenTree
             currentLeafStart = file.position();
             currentTokenIndex = 0;
 
-            // TODO (jwest): don't hardcode last leaf indicator pos
-            lastLeaf = (file.get() & (1 << 1)) > 0;
+            lastLeaf = (file.get() & (1 << TokenTreeBuilder.LAST_LEAF_SHIFT)) > 0;
             leafSize = file.getShort();
 
             leafRange = new TokenRange();
@@ -372,7 +354,7 @@ public class TokenTree
 
         private static long[] reconstructOffset(short info, short offsetShort, int offsetInt, ByteBuffer file, short leafSize)
         {
-            int type = (info & 3);
+            int type = (info & TokenTreeBuilder.ENTRY_TYPE_MASK);
             if (type == TokenTreeBuilder.EntryType.OVERFLOW.ordinal())
             {
                 long[] offsets = new long[offsetShort]; // offsetShort contains count of tokens
