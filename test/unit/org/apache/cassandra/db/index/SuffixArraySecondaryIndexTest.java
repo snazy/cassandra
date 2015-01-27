@@ -58,7 +58,7 @@ public class SuffixArraySecondaryIndexTest extends SchemaLoader
         Assert.assertEquals(rows.toString(), 0, rows.size());
 
         rows = getIndexed(store, 10, new IndexExpression(age, IndexOperator.EQ, Int32Type.instance.decompose(27)));
-        Assert.assertTrue(rows.toString(), Arrays.equals(new String[] { "key3", "key4" }, rows.toArray(new String[rows.size()])));
+        Assert.assertTrue(rows.toString(), Arrays.equals(new String[]{"key3", "key4"}, rows.toArray(new String[rows.size()])));
 
         rows = getIndexed(store, 10, new IndexExpression(age, IndexOperator.EQ, Int32Type.instance.decompose(26)));
         Assert.assertTrue(rows.toString(), Arrays.equals(new String[] { "key2" }, rows.toArray(new String[rows.size()])));
@@ -91,7 +91,7 @@ public class SuffixArraySecondaryIndexTest extends SchemaLoader
         rows = getIndexed(store, 10,
                           new IndexExpression(firstName, IndexOperator.EQ, UTF8Type.instance.decompose("a")),
                           new IndexExpression(age, IndexOperator.LT, Int32Type.instance.decompose(27)));
-        Assert.assertTrue(rows.toString(), Arrays.equals(new String[] { "key1", "key2" }, rows.toArray(new String[rows.size()])));
+        Assert.assertTrue(rows.toString(), Arrays.equals(new String[]{"key1", "key2"}, rows.toArray(new String[rows.size()])));
 
         rows = getIndexed(store, 10,
                          new IndexExpression(firstName, IndexOperator.EQ, UTF8Type.instance.decompose("a")),
@@ -99,6 +99,36 @@ public class SuffixArraySecondaryIndexTest extends SchemaLoader
                          new IndexExpression(age, IndexOperator.LT, Int32Type.instance.decompose(27)));
         Assert.assertTrue(rows.toString(), Arrays.equals(new String[] { "key2" }, rows.toArray(new String[rows.size()])));
 
+        rows = getIndexed(store, 10,
+                         new IndexExpression(firstName, IndexOperator.EQ, UTF8Type.instance.decompose("a")),
+                         new IndexExpression(age, IndexOperator.GT, Int32Type.instance.decompose(12)));
+        Assert.assertTrue(rows.toString(), Arrays.equals(new String[] { "key1", "key2", "key3", "key4" }, rows.toArray(new String[rows.size()])));
+
+        rows = getIndexed(store, 10,
+                         new IndexExpression(firstName, IndexOperator.EQ, UTF8Type.instance.decompose("a")),
+                         new IndexExpression(age, IndexOperator.GTE, Int32Type.instance.decompose(13)));
+        Assert.assertTrue(rows.toString(), Arrays.equals(new String[] { "key1", "key2", "key3", "key4" }, rows.toArray(new String[rows.size()])));
+
+        rows = getIndexed(store, 10,
+                         new IndexExpression(firstName, IndexOperator.EQ, UTF8Type.instance.decompose("a")),
+                         new IndexExpression(age, IndexOperator.GTE, Int32Type.instance.decompose(16)));
+        Assert.assertTrue(rows.toString(), Arrays.equals(new String[] { "key2", "key3", "key4" }, rows.toArray(new String[rows.size()])));
+
+
+        rows = getIndexed(store, 10,
+                         new IndexExpression(firstName, IndexOperator.EQ, UTF8Type.instance.decompose("a")),
+                         new IndexExpression(age, IndexOperator.LT, Int32Type.instance.decompose(30)));
+        Assert.assertTrue(rows.toString(), Arrays.equals(new String[] { "key1", "key2", "key3", "key4" }, rows.toArray(new String[rows.size()])));
+
+        rows = getIndexed(store, 10,
+                         new IndexExpression(firstName, IndexOperator.EQ, UTF8Type.instance.decompose("a")),
+                         new IndexExpression(age, IndexOperator.LTE, Int32Type.instance.decompose(29)));
+        Assert.assertTrue(rows.toString(), Arrays.equals(new String[] { "key1", "key2", "key3", "key4" }, rows.toArray(new String[rows.size()])));
+
+        rows = getIndexed(store, 10,
+                         new IndexExpression(firstName, IndexOperator.EQ, UTF8Type.instance.decompose("a")),
+                         new IndexExpression(age, IndexOperator.LTE, Int32Type.instance.decompose(25)));
+        Assert.assertTrue(rows.toString(), Arrays.equals(new String[] { "key1" }, rows.toArray(new String[rows.size()])));
     }
 
     @Test
@@ -176,6 +206,18 @@ public class SuffixArraySecondaryIndexTest extends SchemaLoader
                           new IndexExpression(age, IndexOperator.LT, Int32Type.instance.decompose(32)));
 
         Assert.assertTrue(rows.toString(), Arrays.equals(new String[] { "key14" }, rows.toArray(new String[rows.size()])));
+
+        rows = getIndexed(store, 10,
+                          new IndexExpression(firstName, IndexOperator.EQ, UTF8Type.instance.decompose("a")),
+                          new IndexExpression(age, IndexOperator.GT, Int32Type.instance.decompose(10)));
+
+        Assert.assertEquals(rows.toString(), 10, rows.size());
+
+        rows = getIndexed(store, 10,
+                          new IndexExpression(firstName, IndexOperator.EQ, UTF8Type.instance.decompose("a")),
+                          new IndexExpression(age, IndexOperator.LTE, Int32Type.instance.decompose(50)));
+
+        Assert.assertEquals(rows.toString(), 10, rows.size());
     }
 
     @Test
@@ -280,66 +322,17 @@ public class SuffixArraySecondaryIndexTest extends SchemaLoader
                           new IndexExpression(firstName, IndexOperator.EQ, UTF8Type.instance.decompose("Josephine")));
         Assert.assertTrue(rows.toString(), rows.size() == 0);
 
+        rows = getIndexed(store, 10,
+                          new IndexExpression(firstName, IndexOperator.EQ, UTF8Type.instance.decompose("a")),
+                          new IndexExpression(age, IndexOperator.GT, Int32Type.instance.decompose(10)));
 
-    }
+        Assert.assertEquals(rows.toString(), 6, rows.size());
 
-    /*
-    @Test
-    public void testRangeLookup() throws Exception
-    {
-        KeyContainerBuilder keys1 = new KeyContainerBuilder();
-        KeyContainerBuilder keys2 = new KeyContainerBuilder();
+        rows = getIndexed(store, 10,
+                          new IndexExpression(firstName, IndexOperator.EQ, UTF8Type.instance.decompose("a")),
+                          new IndexExpression(age, IndexOperator.LTE, Int32Type.instance.decompose(50)));
 
-        keys1.add(decoratedKey(ByteBuffer.wrap("key1".getBytes())), 12);
-        keys1.add(decoratedKey(ByteBuffer.wrap("key2".getBytes())), 24);
-        keys1.add(decoratedKey(ByteBuffer.wrap("key3".getBytes())), 82);
-
-        keys2.add(decoratedKey(ByteBuffer.wrap("key1".getBytes())), 9);
-        keys2.add(decoratedKey(ByteBuffer.wrap("key4".getBytes())), 12);
-        keys2.add(decoratedKey(ByteBuffer.wrap("key5".getBytes())), 14);
-        keys2.add(decoratedKey(ByteBuffer.wrap("key7".getBytes())), 17);
-        keys2.add(decoratedKey(ByteBuffer.wrap("key3".getBytes())), 21);
-
-        keys1.finish();
-        keys2.finish();
-
-        File f1 = File.createTempFile("key-container-1", ".db");
-        File f2 = File.createTempFile("key-container-2", ".db");
-
-        SequentialWriter keys1Out = new SequentialWriter(f1, 4096, false);
-        SequentialWriter keys2Out = new SequentialWriter(f2, 4096, false);
-
-        keys1.serialize(keys1Out);
-        keys2.serialize(keys2Out);
-
-        Assert.assertEquals(keys1.serializedSize(), keys1Out.length());
-        Assert.assertEquals(keys2.serializedSize(), keys2Out.length());
-
-        keys1Out.close();
-        keys2Out.close();
-
-        KeyContainer onDisk1 = new KeyContainer(RandomAccessReader.open(f1));
-        KeyContainer onDisk2 = new KeyContainer(RandomAccessReader.open(f2));
-
-        if (!onDisk1.getRange().intersects(onDisk2.getRange()))
-            return;
-
-        for (KeyContainer.Bucket a : onDisk1)
-        {
-            for (KeyContainer.Bucket b : onDisk2)
-            {
-                if (!a.intersects(b))
-                    continue;
-
-                System.out.println("a.offsets => " + a.getPositions() + ", b.offsets => " + b.getPositions());
-            }
-        }
-    }
-    */
-
-    private static DecoratedKey decoratedKey(ByteBuffer key)
-    {
-        return new DecoratedKey(StorageService.getPartitioner().getToken(key.duplicate()), key);
+        Assert.assertEquals(rows.toString(), 6, rows.size());
     }
 
     private static ColumnFamilyStore loadData(Map<String, Pair<String, Integer>> data)

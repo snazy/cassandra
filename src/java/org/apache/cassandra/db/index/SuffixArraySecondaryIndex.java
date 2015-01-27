@@ -487,13 +487,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
 
             for (Pair<ByteBuffer, Expression> e : expressions)
             {
-                Expression expression = e.right;
-                IntervalTree<ByteBuffer, SSTableIndex, Interval<ByteBuffer, SSTableIndex>> intervals = intervalTrees.get(e.left).view.get().termIntervalTree;
-
-                List<SSTableIndex> indexes = (expression.lower == null || expression.upper == null)
-                            ? intervals.search((expression.lower == null ? expression.upper : expression.lower).value)
-                            : intervals.search(Interval.create(expression.lower.value, expression.upper.value, (SSTableIndex) null));
-
+                List<SSTableIndex> indexes = intervalTrees.get(e.left).view.get().match(e.right);
                 if (primaryIndexes == null || primaryIndexes.size() > indexes.size())
                 {
                     primaryIndexes = indexes;
@@ -522,9 +516,9 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
                 }
 
                 Set<SSTableIndex> readers = new HashSet<>();
-                IntervalTree<ByteBuffer, SSTableIndex, Interval<ByteBuffer, SSTableIndex>> it = intervalTrees.get(e.left).view.get().keyIntervalTree;
+                SAView view = intervalTrees.get(e.left).view.get();
                 for (SSTableIndex index : primaryIndexes)
-                   readers.addAll(it.search(Interval.create(index.minKey(), index.maxKey(), (SSTableIndex) null)));
+                    readers.addAll(view.match(index.minKey(), index.maxKey()));
 
                 // might not want to fail the entire search if we fail to acquire references - maybe retry (but will need updated SADataTracker) ??
                 if (readers.isEmpty())
@@ -849,8 +843,11 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
     private class SAView
     {
         private final ByteBuffer col;
-        final IntervalTree<ByteBuffer, SSTableIndex, Interval<ByteBuffer, SSTableIndex>> termIntervalTree;
-        final IntervalTree<ByteBuffer, SSTableIndex, Interval<ByteBuffer, SSTableIndex>> keyIntervalTree;
+        private final AbstractType<?> validator;
+        private ByteBuffer minSuffix, maxSuffix;
+
+        private final IntervalTree<ByteBuffer, SSTableIndex, Interval<ByteBuffer, SSTableIndex>> termIntervalTree;
+        private final IntervalTree<ByteBuffer, SSTableIndex, Interval<ByteBuffer, SSTableIndex>> keyIntervalTree;
 
         public SAView(ByteBuffer col, Set<SSTableReader> sstables)
         {
@@ -860,9 +857,9 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
         private SAView(SAView previous, ByteBuffer col, final Collection<SSTableReader> toRemove, Collection<SSTableReader> toAdd)
         {
             this.col = col;
+            this.validator = baseCfs.metadata.getColumnDefinitionFromColumnName(col).getValidator();
 
             String name = baseCfs.getComparator().getString(col);
-            final AbstractType<?> validator = baseCfs.metadata.getColumnDefinitionFromColumnName(col).getValidator();
 
             Predicate<Interval<ByteBuffer, SSTableIndex>> predicate = new Predicate<Interval<ByteBuffer, SSTableIndex>>()
             {
@@ -880,8 +877,12 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
             {
                 for (Interval<ByteBuffer, SSTableIndex> interval : Iterables.filter(previous.keyIntervalTree, predicate))
                     keyIntervals.add(interval);
+
                 for (Interval<ByteBuffer, SSTableIndex> interval : Iterables.filter(previous.termIntervalTree, predicate))
+                {
                     termIntervals.add(interval);
+                    updateRange(interval.data);
+                }
             }
 
             for (SSTableReader sstable : toAdd)
@@ -914,6 +915,8 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
 
                 termIntervals.add(Interval.create(index.minSuffix(), index.maxSuffix(), index));
                 keyIntervals.add(Interval.create(index.minKey(), index.maxKey(), index));
+
+                updateRange(index);
             }
 
             termIntervalTree = IntervalTree.build(termIntervals, new Comparator<ByteBuffer>()
@@ -933,6 +936,25 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
                     return keyComparator.compare(a, b);
                 }
             });
+        }
+
+        public void updateRange(SSTableIndex index)
+        {
+            minSuffix = minSuffix == null || validator.compare(minSuffix, index.minSuffix()) > 0 ? index.minSuffix() : minSuffix;
+            maxSuffix = maxSuffix == null || validator.compare(maxSuffix, index.maxSuffix()) < 0 ? index.maxSuffix() : maxSuffix;
+        }
+
+        public List<SSTableIndex> match(Expression expression)
+        {
+            ByteBuffer min = expression.lower == null ? minSuffix : expression.lower.value;
+            ByteBuffer max = expression.upper == null ? maxSuffix : expression.upper.value;
+
+            return termIntervalTree.search(Interval.create(min, max, (SSTableIndex) null));
+        }
+
+        public List<SSTableIndex> match(ByteBuffer minKey, ByteBuffer maxKey)
+        {
+            return keyIntervalTree.search(Interval.create(minKey, maxKey, (SSTableIndex) null));
         }
 
         public SAView update(Collection<SSTableReader> toRemove, Collection<SSTableReader> toAdd)
