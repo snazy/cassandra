@@ -221,6 +221,34 @@ public class SuffixArraySecondaryIndexTest extends SchemaLoader
     }
 
     @Test
+    public void testQueriesThatShouldBeTokenized() throws Exception
+    {
+        Map<String, Pair<String, Integer>> part1 = new HashMap<String, Pair<String, Integer>>()
+        {{
+                put("key0", Pair.create("If you can dream it, you can do it.", 43));
+                put("key1", Pair.create("What you get by achieving your goals is not " +
+                        "as important as what you become by achieving your goals.", 33));
+                put("key2", Pair.create("Keep your face always toward the sunshine " +
+                        "- and shadows will fall behind you.", 43));
+                put("key3", Pair.create("We can't help everyone, but everyone can " +
+                        "help someone.", 27));
+            }};
+
+        ColumnFamilyStore store = loadData(part1);
+
+        final ByteBuffer firstName = UTF8Type.instance.decompose("first_name");
+        final ByteBuffer age = UTF8Type.instance.decompose("age");
+
+        Set<String> rows = getIndexed(store, 10,
+                new IndexExpression(firstName, IndexOperator.EQ,
+                        UTF8Type.instance.decompose("What you get by achieving your goals")),
+                new IndexExpression(age, IndexOperator.GT, Int32Type.instance.decompose(32)));
+
+        Assert.assertTrue(rows.toString(), Arrays.equals(new String[] { "key1" },
+                rows.toArray(new String[rows.size()])));
+    }
+
+    @Test
     public void testMultiExpressionQueriesWhereRowSplitBetweenSSTables() throws Exception
     {
         Map<String, Pair<String, Integer>> part1 = new HashMap<String, Pair<String, Integer>>()
