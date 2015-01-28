@@ -478,19 +478,22 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
 
             final int maxRows = Math.min(MAX_ROWS, filter.maxRows());
             List<Row> rows = new ArrayList<>(maxRows);
-            List<Pair<ByteBuffer, Expression>> expressions = analyzeQuery(filter.getClause());
-            List<Pair<ByteBuffer, Expression>> expressionsImmutable = ImmutableList.copyOf(expressions);
+            List<Pair<ByteBuffer, List<Expression>>> expressions = analyzeQuery(filter.getClause());
+            List<Pair<ByteBuffer, List<Expression>>> expressionsImmutable = ImmutableList.copyOf(expressions);
 
             List<SSTableIndex> primaryIndexes = null;
-            Pair<ByteBuffer, Expression> primaryExpression = null;
+            Pair<ByteBuffer, List<Expression>> primaryExpression = null;
 
-            for (Pair<ByteBuffer, Expression> e : expressions)
+            for (Pair<ByteBuffer, List<Expression>> e : expressions)
             {
-                List<SSTableIndex> indexes = intervalTrees.get(e.left).view.get().match(e.right);
-                if (primaryIndexes == null || primaryIndexes.size() > indexes.size())
+                for (Expression expression : e.right)
                 {
-                    primaryIndexes = indexes;
-                    primaryExpression = e;
+                    List<SSTableIndex> indexes = intervalTrees.get(e.left).view.get().match(expression);
+                    if (primaryIndexes == null || primaryIndexes.size() > indexes.size())
+                    {
+                        primaryIndexes = indexes;
+                        primaryExpression = e;
+                    }
                 }
             }
 
@@ -564,14 +567,18 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
             {
                 List<SkippableIterator<Long, Token>> unions = new ArrayList<>();
 
-                unions.add(new SuffixIterator(primaryExpression.right, bucket.bucket));
+                for (Expression expression : primaryExpression.right)
+                    unions.add(new SuffixIterator(expression, bucket.bucket));
 
                 for (SSTableIndex primaryIndex : bucket)
                 {
-                    for (Pair<ByteBuffer, Expression> expression : expressions)
+                    for (Pair<ByteBuffer, List<Expression>> expressionPair : expressions)
                     {
-                        SAView view = intervalTrees.get(expression.left).view.get();
-                        unions.add(new SuffixIterator(expression.right, view.match(primaryIndex.minKey(), primaryIndex.maxKey())));
+                        for (Expression expression : expressionPair.right)
+                        {
+                            SAView view = intervalTrees.get(expressionPair.left).view.get();
+                            unions.add(new SuffixIterator(expression, view.match(primaryIndex.minKey(), primaryIndex.maxKey())));
+                        }
                     }
                 }
 
@@ -604,7 +611,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
             return rows;
         }
 
-        private Row getRow(DecoratedKey key, ExtendedFilter filter, List<Pair<ByteBuffer, Expression>> expressions)
+        private Row getRow(DecoratedKey key, ExtendedFilter filter, List<Pair<ByteBuffer, List<Expression>>> expressions)
         {
             ReadCommand cmd = ReadCommand.create(baseCfs.keyspace.getName(),
                                                  key.key,
@@ -618,9 +625,9 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
         private class RowReader implements Callable<Row>
         {
             private final ReadCommand command;
-            private final List<Pair<ByteBuffer, Expression>> expressions;
+            private final List<Pair<ByteBuffer, List<Expression>>> expressions;
 
-            public RowReader(ReadCommand command, List<Pair<ByteBuffer, Expression>> expressions)
+            public RowReader(ReadCommand command, List<Pair<ByteBuffer, List<Expression>>> expressions)
             {
                 this.command = command;
                 this.expressions = expressions;
@@ -649,11 +656,14 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
                 if (row.cf == null)
                     return false;
                 long now = System.currentTimeMillis();
-                for (Pair<ByteBuffer, Expression> entry : expressions)
+                for (Pair<ByteBuffer, List<Expression>> entry : expressions)
                 {
-                    Column col = row.cf.getColumn(entry.left);
-                    if (col == null || !col.isLive(now) || !entry.right.contains(col.value()))
-                        return false;
+                    for (Expression expression : entry.right)
+                    {
+                        Column col = row.cf.getColumn(entry.left);
+                        if (col == null || !col.isLive(now) || !expression.contains(col.value()))
+                            return false;
+                    }
                 }
                 return true;
             }
@@ -671,29 +681,52 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
             return false;
         }
 
-        private List<Pair<ByteBuffer, Expression>> analyzeQuery(List<IndexExpression> expressions)
+        private List<Pair<ByteBuffer, List<Expression>>> analyzeQuery(List<IndexExpression> expressions)
         {
             // differentiate between equality and inequality expressions while analyzing so we can later put the equality
             // statements at the front of the list of expressions.
-            List<Pair<ByteBuffer, Expression>> equalityExpressions = new ArrayList<>();
-            List<Pair<ByteBuffer, Expression>> inequalityExpressions = new ArrayList<>();
+            List<Pair<ByteBuffer, List<Expression>>> equalityExpressions = new ArrayList<>();
+            List<Pair<ByteBuffer, List<Expression>>> inequalityExpressions = new ArrayList<>();
             for (IndexExpression e : expressions)
             {
                 ByteBuffer name = e.bufferForColumn_name();
-                List<Pair<ByteBuffer, Expression>> expList = e.op.equals(IndexOperator.EQ) ? equalityExpressions : inequalityExpressions;
-                Expression exp = null;
-                for (Pair<ByteBuffer, Expression> pair : expList)
+                ColumnDefinition columnDefinition = getColumnDefinition(name);
+                List<Pair<ByteBuffer, List<Expression>>> expList = e.op.equals(IndexOperator.EQ)
+                        ? equalityExpressions
+                        : inequalityExpressions;
+
+                List<Expression> expressionsPerColumn = null;
+                for (Pair<ByteBuffer, List<Expression>> pair : expList)
                 {
                     if (pair.left.equals(name))
-                        exp = pair.right;
+                        expressionsPerColumn = pair.right;
                 }
 
-                if (exp == null)
+                AbstractTokenizer tokenizer = TOKENIZABLE_TYPES.contains(columnDefinition.getValidator())
+                        ? new StandardTokenizer()
+                        : new NoOpTokenizer();
+                tokenizer.init(columnDefinition.getIndexOptions());
+                tokenizer.reset(e.bufferForValue());
+                while (tokenizer.hasNext())
                 {
-                    exp = new Expression(getColumnDefinition(name).getValidator());
-                    expList.add(Pair.create(name, exp));
+                    if (expressionsPerColumn == null)
+                        expressionsPerColumn = new ArrayList<>();
+
+                    if (e.op.equals(IndexOperator.EQ) || expressionsPerColumn.size() == 0)
+                    {
+                        Expression expression = new Expression(columnDefinition.getValidator());
+                        expression.add(e.op, tokenizer.next());
+                        expressionsPerColumn.add(expression);
+                    }
+                    else
+                    {
+                        Expression expression = expressionsPerColumn.get(0);
+                        expression.add(e.op, tokenizer.next());
+                        expressionsPerColumn.set(0, expression);
+                    }
                 }
-                exp.add(e.op, e.bufferForValue());
+
+                expList.add(Pair.create(name, expressionsPerColumn));
             }
 
             equalityExpressions.addAll(inequalityExpressions);
