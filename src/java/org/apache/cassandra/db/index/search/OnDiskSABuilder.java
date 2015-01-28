@@ -84,6 +84,7 @@ public class OnDiskSABuilder
             out = new SequentialWriter(file, BLOCK_SIZE, false);
 
             SuffixIterator suffixes = sa.finish();
+            out.writeUTF(Descriptor.current_version);
 
             // min, max suffix (useful to find initial scan range from search expressions)
             ByteBufferUtil.writeWithShortLength(suffixes.minSuffix(), out);

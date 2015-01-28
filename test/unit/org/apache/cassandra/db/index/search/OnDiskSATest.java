@@ -326,6 +326,27 @@ public class OnDiskSATest
     */
 
     @Test
+    public void testDescriptor() throws Exception
+    {
+        final Map<ByteBuffer, TokenTreeBuilder> data = new HashMap<ByteBuffer, TokenTreeBuilder>()
+        {{
+                put(Int32Type.instance.decompose(5), keyBuilder(1L));
+            }};
+
+        OnDiskSABuilder builder = new OnDiskSABuilder(Int32Type.instance, OnDiskSABuilder.Mode.ORIGINAL);
+        for (Map.Entry<ByteBuffer, TokenTreeBuilder> e : data.entrySet())
+            builder.add(e.getKey(), e.getValue());
+
+        File index = File.createTempFile("on-disk-sa-int", "db");
+        index.deleteOnExit();
+
+        builder.finish(Pair.create(keyAt(1), keyAt(12)), index);
+
+        OnDiskSA onDisk = new OnDiskSA(index, Int32Type.instance, new KeyConverter());
+        Assert.assertEquals(onDisk.descriptor.version.version, Descriptor.current_version);
+    }
+
+    @Test
     public void testSuperBlocks() throws Exception
     {
         Map<ByteBuffer, TokenTreeBuilder> terms = new HashMap<>();
