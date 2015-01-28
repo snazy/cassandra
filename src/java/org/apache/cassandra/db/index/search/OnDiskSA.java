@@ -54,6 +54,7 @@ public class OnDiskSA implements Iterable<OnDiskSA.DataSuffix>, Closeable
         }
     }
 
+    public final Descriptor descriptor;
     protected final Mode mode;
     protected final AbstractType<?> comparator;
     protected final MappedByteBuffer indexFile;
@@ -81,7 +82,7 @@ public class OnDiskSA implements Iterable<OnDiskSA.DataSuffix>, Closeable
             backingFile = new RandomAccessFile(index, "r");
 
             assert backingFile.length() <= Integer.MAX_VALUE;
-
+            descriptor = new Descriptor(backingFile.readUTF());
             minSuffix = ByteBufferUtil.readWithShortLength(backingFile);
             maxSuffix = ByteBufferUtil.readWithShortLength(backingFile);
 
