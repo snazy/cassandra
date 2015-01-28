@@ -1,9 +1,7 @@
-package org.apache.cassandra.db.index.search.tokeniation;
+package org.apache.cassandra.db.index.search.tokenization;
 
 import static org.junit.Assert.assertEquals;
 
-import org.apache.cassandra.db.index.search.tokenization.StandardTokenizer;
-import org.apache.cassandra.db.index.search.tokenization.StandardTokenizerOptions;
 import org.junit.Test;
 
 import java.io.InputStream;
