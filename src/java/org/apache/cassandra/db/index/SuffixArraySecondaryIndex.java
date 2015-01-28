@@ -393,10 +393,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
             {
                 this.column = column;
                 this.outputFile = outputFile;
-                this.tokenizer = TOKENIZABLE_TYPES.contains(column.getValidator())
-                                        ? new StandardTokenizer()
-                                        : new NoOpTokenizer();
-
+                this.tokenizer = getTokenizer(column.getValidator());
                 this.tokenizer.init(column.getIndexOptions());
                 this.keysPerTerm = new HashMap<>();
             }
@@ -478,22 +475,19 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
 
             final int maxRows = Math.min(MAX_ROWS, filter.maxRows());
             List<Row> rows = new ArrayList<>(maxRows);
-            List<Pair<ByteBuffer, List<Expression>>> expressions = analyzeQuery(filter.getClause());
-            List<Pair<ByteBuffer, List<Expression>>> expressionsImmutable = ImmutableList.copyOf(expressions);
+            List<Pair<ByteBuffer, Expression>> expressions = analyzeQuery(filter.getClause());
+            List<Pair<ByteBuffer, Expression>> expressionsImmutable = ImmutableList.copyOf(expressions);
 
             List<SSTableIndex> primaryIndexes = null;
-            Pair<ByteBuffer, List<Expression>> primaryExpression = null;
+            Pair<ByteBuffer, Expression> primaryExpression = null;
 
-            for (Pair<ByteBuffer, List<Expression>> e : expressions)
+            for (Pair<ByteBuffer, Expression> e : expressions)
             {
-                for (Expression expression : e.right)
+                List<SSTableIndex> indexes = intervalTrees.get(e.left).view.get().match(e.right);
+                if (primaryIndexes == null || primaryIndexes.size() > indexes.size())
                 {
-                    List<SSTableIndex> indexes = intervalTrees.get(e.left).view.get().match(expression);
-                    if (primaryIndexes == null || primaryIndexes.size() > indexes.size())
-                    {
-                        primaryIndexes = indexes;
-                        primaryExpression = e;
-                    }
+                    primaryIndexes = indexes;
+                    primaryExpression = e;
                 }
             }
 
@@ -518,7 +512,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
                 @Override
                 public int compare(SSTableIndex a, SSTableIndex b)
                 {
-                    return keyComparator.compare(a.sstable.first.key, b.sstable.first.key);
+                    return a.sstable.first.compareTo(b.sstable.first);
                 }
             });
 
@@ -562,24 +556,23 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
 
             expressions.remove(primaryExpression);
 
-            intersection:
             for (IndexBucket bucket : primaryBuckets)
             {
-                List<SkippableIterator<Long, Token>> unions = new ArrayList<>();
+                List<SkippableIterator<Long, Token>> unions = new ArrayList<>(expressionsImmutable.size());
 
-                for (Expression expression : primaryExpression.right)
-                    unions.add(new SuffixIterator(expression, bucket.bucket));
+                unions.add(new SuffixIterator(primaryExpression.right, bucket.bucket));
 
-                for (SSTableIndex primaryIndex : bucket)
+                for (Pair<ByteBuffer, Expression> e : expressions)
                 {
-                    for (Pair<ByteBuffer, List<Expression>> expressionPair : expressions)
-                    {
-                        for (Expression expression : expressionPair.right)
-                        {
-                            SAView view = intervalTrees.get(expressionPair.left).view.get();
-                            unions.add(new SuffixIterator(expression, view.match(primaryIndex.minKey(), primaryIndex.maxKey())));
-                        }
-                    }
+                    Set<SSTableIndex> readers = new HashSet<>();
+                    SAView view = intervalTrees.get(e.left).view.get();
+                    for (SSTableIndex index : bucket)
+                        readers.addAll(view.match(index.minKey(), index.maxKey()));
+
+                    if (readers.isEmpty())
+                        return Collections.emptyList();
+
+                    unions.add(new SuffixIterator(e.right, readers));
                 }
 
                 SkippableIterator<Long, Token> joiner = null;
@@ -589,6 +582,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
 
                     joiner.skipTo(((LongToken) requestedRange.left.getToken()).token);
 
+                    intersection:
                     while (joiner.hasNext())
                     {
                         for (DecoratedKey key : joiner.next())
@@ -611,7 +605,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
             return rows;
         }
 
-        private Row getRow(DecoratedKey key, ExtendedFilter filter, List<Pair<ByteBuffer, List<Expression>>> expressions)
+        private Row getRow(DecoratedKey key, ExtendedFilter filter, List<Pair<ByteBuffer, Expression>> expressions)
         {
             ReadCommand cmd = ReadCommand.create(baseCfs.keyspace.getName(),
                                                  key.key,
@@ -625,9 +619,9 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
         private class RowReader implements Callable<Row>
         {
             private final ReadCommand command;
-            private final List<Pair<ByteBuffer, List<Expression>>> expressions;
+            private final List<Pair<ByteBuffer, Expression>> expressions;
 
-            public RowReader(ReadCommand command, List<Pair<ByteBuffer, List<Expression>>> expressions)
+            public RowReader(ReadCommand command, List<Pair<ByteBuffer, Expression>> expressions)
             {
                 this.command = command;
                 this.expressions = expressions;
@@ -656,14 +650,11 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
                 if (row.cf == null)
                     return false;
                 long now = System.currentTimeMillis();
-                for (Pair<ByteBuffer, List<Expression>> entry : expressions)
+                for (Pair<ByteBuffer, Expression> entry : expressions)
                 {
-                    for (Expression expression : entry.right)
-                    {
-                        Column col = row.cf.getColumn(entry.left);
-                        if (col == null || !col.isLive(now) || !expression.contains(col.value()))
-                            return false;
-                    }
+                    Column col = row.cf.getColumn(entry.left);
+                    if (col == null || !col.isLive(now) || !entry.right.contains(col.value()))
+                        return false;
                 }
                 return true;
             }
@@ -681,56 +672,92 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
             return false;
         }
 
-        private List<Pair<ByteBuffer, List<Expression>>> analyzeQuery(List<IndexExpression> expressions)
+        private List<Pair<ByteBuffer, Expression>> analyzeQuery(List<IndexExpression> expressions)
         {
-            // differentiate between equality and inequality expressions while analyzing so we can later put the equality
-            // statements at the front of the list of expressions.
-            List<Pair<ByteBuffer, List<Expression>>> equalityExpressions = new ArrayList<>();
-            List<Pair<ByteBuffer, List<Expression>>> inequalityExpressions = new ArrayList<>();
-            for (IndexExpression e : expressions)
+            Multimap<ByteBuffer, Expression> analyzed = HashMultimap.create();
+
+            for (final IndexExpression e : expressions)
             {
-                ByteBuffer name = e.bufferForColumn_name();
+                ByteBuffer name = ByteBuffer.wrap(e.getColumn_name());
                 ColumnDefinition columnDefinition = getColumnDefinition(name);
-                List<Pair<ByteBuffer, List<Expression>>> expList = e.op.equals(IndexOperator.EQ)
-                        ? equalityExpressions
-                        : inequalityExpressions;
+                AbstractType<?> validator = columnDefinition.getValidator();
 
-                List<Expression> expressionsPerColumn = null;
-                for (Pair<ByteBuffer, List<Expression>> pair : expList)
+                Collection<Expression> perColumn = analyzed.get(name);
+
+                switch (e.getOp())
                 {
-                    if (pair.left.equals(name))
-                        expressionsPerColumn = pair.right;
+                    // '=' can have multiple expressions e.g. text = "Hello World",
+                    // becomes text = "Hello" AND text = "WORLD"
+                    // because "space" is always interpreted as a split point.
+                    case EQ:
+                        final AbstractTokenizer tokenizer = getTokenizer(validator);
+
+                        tokenizer.init(columnDefinition.getIndexOptions());
+                        tokenizer.reset(ByteBuffer.wrap(e.getValue()));
+                        while (tokenizer.hasNext())
+                        {
+                            perColumn.add(new Expression(validator)
+                            {{
+                                add(e.op, tokenizer.next());
+                            }});
+                        }
+                        break;
+
+                    // default means "range" operator, combines both bounds together into the single expression,
+                    // there might be situations when multiple ranges are give for the same column
+                    // something like following: age > X and age < Z and age = Y and age >= Q, so we'll
+                    // have to apply heuristic to figure out if we can re-use existing expression or need a new one.
+                    default:
+                        Expression range = null;
+                        // simple case - new expression, just create a holder for it
+                        if (perColumn.size() == 0)
+                        {
+                            perColumn.add((range = new Expression(validator)));
+                        }
+                        else
+                        {
+                            // this covers the the case of compile ranges
+                            // for the same column e.g. age > X and age = Y and age < Z,
+                            // or this: age > X and age = Y and age >= Q and age < Z,
+                            // or even this: age > X and age > Y and age < Z and age = Q
+                            for (Expression exp : perColumn)
+                            {
+                                if (exp.isEquality)
+                                    continue;
+
+                                switch (e.getOp())
+                                {
+                                    case GT:
+                                    case GTE:
+                                        if (exp.lower == null && exp.upper == null)
+                                            range = exp;
+                                        break;
+
+                                    case LT:
+                                    case LTE:
+                                        if (exp.upper == null)
+                                            range = exp;
+                                        break;
+                                }
+
+                                if (range != null)
+                                    break;
+                            }
+
+                            if (range == null)
+                                perColumn.add((range = new Expression(validator)));
+                        }
+
+                        range.add(e.op, e.bufferForValue());
+                        break;
                 }
-
-                AbstractTokenizer tokenizer = TOKENIZABLE_TYPES.contains(columnDefinition.getValidator())
-                        ? new StandardTokenizer()
-                        : new NoOpTokenizer();
-                tokenizer.init(columnDefinition.getIndexOptions());
-                tokenizer.reset(e.bufferForValue());
-                while (tokenizer.hasNext())
-                {
-                    if (expressionsPerColumn == null)
-                        expressionsPerColumn = new ArrayList<>();
-
-                    if (e.op.equals(IndexOperator.EQ) || expressionsPerColumn.size() == 0)
-                    {
-                        Expression expression = new Expression(columnDefinition.getValidator());
-                        expression.add(e.op, tokenizer.next());
-                        expressionsPerColumn.add(expression);
-                    }
-                    else
-                    {
-                        Expression expression = expressionsPerColumn.get(0);
-                        expression.add(e.op, tokenizer.next());
-                        expressionsPerColumn.set(0, expression);
-                    }
-                }
-
-                expList.add(Pair.create(name, expressionsPerColumn));
             }
 
-            equalityExpressions.addAll(inequalityExpressions);
-            return equalityExpressions;
+            List<Pair<ByteBuffer, Expression>> result = new ArrayList<>();
+            for (Map.Entry<ByteBuffer, Expression> e : analyzed.entries())
+                    result.add(Pair.create(e.getKey(), e.getValue()));
+
+            return result;
         }
     }
 
@@ -738,7 +765,9 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
     {
         private final AbstractType<?> validator;
         private final boolean isSuffix;
+
         private Bound lower, upper;
+        private boolean isEquality;
 
         private Expression(AbstractType<?> validator)
         {
@@ -753,6 +782,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
                 case EQ:
                     lower = new Bound(value, true);
                     upper = lower;
+                    isEquality = true;
                     break;
 
                 case LT:
@@ -830,7 +860,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
         private final SkippableIterator<Long, Token> union;
         private final List<SSTableIndex> referencedIndexes = new ArrayList<>();
 
-        public SuffixIterator(Expression expression, final List<SSTableIndex> perSSTableIndexes)
+        public SuffixIterator(Expression expression, final Collection<SSTableIndex> perSSTableIndexes)
         {
             List<SkippableIterator<Long, Token>> keys = new ArrayList<>(perSSTableIndexes.size());
 
@@ -1220,7 +1250,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
 
         public int compareTo(DecoratedKey key)
         {
-            return keyComparator.compare(maxKey.key, key.key);
+            return maxKey.compareTo(key);
         }
 
         @Override
@@ -1228,6 +1258,17 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
         {
             return bucket.iterator();
         }
+
+        @Override
+        public String toString()
+        {
+            return String.format("IndexBucket(min: %s, max: %s, bucket: %s)", minKey.token, maxKey.token, bucket);
+        }
+    }
+
+    private static AbstractTokenizer getTokenizer(AbstractType<?> validator)
+    {
+        return TOKENIZABLE_TYPES.contains(validator) ? new StandardTokenizer() : new NoOpTokenizer();
     }
 }
 

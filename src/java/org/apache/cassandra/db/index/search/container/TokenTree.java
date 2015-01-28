@@ -196,7 +196,7 @@ public class TokenTree
             maybeSkip();
 
             if (currentTokenIndex >= leafSize && lastLeaf)
-                throw new NoSuchElementException();
+                return null;
 
             if (currentTokenIndex < leafSize) // tokens remaining in this leaf
             {
