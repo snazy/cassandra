@@ -96,17 +96,26 @@ public class StandardTokenizer extends AbstractTokenizer
 
     private String getFilteredCurrentToken() throws IOException
     {
+        String token = getToken();
+        Object pipelineRes;
         while(true)
         {
-            String token = getToken();
-            Object pipelineRes = FilterPipelineExecutor.execute(filterPipeline, token);
-            if(pipelineRes == null)
+            pipelineRes = FilterPipelineExecutor.execute(filterPipeline, token);
+            if(pipelineRes != null)
             {
-                incrementToken();
-                continue;
+                break;
             }
-            return (String) pipelineRes;
+            else
+            {
+                boolean reachedEOF = incrementToken();
+                if (!reachedEOF) {
+                    break;
+                } else {
+                    token = getToken();
+                }
+            }
         }
+        return (String) pipelineRes;
     }
 
     private FilterPipelineTask getFilterPipeline()
@@ -146,8 +155,11 @@ public class StandardTokenizer extends AbstractTokenizer
         {
             if (incrementToken())
             {
-                this.next = ByteBuffer.wrap(getFilteredCurrentToken().getBytes());
-                return true;
+                if (getFilteredCurrentToken() != null)
+                {
+                    this.next = ByteBuffer.wrap(getFilteredCurrentToken().getBytes());
+                    return true;
+                }
             }
         }
         catch (IOException e)
