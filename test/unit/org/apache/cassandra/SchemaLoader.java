@@ -421,6 +421,18 @@ public class SchemaLoader
                                 }},
                                 UTF8Type.instance.compose(cName),
                                 null, ColumnDefinition.Type.REGULAR));
+
+                        cName = UTF8Type.instance.decompose("/data/output/id");
+                        put(cName, new ColumnDefinition(cName,
+                                AsciiType.instance,
+                                IndexType.CUSTOM,
+                                new HashMap<String, String>()
+                                {{
+                                        put(SecondaryIndex.CUSTOM_INDEX_OPTION_NAME, SuffixArraySecondaryIndex.class.getName());
+                                        put("mode", OnDiskSABuilder.Mode.SUFFIX.toString());
+                                    }},
+                                "data_output_id",
+                                null, ColumnDefinition.Type.REGULAR));
                 }});
     }
 

@@ -148,10 +148,9 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
         INDEX_FLUSHER_GENERAL.setMaximumPoolSize(columnDefs.size() * 2);
         INDEX_FLUSHER_MEMTABLE.setMaximumPoolSize(columnDefs.size());
 
-        AbstractType<?> type = baseCfs.getComparator();
         for (ColumnDefinition def : defs)
         {
-            String indexName = String.format(FILE_NAME_FORMAT, type.getString(def.name));
+            String indexName = String.format(FILE_NAME_FORMAT, def.getIndexName());
             columnDefComponents.put(def.name, new Component(Component.Type.SECONDARY_INDEX, indexName));
 
             // on restart, sstables are loaded into DataTracker before 2I are hooked up (and init() invoked),
@@ -991,7 +990,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
 
             for (SSTableReader sstable : toAdd)
             {
-                String columnName = baseCfs.getComparator().getString(col);
+                String columnName = getColumnDefinition(col).getIndexName();
                 File indexFile = new File(sstable.descriptor.filenameFor(String.format(FILE_NAME_FORMAT, columnName)));
                 if (!indexFile.exists())
                     continue;
@@ -1052,6 +1051,12 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
         {
             ByteBuffer min = expression.lower == null ? minSuffix : expression.lower.value;
             ByteBuffer max = expression.upper == null ? maxSuffix : expression.upper.value;
+
+            if (validator.compare(min, minSuffix) < 0)
+                min = minSuffix;
+
+            if (validator.compare(max, minSuffix) < 0)
+                max = minSuffix;
 
             return termIntervalTree.search(Interval.create(min, max, (SSTableIndex) null));
         }

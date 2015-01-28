@@ -523,6 +523,41 @@ public class SuffixArraySecondaryIndexTest extends SchemaLoader
         Assert.assertEquals(expected, convert(uniqueKeys));
     }
 
+    @Test
+    public void testColumnNamesWithSlashes()
+    {
+        RowMutation rm1 = new RowMutation("SASecondaryIndex", AsciiType.instance.decompose("key1"));
+        rm1.add("SAIndexed1", ByteBufferUtil.bytes("/data/output/id"), AsciiType.instance.decompose("jason"), System.currentTimeMillis());
+
+        RowMutation rm2 = new RowMutation("SASecondaryIndex", AsciiType.instance.decompose("key2"));
+        rm2.add("SAIndexed1", ByteBufferUtil.bytes("/data/output/id"), AsciiType.instance.decompose("pavel"), System.currentTimeMillis());
+
+        RowMutation rm3 = new RowMutation("SASecondaryIndex", AsciiType.instance.decompose("key3"));
+        rm3.add("SAIndexed1", ByteBufferUtil.bytes("/data/output/id"), AsciiType.instance.decompose("Aleksey"), System.currentTimeMillis());
+
+        rm1.apply();
+        rm2.apply();
+        rm3.apply();
+
+        ColumnFamilyStore store = Keyspace.open(KS_NAME).getColumnFamilyStore(CF_NAME);
+
+        store.forceBlockingFlush();
+
+        final ByteBuffer dataOutputId = UTF8Type.instance.decompose("/data/output/id");
+
+        Set<String> rows = getIndexed(store, 10,
+                new IndexExpression(dataOutputId, IndexOperator.EQ, UTF8Type.instance.decompose("a")));
+
+        Assert.assertTrue(rows.toString(), Arrays.equals(new String[] { "key1", "key2" }, rows.toArray(new String[rows.size()])));
+
+        rows = getIndexed(store, 10,
+                new IndexExpression(dataOutputId, IndexOperator.EQ, UTF8Type.instance.decompose("A")));
+
+        Assert.assertTrue(rows.toString(), Arrays.equals(new String[] { "key3" }, rows.toArray(new String[rows.size()])));
+
+    }
+
+
     private static ColumnFamilyStore loadData(Map<String, Pair<String, Integer>> data)
     {
         for (Map.Entry<String, Pair<String, Integer>> e : data.entrySet())
