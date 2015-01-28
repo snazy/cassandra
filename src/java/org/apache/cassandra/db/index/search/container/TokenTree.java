@@ -25,7 +25,8 @@ public class TokenTree
 
     private final ByteBuffer file;
     private final int startPos;
-    private final TokenRange tokenRange = new TokenRange();
+    private final long treeMinToken;
+    private final long treeMaxToken;
     private final long tokenCount;
 
     public TokenTree(ByteBuffer tokenTree)
@@ -37,9 +38,8 @@ public class TokenTree
         file.position(startPos + TokenTreeBuilder.SHARED_HEADER_BYTES);
         tokenCount = file.getLong();
 
-        long minToken = file.getLong();
-        long maxToken = file.getLong();
-        tokenRange.setRange(minToken, maxToken);
+        treeMinToken = file.getLong();
+        treeMaxToken = file.getLong();
     }
 
     public SkippableIterator<Long, Token> iterator(Function<Long, DecoratedKey> keyFetcher)
@@ -170,7 +170,8 @@ public class TokenTree
         private Token lastToken;
         private boolean lastLeaf;
         private short leafSize;
-        private TokenRange leafRange;
+        private long leafMinToken;
+        private long leafMaxToken;
         private ByteBuffer file;
         private Long skipToToken;
 
@@ -179,7 +180,7 @@ public class TokenTree
             this.file = file;
             this.keyFetcher = keyFetcher;
 
-            seekToLeaf(tokenRange.minToken, this.file);
+            seekToLeaf(treeMinToken, this.file);
             setupBlock();
         }
 
@@ -234,7 +235,7 @@ public class TokenTree
             if (lastToken != null && token <= lastToken.token)
                 return;
 
-            if (token <= leafRange.maxToken) // next is in this leaf block
+            if (token <= leafMaxToken) // next is in this leaf block
             {
                 searchLeaf(token);
             }
@@ -260,10 +261,8 @@ public class TokenTree
             lastLeaf = (file.get() & (1 << TokenTreeBuilder.LAST_LEAF_SHIFT)) > 0;
             leafSize = file.getShort();
 
-            leafRange = new TokenRange();
-            long minToken = file.getLong();
-            long maxToken = file.getLong();
-            leafRange.setRange(minToken, maxToken);
+            leafMinToken = file.getLong();
+            leafMaxToken = file.getLong();
 
             // seek to end of leaf header/start of data
             file.position(currentLeafStart + TokenTreeBuilder.BLOCK_HEADER_BYTES);
@@ -271,13 +270,13 @@ public class TokenTree
 
         private void findNearest(Long next)
         {
-            if (next > leafRange.maxToken && !lastLeaf)
+            if (next > leafMaxToken && !lastLeaf)
             {
                 seekToNextLeaf();
                 setupBlock();
                 findNearest(next);
             }
-            else if (next > leafRange.minToken)
+            else if (next > leafMinToken)
                 searchLeaf(next);
         }
 

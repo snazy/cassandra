@@ -42,7 +42,8 @@ public class TokenTreeBuilder
     private Leaf leftmostLeaf;
     private Leaf rightmostLeaf;
     private long tokenCount = 0;
-    private TokenRange treeTokenRange = new TokenRange();
+    private long treeMinToken;
+    private long treeMaxToken;
 
     public TokenTreeBuilder()
     {}
@@ -157,7 +158,8 @@ public class TokenTreeBuilder
     private void bulkLoad()
     {
         tokenCount = tokens.size();
-        treeTokenRange.setRange(tokens.firstKey(), tokens.lastKey());
+        treeMinToken = tokens.firstKey();
+        treeMaxToken = tokens.lastKey();
         numBlocks = 1;
 
         // special case the tree that only has a single block in it (so we don't create a useless root)
@@ -218,7 +220,7 @@ public class TokenTreeBuilder
     {
         protected InteriorNode parent;
         protected Node next;
-        protected TokenRange tokenRange = new TokenRange();
+        protected Long nodeMinToken, nodeMaxToken;
 
         public abstract void serialize(long childBlockIndex, ByteBuffer buf);
         public abstract int childCount();
@@ -245,6 +247,12 @@ public class TokenTreeBuilder
             return this == root;
         }
 
+        protected void updateTokenRange(long token)
+        {
+            nodeMinToken = nodeMinToken == null ? token : Math.min(nodeMinToken, token);
+            nodeMaxToken = nodeMaxToken == null ? token : Math.max(nodeMaxToken, token);
+        }
+
         protected void serializeHeader(ByteBuffer buf)
         {
             Header header;
@@ -263,11 +271,10 @@ public class TokenTreeBuilder
         {
             public void serialize(ByteBuffer buf)
             {
-                buf.put(infoByte())                        // info byte
-                        .putShort((short) (tokenCount())) // block token count
-                        .putLong(tokenRange.minToken)      // min token in root block
-                        .putLong(tokenRange.maxToken);     // max token in root block
-
+                buf.put(infoByte())
+                        .putShort((short) (tokenCount()))
+                        .putLong(nodeMinToken)
+                        .putLong(nodeMaxToken);
             }
 
             protected abstract byte infoByte();
@@ -279,9 +286,9 @@ public class TokenTreeBuilder
             public void serialize(ByteBuffer buf)
             {
                 super.serialize(buf);
-                buf.putLong(tokenCount)                    // total number of tokens in tree
-                        .putLong(treeTokenRange.minToken)  // min token in tree
-                        .putLong(treeTokenRange.maxToken);  // max token in tree
+                buf.putLong(tokenCount)
+                        .putLong(treeMinToken)
+                        .putLong(treeMaxToken);
             }
 
             protected byte infoByte()
@@ -323,13 +330,14 @@ public class TokenTreeBuilder
 
         Leaf(SortedMap<Long, LongSet> data)
         {
-            tokenRange.setRange(data.firstKey(), data.lastKey());
+            nodeMinToken = data.firstKey();
+            nodeMaxToken = data.lastKey();
             tokens = data;
         }
 
         public Long largestToken()
         {
-            return tokenRange.maxToken;
+            return nodeMaxToken;
         }
 
         public void serialize(long childBlockIndex, ByteBuffer buf)
@@ -351,7 +359,7 @@ public class TokenTreeBuilder
 
         public Long smallestToken()
         {
-            return tokenRange.minToken;
+            return nodeMinToken;
         }
 
         public Iterator<Map.Entry<Long, LongSet>> tokenIterator()
@@ -610,7 +618,7 @@ public class TokenTreeBuilder
                     rightChild.parent = this;
                 }
 
-                tokenRange.updateRange(token);
+                updateTokenRange(token);
                 tokens.add(pos, token);
             }
         }
@@ -640,7 +648,7 @@ public class TokenTreeBuilder
                 // tokens are inserted one behind the current position, but 2 is subtracted because
                 // position has already been incremented for the next add
                 Long smallestToken = node.smallestToken();
-                tokenRange.updateRange(smallestToken);
+                updateTokenRange(smallestToken);
                 tokens.add(position - 2, smallestToken);
             }
 
@@ -682,7 +690,7 @@ public class TokenTreeBuilder
                 if (i != TOKENS_PER_BLOCK && i != splitPosition)
                 {
                     long token = tokens.get(i);
-                    sibling.tokenRange.updateRange(token);
+                    sibling.updateTokenRange(token);
                     sibling.tokens.add(token);
                 }
 
@@ -701,7 +709,8 @@ public class TokenTreeBuilder
                     children.remove(i);
             }
 
-            tokenRange.setRange(smallestToken(), tokens.get(tokens.size() - 1));
+            nodeMinToken = smallestToken();
+            nodeMaxToken = tokens.get(tokens.size() - 1);
             numBlocks++;
 
             return Pair.create(middleValue, sibling);
