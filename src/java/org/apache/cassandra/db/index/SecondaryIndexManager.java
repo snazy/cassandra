@@ -17,7 +17,6 @@
  */
 package org.apache.cassandra.db.index;
 
-import java.io.File;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -49,14 +48,12 @@ import org.apache.cassandra.db.SystemKeyspace;
 import org.apache.cassandra.db.compaction.CompactionManager;
 import org.apache.cassandra.db.filter.ExtendedFilter;
 import org.apache.cassandra.exceptions.ConfigurationException;
-import org.apache.cassandra.io.sstable.Component;
 import org.apache.cassandra.io.sstable.Descriptor;
 import org.apache.cassandra.io.sstable.ReducingKeyIterator;
 import org.apache.cassandra.io.sstable.SSTableReader;
 import org.apache.cassandra.io.sstable.SSTableWriterListenable;
 import org.apache.cassandra.io.sstable.SSTableWriterListenable.Source;
 import org.apache.cassandra.io.sstable.SSTableWriterListener;
-import org.apache.cassandra.io.util.RandomAccessReader;
 import org.apache.cassandra.thrift.IndexExpression;
 import org.apache.cassandra.thrift.IndexType;
 import org.apache.cassandra.utils.FBUtilities;
@@ -164,6 +161,19 @@ public class SecondaryIndexManager
 
         logger.info(String.format("Submitting index build of %s for data in %s",
                                   idxNames, StringUtils.join(sstables, ", ")));
+
+        // TODO: this is hack to work around limitations of index re-build process
+        for (SecondaryIndex index : baseCfs.indexManager.getIndexesNotBackedByCfs())
+        {
+            if (index instanceof SuffixArraySecondaryIndex)
+            {
+                ((SuffixArraySecondaryIndex) index).buildIndexes(sstables, idxNames);
+                break;
+            }
+        }
+
+        if (idxNames.isEmpty())
+            return;
 
         SecondaryIndexBuilder builder = new SecondaryIndexBuilder(baseCfs, idxNames, new ReducingKeyIterator(sstables));
         Future<?> future = CompactionManager.instance.submitIndexBuild(builder);

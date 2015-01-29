@@ -32,6 +32,7 @@ import org.apache.cassandra.utils.CloseableIterator;
 public class KeyIterator extends AbstractIterator<DecoratedKey> implements CloseableIterator<DecoratedKey>
 {
     private final RandomAccessReader in;
+    private long keyPosition;
 
     public KeyIterator(Descriptor desc)
     {
@@ -45,6 +46,8 @@ public class KeyIterator extends AbstractIterator<DecoratedKey> implements Close
         {
             if (in.isEOF())
                 return endOfData();
+
+            keyPosition = in.getFilePointer();
             DecoratedKey key = StorageService.getPartitioner().decorateKey(ByteBufferUtil.readWithShortLength(in));
             RowIndexEntry.serializer.skip(in); // skip remainder of the entry
             return key;
@@ -68,5 +71,10 @@ public class KeyIterator extends AbstractIterator<DecoratedKey> implements Close
     public long getTotalBytes()
     {
         return in.length();
+    }
+
+    public long getKeyPosition()
+    {
+        return keyPosition;
     }
 }
