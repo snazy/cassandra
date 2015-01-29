@@ -723,4 +723,9 @@ public class OnDiskSA implements Iterable<OnDiskSA.DataSuffix>, Closeable
 
         out.println(" ***** end of level printout ***** ");
     }
+
+    public String getIndexPath()
+    {
+        return indexPath;
+    }
 }
