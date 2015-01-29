@@ -13,6 +13,8 @@ import org.apache.cassandra.concurrent.JMXEnabledThreadPoolExecutor;
 import org.apache.cassandra.concurrent.NamedThreadFactory;
 import org.apache.cassandra.config.ColumnDefinition;
 import org.apache.cassandra.db.*;
+import org.apache.cassandra.db.columniterator.SSTableNamesIterator;
+import org.apache.cassandra.db.compaction.*;
 import org.apache.cassandra.db.filter.ExtendedFilter;
 import org.apache.cassandra.db.index.search.OnDiskSA;
 import org.apache.cassandra.db.index.search.OnDiskSABuilder;
@@ -247,6 +249,39 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
     public Future<?> buildIndexAsync()
     {
         return Futures.immediateCheckedFuture(null);
+    }
+
+    public void buildIndexes(Collection<SSTableReader> sstables, Set<String> indexNames)
+    {
+        SortedSet<ByteBuffer> indexes = new TreeSet<>(baseCfs.getComparator());
+        for (ColumnDefinition columnDef : columnDefs)
+        {
+            Iterator<String> iterator = indexNames.iterator();
+
+            while (iterator.hasNext())
+            {
+                String indexName = iterator.next();
+                if (columnDef.getIndexName().equals(indexName))
+                {
+                    dropIndexData(columnDef.name, System.currentTimeMillis());
+                    indexes.add(columnDef.name);
+                    iterator.remove();
+                    break;
+                }
+            }
+        }
+
+        for (SSTableReader sstable : sstables)
+            FBUtilities.waitOnFuture(CompactionManager.instance.submitIndexBuild(new IndexBuilder(sstable, indexes)));
+
+        logger.info("Index build of {} complete.", Iterables.transform(indexes, new Function<ByteBuffer, String>()
+        {
+            @Override
+            public String apply(ByteBuffer columnName)
+            {
+                return baseCfs.getComparator().getString(columnName);
+            }
+        }));
     }
 
     public void delete(DecoratedKey key)
@@ -1339,6 +1374,73 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
         public String toString()
         {
             return String.format("IndexBucket(min: %s, max: %s, bucket: %s)", minKey.token, maxKey.token, bucket);
+        }
+    }
+
+    private class IndexBuilder extends IndexBuildTask
+    {
+        private final KeyIterator keys;
+
+        private final SSTableReader sstable;
+        private final SortedSet<ByteBuffer> indexNames;
+        private final Collection<ColumnDefinition> indexes;
+        private final PerSSTableIndexWriter indexWriter;
+
+        public IndexBuilder(SSTableReader sstable, SortedSet<ByteBuffer> indexesToBuild)
+        {
+            this.keys = new KeyIterator(sstable.descriptor);
+            this.sstable = sstable;
+            this.indexWriter = new PerSSTableIndexWriter(sstable.descriptor.asTemporary(true), Source.COMPACTION);
+            this.indexNames = indexesToBuild;
+            this.indexes = new ArrayList<ColumnDefinition>()
+            {{
+                for (ByteBuffer name : indexNames)
+                    add(getColumnDefinition(name));
+            }};
+        }
+
+        @Override
+        public CompactionInfo getCompactionInfo()
+        {
+            return new CompactionInfo(baseCfs.metadata,
+                                      org.apache.cassandra.db.compaction.OperationType.INDEX_BUILD,
+                                      keys.getBytesRead(),
+                                      keys.getTotalBytes());
+        }
+
+        public void build()
+        {
+            while (keys.hasNext())
+            {
+                if (isStopRequested())
+                    throw new CompactionInterruptedException(getCompactionInfo());
+
+                DecoratedKey key = keys.next();
+
+                indexWriter.startRow(key, keys.getKeyPosition());
+
+                SSTableNamesIterator columns = new SSTableNamesIterator(sstable, key, indexNames);
+
+                while (columns.hasNext())
+                {
+                    OnDiskAtom atom = columns.next();
+
+                    if (atom != null && atom instanceof Column)
+                        indexWriter.nextColumn((Column) atom);
+                }
+            }
+
+            indexWriter.complete();
+
+            for (ColumnDefinition columnDef : indexes)
+            {
+                String indexName = String.format(FILE_NAME_FORMAT, columnDef.getIndexName());
+
+                FileUtils.renameWithConfirm(indexWriter.descriptor.filenameFor(indexName),
+                                            sstable.descriptor.filenameFor(indexName));
+            }
+
+            addToIntervalTree(Collections.singletonList(sstable), indexes);
         }
     }
 
