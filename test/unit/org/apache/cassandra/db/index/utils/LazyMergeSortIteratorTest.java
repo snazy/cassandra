@@ -1,4 +1,4 @@
-package org.apache.cassandra.db.index.search;
+package org.apache.cassandra.db.index.utils;
 
 import java.io.IOException;
 import java.util.*;
@@ -18,7 +18,7 @@ import org.junit.Test;
 
 import static org.apache.cassandra.db.index.utils.LazyMergeSortIterator.OperationType;
 
-public class MergeSortAwareIteratorTest
+public class LazyMergeSortIteratorTest
 {
     private static final Random random = new Random();
 

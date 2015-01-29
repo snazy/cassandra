@@ -5,6 +5,7 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.*;
 import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -165,6 +166,13 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
         for (ColumnDefinition columnDefinition : defs)
         {
             SADataTracker dataTracker = intervalTrees.get(columnDefinition.name);
+            if (dataTracker == null)
+            {
+                SADataTracker newDataTracker = new SADataTracker(columnDefinition.name, Collections.<SSTableReader>emptySet());
+                dataTracker = intervalTrees.putIfAbsent(columnDefinition.name, newDataTracker);
+                if (dataTracker == null)
+                    dataTracker = newDataTracker;
+            }
             dataTracker.update(Collections.<SSTableReader>emptyList(), readers);
         }
     }
@@ -193,7 +201,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
 
     public void validateOptions() throws ConfigurationException
     {
-        // todo: sanity check on valid tokenization options
+        // nop
     }
 
     public String getIndexName()
@@ -229,8 +237,6 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
         // better yet, the index rebuild path can be bypassed by overriding buildIndexAsync(), and just return
         // some empty Future - all current callers of buildIndexAsync() ignore the returned Future.
         // seems a little dangerous (not future proof) but good enough for a v1
-        if (logger.isTraceEnabled())
-            logger.trace("received an index() call");
     }
 
     /**
@@ -250,22 +256,41 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
 
     public void removeIndex(ByteBuffer columnName)
     {
-        // TODO: figure it out
+        removeIndex(columnName, System.currentTimeMillis());
+    }
+
+    public void removeIndex(ByteBuffer columnName, long truncateUntil)
+    {
+        columnDefComponents.remove(columnName);
+        dropIndexData(columnName, truncateUntil);
+    }
+
+    private void dropIndexData(ByteBuffer columnName, long truncateUntil)
+    {
+        SADataTracker dataTracker = intervalTrees.get(columnName);
+        if (dataTracker != null)
+            dataTracker.dropData(truncateUntil);
     }
 
     public void invalidate()
     {
-        // TODO: same as above
+        invalidate(System.currentTimeMillis());
+    }
+
+    public void invalidate(long truncateUntil)
+    {
+        for (ByteBuffer colName : new ArrayList<>(columnDefComponents.keySet()))
+            dropIndexData(colName, truncateUntil);
     }
 
     public void truncateBlocking(long truncatedAt)
     {
-        // nop?? - at least punting for now
+        invalidate(truncatedAt);
     }
 
     public void forceBlockingFlush()
     {
-        //nop, I think, as this 2I will flush with the owning CF's sstable, so we don't need this extra work
+        //nop, as this 2I will flush with the owning CF's sstable, so we don't need this extra work
     }
 
     public Collection<Component> getIndexComponents()
@@ -326,7 +351,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
                 indexPerColumn.put(column.name(), (index = new ColumnIndex(getColumnDef(component), outputFile)));
             }
 
-            index.add(column.value().duplicate(), currentKey, (int) currentKeyPosition);
+            index.add(column.value().duplicate(), currentKey, currentKeyPosition);
         }
 
         public void complete()
@@ -482,7 +507,12 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
 
             for (Pair<ByteBuffer, Expression> e : expressions)
             {
-                List<SSTableIndex> indexes = intervalTrees.get(e.left).view.get().match(e.right);
+                SAView view = getView(e.left);
+
+                // this assumes we only perform AND operations; change when we support OR
+                if (view == null)
+                    return Collections.emptyList();
+                List<SSTableIndex> indexes = view.match(e.right);
                 if (primaryIndexes == null || primaryIndexes.size() > indexes.size())
                 {
                     primaryIndexes = indexes;
@@ -564,7 +594,10 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
                 for (Pair<ByteBuffer, Expression> e : expressions)
                 {
                     Set<SSTableIndex> readers = new HashSet<>();
-                    SAView view = intervalTrees.get(e.left).view.get();
+                    SAView view = getView(e.left);
+                    // this assumes we only perform AND operations; change when we support OR
+                    if (view == null)
+                        return Collections.emptyList();
                     for (SSTableIndex index : bucket)
                         readers.addAll(view.match(index.minKey(), index.maxKey()));
 
@@ -602,6 +635,12 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
             }
 
             return rows;
+        }
+
+        protected SAView getView(ByteBuffer columnName)
+        {
+            SADataTracker dataTracker = intervalTrees.get(columnName);
+            return dataTracker != null ? dataTracker.view.get() : null;
         }
 
         private Row getRow(DecoratedKey key, ExtendedFilter filter, List<Pair<ByteBuffer, Expression>> expressions)
@@ -915,13 +954,11 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
 
         public void update(Collection<SSTableReader> oldSSTables, Collection<SSTableReader> newSSTables)
         {
-
             SAView currentView, newView;
             do
             {
                 currentView = view.get();
 
-                //TODO: handle this slightly more elegantly, but don't bother trying to remove tables from an empty tree
                 if (currentView.keyIntervalTree.intervalCount() == 0 && oldSSTables.size() > 0)
                     return;
 
@@ -941,9 +978,23 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
                     index.release();
             }
         }
+
+        public void dropData(long truncateUntil)
+        {
+            Set<SSTableReader> toRemove = new HashSet<>();
+            for (SSTableIndex index : view.get())
+            {
+                if (index.sstable.getMaxTimestamp() > truncateUntil)
+                    continue;
+                index.markObsolete();
+                toRemove.add(index.sstable);
+            }
+
+            view.get().update(toRemove, Collections.<SSTableReader>emptyList());
+        }
     }
 
-    private class SAView
+    private class SAView implements Iterable<SSTableIndex>
     {
         private final ByteBuffer col;
         private final AbstractType<?> validator;
@@ -1083,6 +1134,17 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
                 String.format("Incoherent new size %d replacing %s by %s, sstable size %d", newSSTablesSize, oldSSTables, newReaders, tree.intervalCount());
             return newSSTablesSize;
         }
+
+        public Iterator<SSTableIndex> iterator()
+        {
+            return Iterators.transform(keyIntervalTree.iterator(), new Function<Interval<ByteBuffer, SSTableIndex>, SSTableIndex>()
+            {
+                public SSTableIndex apply(Interval<ByteBuffer, SSTableIndex> i)
+                {
+                    return i.data;
+                }
+            });
+        }
     }
 
     private class DataTrackerConsumer implements INotificationConsumer
@@ -1153,6 +1215,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
         private final SSTableReader sstable;
         private final OnDiskSA index;
         private final AtomicInteger references = new AtomicInteger(1);
+        private final AtomicBoolean obsolete = new AtomicBoolean(false);
 
         public SSTableIndex(ByteBuffer name, File indexFile, SSTableReader referent)
         {
@@ -1216,7 +1279,15 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
             {
                 FileUtils.closeQuietly(index);
                 sstable.releaseReference();
+                if (obsolete.get())
+                    FileUtils.delete(index.getIndexPath());
             }
+        }
+
+        public void markObsolete()
+        {
+            obsolete.getAndSet(true);
+            release();
         }
 
         @Override

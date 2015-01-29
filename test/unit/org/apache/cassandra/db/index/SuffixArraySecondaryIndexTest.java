@@ -107,7 +107,7 @@ public class SuffixArraySecondaryIndexTest extends SchemaLoader
         rows = getIndexed(store, 10,
                          new IndexExpression(firstName, IndexOperator.EQ, UTF8Type.instance.decompose("a")),
                          new IndexExpression(age, IndexOperator.GT, Int32Type.instance.decompose(12)));
-        Assert.assertTrue(rows.toString(), Arrays.equals(new String[]{"key1", "key2", "key3", "key4"}, rows.toArray(new String[rows.size()])));
+        Assert.assertTrue(rows.toString(), Arrays.equals(new String[]{ "key1", "key2", "key3", "key4" }, rows.toArray(new String[rows.size()])));
 
         rows = getIndexed(store, 10,
                          new IndexExpression(firstName, IndexOperator.EQ, UTF8Type.instance.decompose("a")),
@@ -133,7 +133,7 @@ public class SuffixArraySecondaryIndexTest extends SchemaLoader
         rows = getIndexed(store, 10,
                          new IndexExpression(firstName, IndexOperator.EQ, UTF8Type.instance.decompose("a")),
                          new IndexExpression(age, IndexOperator.LTE, Int32Type.instance.decompose(25)));
-        Assert.assertTrue(rows.toString(), Arrays.equals(new String[]{"key1"}, rows.toArray(new String[rows.size()])));
+        Assert.assertTrue(rows.toString(), Arrays.equals(new String[]{ "key1" }, rows.toArray(new String[rows.size()])));
     }
 
     @Test
@@ -545,23 +545,169 @@ public class SuffixArraySecondaryIndexTest extends SchemaLoader
 
         final ByteBuffer dataOutputId = UTF8Type.instance.decompose("/data/output/id");
 
-        Set<String> rows = getIndexed(store, 10,
-                new IndexExpression(dataOutputId, IndexOperator.EQ, UTF8Type.instance.decompose("a")));
-
+        Set<String> rows = getIndexed(store, 10, new IndexExpression(dataOutputId, IndexOperator.EQ, UTF8Type.instance.decompose("a")));
         Assert.assertTrue(rows.toString(), Arrays.equals(new String[] { "key1", "key2" }, rows.toArray(new String[rows.size()])));
 
-        rows = getIndexed(store, 10,
-                new IndexExpression(dataOutputId, IndexOperator.EQ, UTF8Type.instance.decompose("A")));
+        rows = getIndexed(store, 10, new IndexExpression(dataOutputId, IndexOperator.EQ, UTF8Type.instance.decompose("A")));
+        Assert.assertTrue(rows.toString(), Arrays.equals(new String[]{ "key3" }, rows.toArray(new String[rows.size()])));
 
-        Assert.assertTrue(rows.toString(), Arrays.equals(new String[] { "key3" }, rows.toArray(new String[rows.size()])));
+        store.indexManager.removeIndexedColumn(dataOutputId);
 
+        rows = getIndexed(store, 10, new IndexExpression(dataOutputId, IndexOperator.EQ, UTF8Type.instance.decompose("a")));
+        Assert.assertTrue(rows.toString(), rows.isEmpty());
+
+        rows = getIndexed(store, 10, new IndexExpression(dataOutputId, IndexOperator.EQ, UTF8Type.instance.decompose("A")));
+        Assert.assertTrue(rows.toString(), rows.isEmpty());
     }
 
+    @Test
+    public void testInvalidate() throws Exception
+    {
+        Map<String, Pair<String, Integer>> part1 = new HashMap<String, Pair<String, Integer>>()
+        {{
+                put("key0", Pair.create("Maxie", -1));
+                put("key1", Pair.create("Chelsie", 33));
+                put("key2", Pair.create((String) null, 43));
+                put("key3", Pair.create("Shanna", 27));
+                put("key4", Pair.create("Amiya", 36));
+        }};
 
+        ColumnFamilyStore store = loadData(part1);
+
+        final ByteBuffer firstName = UTF8Type.instance.decompose("first_name");
+        final ByteBuffer age = UTF8Type.instance.decompose("age");
+
+        Set<String> rows = getIndexed(store, 10, new IndexExpression(firstName, IndexOperator.EQ, UTF8Type.instance.decompose("a")));
+        Assert.assertTrue(rows.toString(), Arrays.equals(new String[]{ "key0", "key3", "key4" }, rows.toArray(new String[rows.size()])));
+
+        rows = getIndexed(store, 10, new IndexExpression(age, IndexOperator.EQ, Int32Type.instance.decompose(33)));
+        Assert.assertTrue(rows.toString(), Arrays.equals(new String[]{ "key1" }, rows.toArray(new String[rows.size()])));
+
+        store.indexManager.invalidate();
+
+        rows = getIndexed(store, 10, new IndexExpression(firstName, IndexOperator.EQ, UTF8Type.instance.decompose("a")));
+        Assert.assertTrue(rows.toString(), rows.isEmpty());
+
+        rows = getIndexed(store, 10, new IndexExpression(age, IndexOperator.EQ, Int32Type.instance.decompose(33)));
+        Assert.assertTrue(rows.toString(), rows.isEmpty());
+
+
+        Map<String, Pair<String, Integer>> part2 = new HashMap<String, Pair<String, Integer>>()
+        {{
+                put("key5", Pair.create("Americo", 20));
+                put("key6", Pair.create("Fiona", 39));
+                put("key7", Pair.create("Francis", 41));
+                put("key8", Pair.create("Fred", 21));
+                put("key9", Pair.create("Amely", 40));
+                put("key14", Pair.create("Dino", 28));
+        }};
+
+        loadData(part2);
+
+        rows = getIndexed(store, 10, new IndexExpression(firstName, IndexOperator.EQ, UTF8Type.instance.decompose("a")));
+        Assert.assertTrue(rows.toString(), Arrays.equals(new String[]{ "key6", "key7" }, rows.toArray(new String[rows.size()])));
+
+        rows = getIndexed(store, 10, new IndexExpression(age, IndexOperator.EQ, Int32Type.instance.decompose(40)));
+        Assert.assertTrue(rows.toString(), Arrays.equals(new String[]{ "key9" }, rows.toArray(new String[rows.size()])));
+    }
+
+    @Test
+    public void testTruncate()
+    {
+        Map<String, Pair<String, Integer>> part1 = new HashMap<String, Pair<String, Integer>>()
+        {{
+                put("key01", Pair.create("Ali", 33));
+                put("key02", Pair.create("Jeremy", 41));
+                put("key03", Pair.create("Elvera", 22));
+                put("key04", Pair.create("Bailey", 45));
+                put("key05", Pair.create("Emerson", 32));
+                put("key06", Pair.create("Kadin", 38));
+                put("key07", Pair.create("Maggie", 36));
+                put("key08", Pair.create("Kailey", 36));
+                put("key09", Pair.create("Armand", 21));
+                put("key10", Pair.create("Arnold", 35));
+        }};
+
+        Map<String, Pair<String, Integer>> part2 = new HashMap<String, Pair<String, Integer>>()
+        {{
+                put("key11", Pair.create("Ken", 38));
+                put("key12", Pair.create("Penelope", 43));
+                put("key13", Pair.create("Wyatt", 34));
+                put("key14", Pair.create("Johnpaul", 34));
+                put("key15", Pair.create("Trycia", 43));
+                put("key16", Pair.create("Aida", 21));
+                put("key17", Pair.create("Devon", 42));
+        }};
+
+        Map<String, Pair<String, Integer>> part3 = new HashMap<String, Pair<String, Integer>>()
+        {{
+                put("key18", Pair.create("Christina", 20));
+                put("key19", Pair.create("Rick", 19));
+                put("key20", Pair.create("Fannie", 22));
+                put("key21", Pair.create("Keegan", 29));
+                put("key22", Pair.create("Ignatius", 36));
+                put("key23", Pair.create("Ellis", 26));
+                put("key24", Pair.create("Annamarie", 29));
+                put("key25", Pair.create("Tianna", 31));
+                put("key26", Pair.create("Dennis", 32));
+        }};
+
+        ColumnFamilyStore store = loadData(part1, 1000);
+
+        loadData(part2, 2000);
+        loadData(part3, 3000);
+
+        final ByteBuffer firstName = UTF8Type.instance.decompose("first_name");
+
+        Set<String> rows = getIndexed(store, 100, new IndexExpression(firstName, IndexOperator.EQ, UTF8Type.instance.decompose("a")));
+        Assert.assertEquals(rows.toString(), 16, rows.size());
+
+        // make sure we don't prematurely delete anything
+        for (SecondaryIndex index : store.indexManager.getIndexes())
+            index.truncateBlocking(500);
+
+        rows = getIndexed(store, 100, new IndexExpression(firstName, IndexOperator.EQ, UTF8Type.instance.decompose("a")));
+        Assert.assertEquals(rows.toString(), 16, rows.size());
+
+        for (SecondaryIndex index : store.indexManager.getIndexes())
+            index.truncateBlocking(1500);
+
+        rows = getIndexed(store, 100, new IndexExpression(firstName, IndexOperator.EQ, UTF8Type.instance.decompose("a")));
+        Assert.assertEquals(rows.toString(), 10, rows.size());
+
+        for (SecondaryIndex index : store.indexManager.getIndexes())
+            index.truncateBlocking(2500);
+
+        rows = getIndexed(store, 100, new IndexExpression(firstName, IndexOperator.EQ, UTF8Type.instance.decompose("a")));
+        Assert.assertEquals(rows.toString(), 6, rows.size());
+
+        for (SecondaryIndex index : store.indexManager.getIndexes())
+            index.truncateBlocking(3500);
+
+        rows = getIndexed(store, 100, new IndexExpression(firstName, IndexOperator.EQ, UTF8Type.instance.decompose("a")));
+        Assert.assertEquals(rows.toString(), 0, rows.size());
+
+        // add back in some data just to make sure it all still works
+        Map<String, Pair<String, Integer>> part4 = new HashMap<String, Pair<String, Integer>>()
+        {{
+                put("key40", Pair.create("Tianna", 31));
+                put("key41", Pair.create("Dennis", 32));
+        }};
+
+        loadData(part4, 4000);
+
+        rows = getIndexed(store, 100, new IndexExpression(firstName, IndexOperator.EQ, UTF8Type.instance.decompose("a")));
+        Assert.assertEquals(rows.toString(), 1, rows.size());
+    }
     private static ColumnFamilyStore loadData(Map<String, Pair<String, Integer>> data)
     {
+        return loadData(data, System.currentTimeMillis());
+    }
+
+    private static ColumnFamilyStore loadData(Map<String, Pair<String, Integer>> data, long timestamp)
+    {
         for (Map.Entry<String, Pair<String, Integer>> e : data.entrySet())
-            newMutation(e.getKey(), e.getValue().left, e.getValue().right).apply();
+            newMutation(e.getKey(), e.getValue().left, e.getValue().right, timestamp).apply();
 
         ColumnFamilyStore store = Keyspace.open(KS_NAME).getColumnFamilyStore(CF_NAME);
 
@@ -626,9 +772,12 @@ public class SuffixArraySecondaryIndexTest extends SchemaLoader
 
     private static RowMutation newMutation(String key, String firstName, int age)
     {
+        return newMutation(key, firstName, age, System.currentTimeMillis());
+    }
 
+    private static RowMutation newMutation(String key, String firstName, int age, long timestamp)
+    {
         RowMutation rm = new RowMutation("SASecondaryIndex", AsciiType.instance.decompose(key));
-        long timestamp = System.currentTimeMillis();
         if (firstName != null)
             rm.add("SAIndexed1", ByteBufferUtil.bytes("first_name"), UTF8Type.instance.decompose(firstName), timestamp);
         if (age >= 0)
