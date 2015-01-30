@@ -317,14 +317,14 @@ public class CassandraDaemon
         if (CacheService.instance.rowCache.size() > 0)
             logger.info("completed pre-loading ({} keys) row cache.", CacheService.instance.rowCache.size());
 
-        try
-        {
-            GCInspector.instance.start();
-        }
-        catch (Throwable t)
-        {
-            logger.warn("Unable to start GCInspector (currently only supported on the Sun JVM)");
-        }
+//        try
+//        {
+//            GCInspector.instance.start();
+//        }
+//        catch (Throwable t)
+//        {
+//            logger.warn("Unable to start GCInspector (currently only supported on the Sun JVM)");
+//        }
 
         // MeteredFlusher can block if flush queue fills up, so don't put on scheduledTasks
         // Start it before commit log, so memtables can flush during commit log replay
