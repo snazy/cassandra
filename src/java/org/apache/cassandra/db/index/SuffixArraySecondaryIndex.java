@@ -1135,6 +1135,9 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
 
         public List<SSTableIndex> match(Expression expression)
         {
+            if (minSuffix == null) // no data in this view
+                return Collections.emptyList();
+
             ByteBuffer min = expression.lower == null ? minSuffix : expression.lower.value;
             ByteBuffer max = expression.upper == null ? maxSuffix : expression.upper.value;
 

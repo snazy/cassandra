@@ -7,6 +7,7 @@ import java.nio.channels.FileChannel;
 import java.util.*;
 
 import org.apache.cassandra.db.DecoratedKey;
+import org.apache.cassandra.db.index.search.OnDiskSABuilder.SuffixSize;
 import org.apache.cassandra.db.index.search.container.TokenTree;
 import org.apache.cassandra.db.index.utils.LazyMergeSortIterator;
 import org.apache.cassandra.db.index.utils.SkippableIterator;
@@ -56,6 +57,8 @@ public class OnDiskSA implements Iterable<OnDiskSA.DataSuffix>, Closeable
 
     public final Descriptor descriptor;
     protected final Mode mode;
+    protected final SuffixSize suffixSize;
+
     protected final AbstractType<?> comparator;
     protected final MappedByteBuffer indexFile;
     protected final int indexSize;
@@ -83,6 +86,9 @@ public class OnDiskSA implements Iterable<OnDiskSA.DataSuffix>, Closeable
 
             assert backingFile.length() <= Integer.MAX_VALUE;
             descriptor = new Descriptor(backingFile.readUTF());
+
+            suffixSize = SuffixSize.of(backingFile.readShort());
+
             minSuffix = ByteBufferUtil.readWithShortLength(backingFile);
             maxSuffix = ByteBufferUtil.readWithShortLength(backingFile);
 
@@ -444,7 +450,7 @@ public class OnDiskSA implements Iterable<OnDiskSA.DataSuffix>, Closeable
         @Override
         protected DataSuffix cast(ByteBuffer data)
         {
-            return new DataSuffix(data, getBlockIndex());
+            return new DataSuffix(data, suffixSize, getBlockIndex());
         }
 
         public SkippableIterator<Long, Token> getRange(int start, int end)
@@ -484,7 +490,7 @@ public class OnDiskSA implements Iterable<OnDiskSA.DataSuffix>, Closeable
         }
     }
 
-    protected static class PointerBlock extends OnDiskBlock<PointerSuffix>
+    protected class PointerBlock extends OnDiskBlock<PointerSuffix>
     {
         public PointerBlock(ByteBuffer block)
         {
@@ -494,7 +500,7 @@ public class OnDiskSA implements Iterable<OnDiskSA.DataSuffix>, Closeable
         @Override
         protected PointerSuffix cast(ByteBuffer data)
         {
-            return new PointerSuffix(data);
+            return new PointerSuffix(data, suffixSize);
         }
     }
 
@@ -502,16 +508,10 @@ public class OnDiskSA implements Iterable<OnDiskSA.DataSuffix>, Closeable
     {
         private final TokenTree perBlockIndex;
 
-        protected DataSuffix(ByteBuffer content, TokenTree perBlockIndex)
+        protected DataSuffix(ByteBuffer content, SuffixSize size, TokenTree perBlockIndex)
         {
-            super(content);
+            super(content, size);
             this.perBlockIndex = perBlockIndex;
-        }
-
-        private int getOffset()
-        {
-            int position = content.position();
-            return position + 2 + content.getShort(position);
         }
 
         public SkippableIterator<Long, Token> getTokens()
@@ -521,19 +521,18 @@ public class OnDiskSA implements Iterable<OnDiskSA.DataSuffix>, Closeable
             if (isSparse())
                 return new PrefetchedTokensIterator(getSparseTokens());
 
-            int offset = blockEnd + 4 + content.getInt(getOffset() + 1);
+            int offset = blockEnd + 4 + content.getInt(getDataOffset() + 1);
             return new TokenTree((ByteBuffer) indexFile.duplicate().position(offset)).iterator(keyFetcher);
         }
 
         public boolean isSparse()
         {
-            return content.get(getOffset()) > 0;
+            return content.get(getDataOffset()) > 0;
         }
 
         public NavigableMap<Long, Token> getSparseTokens()
         {
-            int position = content.position();
-            int ptrOffset = position + 2 + content.getShort(position);
+            int ptrOffset = getDataOffset();
 
             byte size = content.get(ptrOffset);
 
@@ -554,15 +553,14 @@ public class OnDiskSA implements Iterable<OnDiskSA.DataSuffix>, Closeable
 
     protected static class PointerSuffix extends Suffix
     {
-        public PointerSuffix(ByteBuffer content)
+        public PointerSuffix(ByteBuffer content, SuffixSize size)
         {
-            super(content);
+            super(content, size);
         }
 
         public int getBlock()
         {
-            int position = content.position();
-            return content.getInt(position + 2 + content.getShort(position));
+            return content.getInt(getDataOffset());
         }
     }
 
