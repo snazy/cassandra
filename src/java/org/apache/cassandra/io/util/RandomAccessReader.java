@@ -91,7 +91,7 @@ public class RandomAccessReader extends RandomAccessFile implements FileDataInpu
     }
 
     @VisibleForTesting
-    static RandomAccessReader open(File file, int bufferSize, PoolingSegmentedFile owner)
+    public static RandomAccessReader open(File file, int bufferSize, PoolingSegmentedFile owner)
     {
         try
         {

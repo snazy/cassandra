@@ -19,6 +19,7 @@ package org.apache.cassandra.io.sstable;
 
 import java.io.File;
 import java.util.EnumSet;
+import java.util.regex.Pattern;
 
 import com.google.common.base.Objects;
 
@@ -59,6 +60,8 @@ public class Component
         SUMMARY("Summary.db"),
         // table of contents, stores the list of all components for the sstable
         TOC("TOC.txt"),
+        // in-built secondary index (may be multiple per sstable)
+        SECONDARY_INDEX("SI_.*.db"),
         // custom component, used by e.g. custom compaction strategy
         CUSTOM(null);
 
@@ -71,8 +74,12 @@ public class Component
         static Type fromRepresentation(String repr)
         {
             for (Type type : TYPES)
-                if (repr.equals(type.repr))
+            {
+                if (type.repr == null)
+                    continue;
+                if (Pattern.matches(type.repr, repr))
                     return type;
+            }
             return CUSTOM;
         }
     }
@@ -130,17 +137,18 @@ public class Component
         Component component;
         switch(type)
         {
-            case DATA:              component = Component.DATA;                         break;
-            case PRIMARY_INDEX:     component = Component.PRIMARY_INDEX;                break;
-            case FILTER:            component = Component.FILTER;                       break;
-            case COMPACTED_MARKER:  component = Component.COMPACTED_MARKER;             break;
-            case COMPRESSION_INFO:  component = Component.COMPRESSION_INFO;             break;
-            case STATS:             component = Component.STATS;                        break;
-            case DIGEST:            component = Component.DIGEST;                       break;
-            case CRC:               component = Component.CRC;                          break;
-            case SUMMARY:           component = Component.SUMMARY;                      break;
-            case TOC:               component = Component.TOC;                          break;
-            case CUSTOM:            component = new Component(Type.CUSTOM, path.right); break;
+            case DATA:              component = Component.DATA;                                 break;
+            case PRIMARY_INDEX:     component = Component.PRIMARY_INDEX;                        break;
+            case FILTER:            component = Component.FILTER;                               break;
+            case COMPACTED_MARKER:  component = Component.COMPACTED_MARKER;                     break;
+            case COMPRESSION_INFO:  component = Component.COMPRESSION_INFO;                     break;
+            case STATS:             component = Component.STATS;                                break;
+            case DIGEST:            component = Component.DIGEST;                               break;
+            case CRC:               component = Component.CRC;                                  break;
+            case SUMMARY:           component = Component.SUMMARY;                              break;
+            case TOC:               component = Component.TOC;                                  break;
+            case SECONDARY_INDEX:   component = new Component(Type.SECONDARY_INDEX, path.right); break;
+            case CUSTOM:            component = new Component(Type.CUSTOM, path.right);         break;
             default:
                  throw new IllegalStateException();
         }

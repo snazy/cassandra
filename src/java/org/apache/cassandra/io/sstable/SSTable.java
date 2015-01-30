@@ -24,6 +24,7 @@ import java.util.concurrent.CopyOnWriteArraySet;
 
 import com.google.common.base.Predicates;
 import com.google.common.collect.Collections2;
+import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Ordering;
 import com.google.common.collect.Sets;
 import com.google.common.io.Files;
@@ -142,7 +143,12 @@ public abstract class SSTable
             if (component.equals(Component.DATA) || component.equals(Component.COMPACTED_MARKER) || component.equals(Component.SUMMARY))
                 continue;
 
-            FileUtils.deleteWithConfirm(desc.filenameFor(component));
+            String componentPath = desc.filenameFor(component);
+            // some of the SI components could be missing but that just means that SSTable didn't have those columns
+            if (component.type.equals(Component.Type.SECONDARY_INDEX) && !new File(componentPath).exists())
+                continue;
+
+            FileUtils.deleteWithConfirm(componentPath);
         }
         // remove the COMPACTED_MARKER component last if it exists
         // Note: newly created sstable should not have a marker, but we keep this for now to make sure
@@ -344,5 +350,22 @@ public abstract class SSTable
         Collection<Component> componentsToAdd = Collections2.filter(newComponents, Predicates.not(Predicates.in(components)));
         appendTOC(descriptor, componentsToAdd);
         components.addAll(componentsToAdd);
+    }
+
+    /**
+     * @return an immutable view of the components of this sstable
+     * @param filter a component type to filter by
+     */
+    public Set<Component> getComponents(Component.Type filter)
+    {
+        if (filter == null)
+            return ImmutableSet.<Component>builder().addAll(components).build();
+        Set<Component> s = new HashSet<>();
+        for (Component c : components)
+        {
+            if (c.type == filter)
+                s.add(c);
+        }
+        return s;
     }
 }

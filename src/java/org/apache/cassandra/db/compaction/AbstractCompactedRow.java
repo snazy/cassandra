@@ -21,10 +21,13 @@ import java.io.Closeable;
 import java.io.DataOutput;
 import java.io.IOException;
 import java.security.MessageDigest;
+import java.util.Collection;
 
 import org.apache.cassandra.db.DecoratedKey;
 import org.apache.cassandra.db.RowIndexEntry;
 import org.apache.cassandra.io.sstable.ColumnStats;
+import org.apache.cassandra.io.sstable.SSTableWriterListener;
+import org.apache.cassandra.utils.Pair;
 
 /**
  * a CompactedRow is an object that takes a bunch of rows (keys + columnfamilies)
@@ -47,7 +50,14 @@ public abstract class AbstractCompactedRow implements Closeable
      *
      * @return index information for the written row, or null if the compaction resulted in only expired tombstones.
      */
-    public abstract RowIndexEntry write(long currentPosition, DataOutput out) throws IOException;
+    public RowIndexEntry write(Pair<Long, Long> currentPositions, DataOutput out, Collection<SSTableWriterListener> listeners) throws IOException
+    {
+        for (SSTableWriterListener listener : listeners)
+            listener.startRow(key, currentPositions.left);
+        return writeInternal(currentPositions.right, out, listeners);
+    }
+
+    protected abstract RowIndexEntry writeInternal(long currentPosition, DataOutput out, Collection<SSTableWriterListener> listeners) throws IOException;
 
     /**
      * update @param digest with the data bytes of the row (not including row key or row size).

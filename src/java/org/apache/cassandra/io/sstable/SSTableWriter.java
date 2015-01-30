@@ -30,9 +30,12 @@ import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.config.Schema;
 import org.apache.cassandra.db.*;
 import org.apache.cassandra.db.compaction.AbstractCompactedRow;
+import org.apache.cassandra.db.compaction.PrecompactedRow;
+import org.apache.cassandra.db.index.SecondaryIndex;
 import org.apache.cassandra.dht.IPartitioner;
 import org.apache.cassandra.io.FSWriteError;
 import org.apache.cassandra.io.compress.CompressedSequentialWriter;
+import org.apache.cassandra.io.sstable.SSTableWriterListenable.Source;
 import org.apache.cassandra.io.util.*;
 import org.apache.cassandra.service.StorageService;
 import org.apache.cassandra.utils.ByteBufferUtil;
@@ -54,6 +57,8 @@ public class SSTableWriter extends SSTable
     private DecoratedKey lastWrittenKey;
     private FileMark dataMark;
     private final SSTableMetadata.Collector sstableMetadataCollector;
+
+    private final Set<SSTableWriterListener> listeners;
 
     public SSTableWriter(String filename, long keyCount)
     {
@@ -86,6 +91,15 @@ public class SSTableWriter extends SSTable
             components.add(Component.DIGEST);
             components.add(Component.CRC);
         }
+
+        //TODO:JEB would be great to pass the listeners in here, rather than reaching out to an explicit component
+        if (!metadata.cfName.contains(".")) // hack to make sure current SSTW is not for a native, in-built secondary index
+        {
+            ColumnFamilyStore cfs = Keyspace.open(metadata.ksName).getColumnFamilyStore(metadata.cfName);
+            for (SecondaryIndex secondaryIndex : cfs.indexManager.getIndexes())
+                components.addAll(secondaryIndex.getIndexComponents());
+        }
+
         return components;
     }
 
@@ -94,6 +108,16 @@ public class SSTableWriter extends SSTable
                          CFMetaData metadata,
                          IPartitioner<?> partitioner,
                          SSTableMetadata.Collector sstableMetadataCollector)
+    {
+        this(filename, keyCount, metadata, partitioner, sstableMetadataCollector, Source.COMPACTION);
+    }
+
+    public SSTableWriter(String filename,
+        long keyCount,
+        CFMetaData metadata,
+        IPartitioner<?> partitioner,
+        SSTableMetadata.Collector sstableMetadataCollector,
+        Source source)
     {
         super(Descriptor.fromFilename(filename),
               components(metadata),
@@ -118,6 +142,20 @@ public class SSTableWriter extends SSTable
         }
 
         this.sstableMetadataCollector = sstableMetadataCollector;
+
+        //TODO:JEB would be great to pass the listeners in here, rather than reaching out to an explicit component
+        // TODO:JEB esp, think about how this will work with offline components (scrub, etc)
+        if (!metadata.cfName.contains(".")) // hack to make sure current SSTW is not for a native, in-built secondary index
+        {
+            ColumnFamilyStore cfs = Keyspace.open(metadata.ksName).getColumnFamilyStore(metadata.cfName);
+            listeners = cfs.indexManager.getSSTableWriterListsners(descriptor, source);
+            for (SSTableWriterListener listener : listeners)
+                listener.begin();
+        }
+        else
+        {
+            listeners = Collections.EMPTY_SET;
+        }
     }
 
     public void mark()
@@ -130,17 +168,21 @@ public class SSTableWriter extends SSTable
     {
         dataFile.resetAndTruncate(dataMark);
         iwriter.resetAndTruncate();
+
+        //TODO:JEB do something with listeners here...
     }
 
     /**
      * Perform sanity checks on @param decoratedKey and @return the position in the data file before any data is written
      */
-    private long beforeAppend(DecoratedKey decoratedKey)
+    private Pair<Long, Long> beforeAppend(DecoratedKey decoratedKey)
     {
         assert decoratedKey != null : "Keys must not be null"; // empty keys ARE allowed b/c of indexed column values
         if (lastWrittenKey != null && lastWrittenKey.compareTo(decoratedKey) >= 0)
             throw new RuntimeException("Last written key " + lastWrittenKey + " >= current key " + decoratedKey + " writing into " + getFilename());
-        return (lastWrittenKey == null) ? 0 : dataFile.getFilePointer();
+        long dataPosition = (lastWrittenKey == null) ? 0 : dataFile.getFilePointer();
+        long indexPosition = (lastWrittenKey == null) ? 0 : iwriter.getFilePointer();
+        return Pair.create(indexPosition, dataPosition);
     }
 
     private void afterAppend(DecoratedKey decoratedKey, long dataPosition, RowIndexEntry index)
@@ -162,11 +204,11 @@ public class SSTableWriter extends SSTable
      */
     public RowIndexEntry append(AbstractCompactedRow row)
     {
-        long currentPosition = beforeAppend(row.key);
+        Pair<Long, Long> currentPositions = beforeAppend(row.key);
         RowIndexEntry entry;
         try
         {
-            entry = row.write(currentPosition, dataFile.stream);
+            entry = row.write(currentPositions, dataFile.stream, listeners);
             if (entry == null)
                 return null;
         }
@@ -174,35 +216,14 @@ public class SSTableWriter extends SSTable
         {
             throw new FSWriteError(e, dataFile.getPath());
         }
-        sstableMetadataCollector.update(dataFile.getFilePointer() - currentPosition, row.columnStats());
-        afterAppend(row.key, currentPosition, entry);
+        sstableMetadataCollector.update(dataFile.getFilePointer() - currentPositions.right, row.columnStats());
+        afterAppend(row.key, currentPositions.right, entry);
         return entry;
     }
 
     public void append(DecoratedKey decoratedKey, ColumnFamily cf)
     {
-        long startPosition = beforeAppend(decoratedKey);
-        try
-        {
-            RowIndexEntry entry = rawAppend(cf, startPosition, decoratedKey, dataFile.stream);
-            afterAppend(decoratedKey, startPosition, entry);
-        }
-        catch (IOException e)
-        {
-            throw new FSWriteError(e, dataFile.getPath());
-        }
-        sstableMetadataCollector.update(dataFile.getFilePointer() - startPosition, cf.getColumnStats());
-    }
-
-    public static RowIndexEntry rawAppend(ColumnFamily cf, long startPosition, DecoratedKey key, DataOutput out) throws IOException
-    {
-        assert cf.getColumnCount() > 0 || cf.isMarkedForDelete();
-
-        ColumnIndex.Builder builder = new ColumnIndex.Builder(cf, key.key, out);
-        ColumnIndex index = builder.build(cf);
-
-        out.writeShort(END_OF_ROW);
-        return RowIndexEntry.create(startPosition, cf.deletionInfo().getTopLevelDeletion(), index);
+        append(new PrecompactedRow(decoratedKey, cf));
     }
 
     /**
@@ -211,7 +232,7 @@ public class SSTableWriter extends SSTable
      */
     public long appendFromStream(DecoratedKey key, CFMetaData metadata, DataInput in, Descriptor.Version version) throws IOException
     {
-        long currentPosition = beforeAppend(key);
+        Pair<Long, Long> currentPositions = beforeAppend(key);
 
         ColumnStats.MaxTracker<Long> maxTimestampTracker = new ColumnStats.MaxTracker<>(Long.MAX_VALUE);
         ColumnStats.MinTracker<Long> minTimestampTracker = new ColumnStats.MinTracker<>(Long.MIN_VALUE);
@@ -227,7 +248,9 @@ public class SSTableWriter extends SSTable
 
         cf.delete(DeletionTime.serializer.deserialize(in));
 
-        ColumnIndex.Builder columnIndexer = new ColumnIndex.Builder(cf, key.key, dataFile.stream);
+        for (SSTableWriterListener listener : listeners)
+            listener.startRow(key, currentPositions.left);
+        ColumnIndex.Builder columnIndexer = new ColumnIndex.Builder(cf, key.key, dataFile.stream, listeners);
 
         // read column count for version < ja
         int columnCount = Integer.MAX_VALUE;
@@ -290,13 +313,13 @@ public class SSTableWriter extends SSTable
         sstableMetadataCollector.updateMinTimestamp(minTimestampTracker.get());
         sstableMetadataCollector.updateMaxTimestamp(maxTimestampTracker.get());
         sstableMetadataCollector.updateMaxLocalDeletionTime(maxDeletionTimeTracker.get());
-        sstableMetadataCollector.addRowSize(dataFile.getFilePointer() - currentPosition);
+        sstableMetadataCollector.addRowSize(dataFile.getFilePointer() - currentPositions.right);
         sstableMetadataCollector.addColumnCount(columnIndexer.writtenAtomCount());
         sstableMetadataCollector.mergeTombstoneHistogram(tombstones);
         sstableMetadataCollector.updateMinColumnNames(minColumnNames);
         sstableMetadataCollector.updateMaxColumnNames(maxColumnNames);
-        afterAppend(key, currentPosition, RowIndexEntry.create(currentPosition, cf.deletionInfo().getTopLevelDeletion(), columnIndexer.build()));
-        return currentPosition;
+        afterAppend(key, currentPositions.right, RowIndexEntry.create(currentPositions.right, cf.deletionInfo().getTopLevelDeletion(), columnIndexer.build()));
+        return currentPositions.right;
     }
 
     /**
@@ -361,6 +384,10 @@ public class SSTableWriter extends SSTable
         iwriter.close();
         // main data, close will truncate if necessary
         dataFile.close();
+
+        for (SSTableWriterListener listener : listeners)
+            listener.complete();
+
         // write sstable statistics
         SSTableMetadata sstableMetadata = sstableMetadataCollector.finalizeMetadata(partitioner.getClass().getCanonicalName(),
                                                                                     metadata.getBloomFilterFpChance());
@@ -398,7 +425,15 @@ public class SSTableWriter extends SSTable
     {
         for (Component component : Sets.difference(components, Sets.newHashSet(Component.DATA, Component.SUMMARY)))
         {
-            FileUtils.renameWithConfirm(tmpdesc.filenameFor(component), newdesc.filenameFor(component));
+            String tmpComponentPath = tmpdesc.filenameFor(component);
+
+            // if current component is an SI it doesn't necessary mean that it's going to be present for
+            // given SSTable because indexes are build based on the data contained by SSTable but we still need to
+            // register all of the index components upfront, so we have to check existence here instead of failing rename.
+            if (component.type.equals(Component.Type.SECONDARY_INDEX) && !new File(tmpComponentPath).exists())
+                continue;
+
+            FileUtils.renameWithConfirm(tmpComponentPath, newdesc.filenameFor(component));
         }
 
         // do -Data last because -Data present should mean the sstable was completely renamed before crash
@@ -500,6 +535,11 @@ public class SSTableWriter extends SSTable
             // we can't reset dbuilder either, but that is the last thing called in afterappend so
             // we assume that if that worked then we won't be trying to reset.
             indexFile.resetAndTruncate(mark);
+        }
+
+        public long getFilePointer()
+        {
+            return indexFile.getFilePointer();
         }
 
         @Override

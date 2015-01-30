@@ -18,8 +18,13 @@
 package org.apache.cassandra.db.index;
 
 import java.nio.ByteBuffer;
-import java.util.*;
-import java.util.concurrent.*;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.Iterator;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Future;
+import java.util.concurrent.FutureTask;
 
 import org.apache.commons.lang3.StringUtils;
 import org.slf4j.Logger;
@@ -27,18 +32,19 @@ import org.slf4j.LoggerFactory;
 
 import org.apache.cassandra.config.CFMetaData;
 import org.apache.cassandra.config.ColumnDefinition;
-import org.apache.cassandra.exceptions.ConfigurationException;
 import org.apache.cassandra.db.Column;
 import org.apache.cassandra.db.ColumnFamilyStore;
 import org.apache.cassandra.db.DecoratedKey;
 import org.apache.cassandra.db.SystemKeyspace;
 import org.apache.cassandra.db.compaction.CompactionManager;
-import org.apache.cassandra.db.index.keys.KeysIndex;
 import org.apache.cassandra.db.index.composites.CompositesIndex;
+import org.apache.cassandra.db.index.keys.KeysIndex;
 import org.apache.cassandra.db.marshal.AbstractType;
 import org.apache.cassandra.db.marshal.BytesType;
 import org.apache.cassandra.db.marshal.LocalByPartionerType;
-import org.apache.cassandra.dht.*;
+import org.apache.cassandra.dht.LocalToken;
+import org.apache.cassandra.exceptions.ConfigurationException;
+import org.apache.cassandra.io.sstable.Component;
 import org.apache.cassandra.io.sstable.ReducingKeyIterator;
 import org.apache.cassandra.io.sstable.SSTableReader;
 import org.apache.cassandra.service.StorageService;
@@ -251,7 +257,7 @@ public abstract class SecondaryIndex
         return baseCfs;
     }
 
-    private void setBaseCfs(ColumnFamilyStore baseCfs)
+    protected void setBaseCfs(ColumnFamilyStore baseCfs)
     {
         this.baseCfs = baseCfs;
     }
@@ -296,12 +302,17 @@ public abstract class SecondaryIndex
      */
     public boolean indexes(ByteBuffer name)
     {
+        return getColumnDefinition(name) != null;
+    }
+
+    public ColumnDefinition getColumnDefinition(ByteBuffer name)
+    {
         for (ColumnDefinition columnDef : columnDefs)
         {
             if (baseCfs.getComparator().compare(columnDef.name, name) == 0)
-                return true;
+                return columnDef;
         }
-        return false;
+        return null;
     }
 
     /**
@@ -343,9 +354,9 @@ public abstract class SecondaryIndex
                 throw new RuntimeException("Unknown index type: " + cdef.getIndexName());
         }
 
+        index.setBaseCfs(baseCfs);
         index.addColumnDef(cdef);
         index.validateOptions();
-        index.setBaseCfs(baseCfs);
 
         return index;
     }
@@ -370,5 +381,16 @@ public abstract class SecondaryIndex
                 return null;
         }
         throw new AssertionError();
+    }
+
+    @Override
+    public String toString()
+    {
+        return String.format("%s: columnDefs %s", getClass().getName(), columnDefs);
+    }
+
+    public Collection<Component> getIndexComponents()
+    {
+        return Collections.EMPTY_LIST;
     }
 }

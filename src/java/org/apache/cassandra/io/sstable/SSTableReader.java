@@ -303,7 +303,7 @@ public class SSTableReader extends SSTable implements Closeable
                                       SSTableMetadata sstableMetadata)
     {
         assert desc != null && partitioner != null && ifile != null && dfile != null && isummary != null && bf != null && sstableMetadata != null;
-        return new SSTableReader(desc,
+        SSTableReader ssTableReader = new SSTableReader(desc,
                                  components,
                                  metadata,
                                  partitioner,
@@ -312,6 +312,10 @@ public class SSTableReader extends SSTable implements Closeable
                                  bf,
                                  maxDataAge,
                                  sstableMetadata);
+        //TODO:JEB maybe don't need these
+//        ColumnFamilyStore cfs = Keyspace.open(metadata.ksName).getColumnFamilyStore(metadata.cfName);
+//        cfs.indexManager.registerSecondaryIndexes(ssTableReader);
+        return ssTableReader;
     }
 
 
@@ -387,6 +391,9 @@ public class SSTableReader extends SSTable implements Closeable
         // close the BF so it can be opened later.
         bf.close();
         indexSummary.close();
+        //TODO:JEB maybe don't need these
+//        ColumnFamilyStore cfs = Keyspace.open(metadata.ksName).getColumnFamilyStore(metadata.cfName);
+//        cfs.indexManager.closeSecondaryIndexes(this);
     }
 
     public void setTrackedBy(DataTracker tracker)
@@ -460,7 +467,7 @@ public class SSTableReader extends SSTable implements Closeable
             saveSummary(this, ibuilder, dbuilder);
     }
 
-     private void buildSummary(boolean recreateBloomFilter, SegmentedFile.Builder ibuilder, SegmentedFile.Builder dbuilder, boolean summaryLoaded) throws IOException
+    private void buildSummary(boolean recreateBloomFilter, SegmentedFile.Builder ibuilder, SegmentedFile.Builder dbuilder, boolean summaryLoaded) throws IOException
      {
         // we read the positions in a BRAF so we don't have to worry about an entry spanning a mmap boundary.
         RandomAccessReader primaryIndex = RandomAccessReader.open(new File(descriptor.filenameFor(Component.PRIMARY_INDEX)));
@@ -1223,7 +1230,32 @@ public class SSTableReader extends SSTable implements Closeable
         {
             File sourceFile = new File(descriptor.filenameFor(component));
             File targetLink = new File(snapshotDirectoryPath, sourceFile.getName());
+
+            // some of the SI components could be missing but that just means that SSTable didn't have those columns
+            if (component.type.equals(Component.Type.SECONDARY_INDEX) && !sourceFile.exists())
+                continue;
+
             FileUtils.createHardLink(sourceFile, targetLink);
+        }
+    }
+
+    public DecoratedKey keyAt(long indexPosition) throws IOException
+    {
+        try (FileDataInput in = ifile.getSegment(indexPosition))
+        {
+            return (in.isEOF()) ? null : partitioner.decorateKey(ByteBufferUtil.readWithShortLength(in));
+        }
+    }
+
+    public void readAndCacheIndex(DecoratedKey key, long indexPosition) throws IOException
+    {
+        long rowIndexPosition = indexPosition + 2 + key.key.remaining();
+        try (FileDataInput in = ifile.getSegment(rowIndexPosition))
+        {
+            if (in.isEOF())
+                return;
+
+            cacheKey(key, RowIndexEntry.serializer.deserialize(in, descriptor.version));
         }
     }
 

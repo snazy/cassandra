@@ -31,7 +31,7 @@ import org.apache.cassandra.io.sstable.ReducingKeyIterator;
 /**
  * Manages building an entire index from column family data. Runs on to compaction manager.
  */
-public class SecondaryIndexBuilder extends CompactionInfo.Holder
+public class SecondaryIndexBuilder extends IndexBuildTask
 {
     private final ColumnFamilyStore cfs;
     private final Set<String> idxNames;

@@ -18,20 +18,42 @@
 package org.apache.cassandra.db.index;
 
 import java.nio.ByteBuffer;
-import java.util.*;
-import java.util.concurrent.*;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.IdentityHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.ConcurrentNavigableMap;
+import java.util.concurrent.ConcurrentSkipListMap;
+import java.util.concurrent.Future;
 
+import com.google.common.collect.ImmutableSet;
 import org.apache.commons.lang3.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import org.apache.cassandra.config.ColumnDefinition;
-import org.apache.cassandra.db.*;
+import org.apache.cassandra.db.Column;
+import org.apache.cassandra.db.ColumnFamily;
+import org.apache.cassandra.db.ColumnFamilyStore;
+import org.apache.cassandra.db.DecoratedKey;
+import org.apache.cassandra.db.Row;
+import org.apache.cassandra.db.SystemKeyspace;
 import org.apache.cassandra.db.compaction.CompactionManager;
 import org.apache.cassandra.db.filter.ExtendedFilter;
 import org.apache.cassandra.exceptions.ConfigurationException;
+import org.apache.cassandra.io.sstable.Descriptor;
 import org.apache.cassandra.io.sstable.ReducingKeyIterator;
 import org.apache.cassandra.io.sstable.SSTableReader;
+import org.apache.cassandra.io.sstable.SSTableWriterListenable;
+import org.apache.cassandra.io.sstable.SSTableWriterListenable.Source;
+import org.apache.cassandra.io.sstable.SSTableWriterListener;
 import org.apache.cassandra.thrift.IndexExpression;
 import org.apache.cassandra.thrift.IndexType;
 import org.apache.cassandra.utils.FBUtilities;
@@ -73,6 +95,8 @@ public class SecondaryIndexManager
      */
     private final Set<SecondaryIndex> allIndexes;
 
+    private final Set<SSTableWriterListenable> writerListenables;
+
     /**
      * The underlying column family containing the source data for these indexes
      */
@@ -83,6 +107,7 @@ public class SecondaryIndexManager
         indexesByColumn = new ConcurrentSkipListMap<>();
         rowLevelIndexMap = new ConcurrentHashMap<>();
         allIndexes = Collections.newSetFromMap(new ConcurrentHashMap<SecondaryIndex, Boolean>());
+        writerListenables = new HashSet<>();
 
         this.baseCfs = baseCfs;
     }
@@ -136,6 +161,19 @@ public class SecondaryIndexManager
 
         logger.info(String.format("Submitting index build of %s for data in %s",
                                   idxNames, StringUtils.join(sstables, ", ")));
+
+        // TODO: this is hack to work around limitations of index re-build process
+        for (SecondaryIndex index : baseCfs.indexManager.getIndexesNotBackedByCfs())
+        {
+            if (index instanceof SuffixArraySecondaryIndex)
+            {
+                ((SuffixArraySecondaryIndex) index).buildIndexes(sstables, idxNames);
+                break;
+            }
+        }
+
+        if (idxNames.isEmpty())
+            return;
 
         SecondaryIndexBuilder builder = new SecondaryIndexBuilder(baseCfs, idxNames, new ReducingKeyIterator(sstables));
         Future<?> future = CompactionManager.instance.submitIndexBuild(builder);
@@ -230,11 +268,13 @@ public class SecondaryIndexManager
             {
                 allIndexes.remove(index);
                 rowLevelIndexMap.remove(index.getClass());
+                writerListenables.remove(index);
             }
         }
         else
         {
             allIndexes.remove(index);
+            writerListenables.remove(index);
         }
 
         index.removeIndex(column);
@@ -299,6 +339,9 @@ public class SecondaryIndexManager
 
         // Add to all indexes set:
         allIndexes.add(index);
+
+        if (index instanceof SSTableWriterListenable)
+            writerListenables.add((SSTableWriterListenable)index);
 
         // if we're just linking in the index to indexedColumns on an
         // already-built index post-restart, we're done
@@ -576,6 +619,18 @@ public class SecondaryIndexManager
     {
         SecondaryIndex index = getIndexForColumn(column.name());
         return index == null || index.validate(column);
+    }
+
+    /**
+     * @return a immutable view of the current SSTableWriter listeners
+     * @param descriptor
+     */
+    public Set<SSTableWriterListener> getSSTableWriterListsners(Descriptor descriptor, Source source)
+    {
+        ImmutableSet.Builder<SSTableWriterListener> set = ImmutableSet.builder();
+        for (SSTableWriterListenable listenable : writerListenables)
+            set.add(listenable.getListener(descriptor, source));
+        return set.build();
     }
 
     public static interface Updater

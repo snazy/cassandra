@@ -18,10 +18,12 @@
 package org.apache.cassandra.db;
 
 import java.io.IOException;
+import java.util.Collections;
 
 import junit.framework.Assert;
 import org.apache.cassandra.SchemaLoader;
 import org.apache.cassandra.config.DatabaseDescriptor;
+import org.apache.cassandra.io.sstable.SSTableWriterListener;
 import org.apache.cassandra.io.util.DataOutputBuffer;
 import org.apache.cassandra.utils.ByteBufferUtil;
 import org.apache.cassandra.utils.FBUtilities;
@@ -41,7 +43,7 @@ public class RowIndexEntryTest extends SchemaLoader
 
         buffer = new DataOutputBuffer();
         ColumnFamily cf = ArrayBackedSortedColumns.factory.create("Keyspace1", "Standard1");
-        ColumnIndex columnIndex = new ColumnIndex.Builder(cf, ByteBufferUtil.bytes("a"), new DataOutputBuffer())
+        ColumnIndex columnIndex = new ColumnIndex.Builder(cf, ByteBufferUtil.bytes("a"), new DataOutputBuffer(), Collections.<SSTableWriterListener>emptyList())
         {{
             int idx = 0, size = 0;
             Column column;
