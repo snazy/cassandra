@@ -3,13 +3,10 @@ package org.apache.cassandra.db.index.utils;
 import java.io.IOException;
 import java.util.*;
 
-import com.google.common.collect.Sets;
-import org.apache.cassandra.db.index.utils.CombinedValue;
-import org.apache.cassandra.db.index.utils.SkippableIterator;
-import org.apache.cassandra.db.index.utils.LazyMergeSortIterator;
 import org.apache.cassandra.utils.Pair;
 
 import com.google.common.collect.AbstractIterator;
+import com.google.common.collect.Sets;
 import com.google.common.primitives.Longs;
 import org.apache.commons.lang3.builder.HashCodeBuilder;
 

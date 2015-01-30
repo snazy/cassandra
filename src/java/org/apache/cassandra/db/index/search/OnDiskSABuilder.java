@@ -8,7 +8,7 @@ import java.util.*;
 
 import org.apache.cassandra.db.DecoratedKey;
 import org.apache.cassandra.db.index.search.container.TokenTreeBuilder;
-import org.apache.cassandra.db.marshal.AbstractType;
+import org.apache.cassandra.db.marshal.*;
 import org.apache.cassandra.io.FSWriteError;
 import org.apache.cassandra.io.util.FileUtils;
 import org.apache.cassandra.io.util.SequentialWriter;
@@ -41,6 +41,59 @@ public class OnDiskSABuilder
         }
     }
 
+    public static enum SuffixSize
+    {
+        INT(4), LONG(8), UUID(16), VARIABLE(-1);
+
+        public final int size;
+
+        SuffixSize(int size)
+        {
+            this.size = size;
+        }
+
+        public boolean isConstant()
+        {
+            return this != VARIABLE;
+        }
+
+        public static SuffixSize of(int size)
+        {
+            switch (size)
+            {
+                case -1:
+                    return VARIABLE;
+
+                case 4:
+                    return INT;
+
+                case 8:
+                    return LONG;
+
+                case 16:
+                    return UUID;
+
+                default:
+                    throw new IllegalStateException("unknown state: " + size);
+            }
+        }
+
+        public static SuffixSize sizeOf(AbstractType<?> comparator)
+        {
+            if (comparator instanceof Int32Type || comparator instanceof FloatType)
+                return INT;
+
+            if (comparator instanceof LongType || comparator instanceof DoubleType
+                    || comparator instanceof TimestampType || comparator instanceof DateType)
+                return LONG;
+
+            if (comparator instanceof TimeUUIDType || comparator instanceof UUIDType)
+                return UUID;
+
+            return VARIABLE;
+        }
+    }
+
     public static final int BLOCK_SIZE = 4096;
     public static final int SUPER_BLOCK_SIZE = 64;
 
@@ -48,10 +101,12 @@ public class OnDiskSABuilder
     private MutableLevel<InMemoryDataSuffix> dataLevel;
 
     private final SA sa;
+    private final SuffixSize suffixSize;
 
     public OnDiskSABuilder(AbstractType<?> comparator, Mode mode)
     {
         this.sa = new SA(comparator, mode);
+        this.suffixSize = SuffixSize.sizeOf(comparator);
     }
 
     public OnDiskSABuilder add(ByteBuffer term, TokenTreeBuilder keys)
@@ -85,6 +140,8 @@ public class OnDiskSABuilder
 
             SuffixIterator suffixes = sa.finish();
             out.writeUTF(Descriptor.current_version);
+
+            out.writeShort(suffixSize.size);
 
             // min, max suffix (useful to find initial scan range from search expressions)
             ByteBufferUtil.writeWithShortLength(suffixes.minSuffix(), out);
@@ -153,7 +210,7 @@ public class OnDiskSABuilder
             out.skipBytes((int) (FBUtilities.align(endOfBlock, BLOCK_SIZE) - endOfBlock));
     }
 
-    private static class InMemorySuffix
+    private class InMemorySuffix
     {
         protected final ByteBuffer suffix;
 
@@ -164,16 +221,19 @@ public class OnDiskSABuilder
 
         public int serializedSize()
         {
-            return 2 + suffix.remaining();
+            return (suffixSize.isConstant() ? 0 : 2) + suffix.remaining();
         }
 
         public void serialize(DataOutput out) throws IOException
         {
-            ByteBufferUtil.writeWithShortLength(suffix, out);
+            if (suffixSize.isConstant())
+                ByteBufferUtil.write(suffix, out);
+            else
+                ByteBufferUtil.writeWithShortLength(suffix, out);
         }
     }
 
-    private static class InMemoryPointerSuffix extends InMemorySuffix
+    private class InMemoryPointerSuffix extends InMemorySuffix
     {
         protected final int blockCnt;
 
@@ -197,7 +257,7 @@ public class OnDiskSABuilder
         }
     }
 
-    private static class InMemoryDataSuffix extends InMemorySuffix
+    private class InMemoryDataSuffix extends InMemorySuffix
     {
         private TokenTreeBuilder keys;
 
@@ -390,7 +450,7 @@ public class OnDiskSABuilder
         }
     }
 
-    private static class MutableLevel<T extends InMemorySuffix>
+    private class MutableLevel<T extends InMemorySuffix>
     {
         private final LongArrayList blockOffsets = new LongArrayList();
 
@@ -449,7 +509,7 @@ public class OnDiskSABuilder
     }
 
     /** builds standard data blocks and super blocks, as well */
-    private static class DataBuilderLevel extends MutableLevel<InMemoryDataSuffix>
+    private class DataBuilderLevel extends MutableLevel<InMemoryDataSuffix>
     {
         private final LongArrayList superBlockOffsets = new LongArrayList();
 
