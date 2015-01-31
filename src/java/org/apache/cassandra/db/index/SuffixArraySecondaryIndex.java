@@ -16,6 +16,8 @@ import org.apache.cassandra.db.*;
 import org.apache.cassandra.db.columniterator.SSTableNamesIterator;
 import org.apache.cassandra.db.compaction.*;
 import org.apache.cassandra.db.filter.ExtendedFilter;
+import org.apache.cassandra.db.filter.IDiskAtomFilter;
+import org.apache.cassandra.db.filter.NamesQueryFilter;
 import org.apache.cassandra.db.index.search.OnDiskSA;
 import org.apache.cassandra.db.index.search.OnDiskSABuilder;
 import org.apache.cassandra.db.index.search.container.TokenTreeBuilder;
@@ -34,6 +36,7 @@ import org.apache.cassandra.io.FSReadError;
 import org.apache.cassandra.io.sstable.*;
 import org.apache.cassandra.io.util.FileUtils;
 import org.apache.cassandra.notifications.*;
+import org.apache.cassandra.service.StorageProxy;
 import org.apache.cassandra.service.StorageService;
 import org.apache.cassandra.thrift.IndexExpression;
 import org.apache.cassandra.thrift.IndexOperator;
@@ -678,15 +681,20 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
             return dataTracker != null ? dataTracker.view.get() : null;
         }
 
-        private Row getRow(DecoratedKey key, ExtendedFilter filter, List<Pair<ByteBuffer, Expression>> expressions)
+        private Row getRow(DecoratedKey key, IDiskAtomFilter columnFilter, List<Pair<ByteBuffer, Expression>> expressions)
         {
             ReadCommand cmd = ReadCommand.create(baseCfs.keyspace.getName(),
                                                  key.key,
                                                  baseCfs.getColumnFamilyName(),
                                                  System.currentTimeMillis(),
-                                                 filter.columnFilter(key.key));
+                                                 columnFilter);
 
             return new RowReader(cmd, expressions).call();
+        }
+
+        private Row getRow(DecoratedKey key, ExtendedFilter filter, List<Pair<ByteBuffer, Expression>> expressions)
+        {
+            return getRow(key, filter.columnFilter(key.key), expressions);
         }
 
         private class RowReader implements Callable<Row>
@@ -706,7 +714,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
                 try
                 {
                     Row row = command.getRow(Keyspace.open(command.ksName));
-                    return satisfiesPredicates(row) ? row : null;
+                    return satisfiesPredicates(row, false) ? row : null;
                 }
                 finally
                 {
@@ -718,17 +726,39 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
              * reapply the predicates to see if the row still satisfies the search predicates
              * now that it's been loaded and merged from the LSM storage engine.
              */
-            private boolean satisfiesPredicates(Row row)
+            private boolean satisfiesPredicates(Row row, boolean avoidFetchOnMisses)
             {
-                if (row.cf == null)
+                if (row.cf == null || row.cf.isMarkedForDelete())
                     return false;
+
+                SortedSet<ByteBuffer> misses = new TreeSet<>(baseCfs.getComparator());
+
                 long now = System.currentTimeMillis();
                 for (Pair<ByteBuffer, Expression> entry : expressions)
                 {
                     Column col = row.cf.getColumn(entry.left);
-                    if (col == null || !col.isLive(now) || !entry.right.contains(col.value()))
+
+                    // this means that column expression query either
+                    //   a. wasn't included in the filter;
+                    //   b. columns are paged and the current page doesn't have that column.
+                    if (col == null)
+                    {
+                        if (avoidFetchOnMisses)
+                            return false;
+
+                        misses.add(entry.left);
+                        continue;
+                    }
+
+                    if (!col.isLive(now) || !entry.right.contains(col.value()))
                         return false;
                 }
+
+                // if we had some missing columns which where part of the index expressions we need to fetch them
+                // in the separate call and check for correctness of search results.
+                if (!misses.isEmpty() && !avoidFetchOnMisses)
+                    return satisfiesPredicates(getRow(row.key, new NamesQueryFilter(misses), expressions), true);
+
                 return true;
             }
         }
