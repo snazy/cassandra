@@ -17,10 +17,10 @@
  */
 package org.apache.cassandra.io.util;
 
+import java.lang.reflect.Field;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 
-import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.utils.FastByteOperations;
 import org.apache.cassandra.utils.memory.MemoryUtil;
 import sun.misc.Unsafe;
@@ -31,12 +31,26 @@ import sun.nio.ch.DirectBuffer;
  */
 public class Memory
 {
-    private static final Unsafe unsafe = NativeAllocator.unsafe;
-    private static final IAllocator allocator = DatabaseDescriptor.getoffHeapMemoryAllocator();
+    private static final Unsafe unsafe;
+    static
+    {
+        try
+        {
+            Field field = sun.misc.Unsafe.class.getDeclaredField("theUnsafe");
+            field.setAccessible(true);
+            unsafe = (sun.misc.Unsafe) field.get(null);
+        }
+        catch (Exception e)
+        {
+            throw new AssertionError(e);
+        }
+    }
     private static final long BYTE_ARRAY_BASE_OFFSET = unsafe.arrayBaseOffset(byte[].class);
 
     private static final boolean bigEndian = ByteOrder.nativeOrder().equals(ByteOrder.BIG_ENDIAN);
     private static final boolean unaligned;
+
+    public static final ByteBuffer[] NO_BYTE_BUFFERS = new ByteBuffer[0];
 
     static
     {
@@ -52,7 +66,7 @@ public class Memory
     protected Memory(long bytes)
     {
         size = bytes;
-        peer = allocator.allocate(size);
+        peer = MemoryUtil.allocate(size);
     }
 
     public static Memory allocate(long bytes)
@@ -297,7 +311,7 @@ public class Memory
     public void free()
     {
         assert peer != 0;
-        allocator.free(peer);
+        MemoryUtil.free(peer);
         peer = 0;
     }
 
@@ -323,7 +337,7 @@ public class Memory
     public ByteBuffer[] asByteBuffers()
     {
         if (size() == 0)
-            return new ByteBuffer[0];
+            return NO_BYTE_BUFFERS;
 
         ByteBuffer[] result = new ByteBuffer[(int) (size() / Integer.MAX_VALUE) + 1];
         long offset = 0;

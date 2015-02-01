@@ -64,6 +64,16 @@ public abstract class MemoryUtil
         }
     }
 
+    public static long allocate(long size)
+    {
+        return unsafe.allocateMemory(size);
+    }
+
+    public static void free(long peer)
+    {
+        unsafe.freeMemory(peer);
+    }
+
     public static void setByte(long address, byte b)
     {
         unsafe.putByte(address, b);
