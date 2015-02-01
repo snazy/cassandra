@@ -155,7 +155,7 @@ find_library()
 case "`uname -s`" in
     Linux)
         which ldconfig > /dev/null 2>&1
-        if [ $? ] ; then
+        if [ $? == 0 ] ; then
             # e.g. for CentOS
             dirs=`ldconfig -v 2>/dev/null | grep -v ^$'\t' | sed 's/^\([^:]*\):.*$/\1/'`
         else
