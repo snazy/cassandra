@@ -154,7 +154,18 @@ find_library()
 }
 case "`uname -s`" in
     Linux)
-        lib=$(find_library libjemalloc .so `ldconfig -v 2>/dev/null | grep -v ^$'\t' | sed 's/^\([^:]*\):.*$/\1/'`)
+        which ldconfig > /dev/null 2>&1
+        if [ $? ] ; then
+            # e.g. for CentOS
+            dirs=`ldconfig -v 2>/dev/null | grep -v ^$'\t' | sed 's/^\([^:]*\):.*$/\1/'`
+        else
+            # e.g. for Debian
+            dirs=`cat /etc/ld.so.conf /etc/ld.so.conf.d/*.conf | grep '^/'`
+        fi
+        lib=$(find_library libjemalloc .so $dirs)
+        if [ -z $lib ] ; then
+            lib=$(find_library libjemalloc .so.1 $dirs)
+        fi
         if [ ! -z $lib ] ; then
             export LD_PRELOAD=$lib
             JVM_OPTS="$JVM_OPTS -Dorg.caffinitas.ohc.allocator=unsafe"
