@@ -132,6 +132,43 @@ case "`uname`" in
     ;;
 esac
 
+# Use jemalloc via LD_PRELOAD / DYLD_INSERT_LIBRARIES and add appropriate configuration for OHC
+find_library()
+{
+    lname=$1
+    shift
+    lext=$1
+    shift
+    while [ ! -z $1 ] ; do
+        path=$1
+        shift
+        for dir in $(echo $path | tr ":" " ") ; do
+            if [ -d $dir ] ; then
+                if [ -f $dir/$lname$lext ] ; then
+                    echo $dir/$lname$lext
+                    return
+                fi
+            fi
+        done
+    done
+}
+case "`uname -s`" in
+    Linux)
+        lib=$(find_library libjemalloc .so `ldconfig -v 2>/dev/null | grep -v ^$'\t' | sed 's/^\([^:]*\):.*$/\1/'`)
+        if [ ! -z $lib ] ; then
+            export LD_PRELOAD=$lib
+            JVM_OPTS="$JVM_OPTS -Dorg.caffinitas.ohc.allocator=unsafe"
+        fi
+    ;;
+    Darwin)
+        lib=$(find_library libjemalloc .dylib $DYLD_LIBRARY_PATH ${DYLD_FALLBACK_LIBRARY_PATH-$HOME/lib:/usr/local/lib:/lib:/usr/lib})
+        if [ ! -z $lib ] ; then
+            export DYLD_INSERT_LIBRARIES=$lib
+            JVM_OPTS="$JVM_OPTS -Dorg.caffinitas.ohc.allocator=unsafe"
+        fi
+    ;;
+esac
+
 launch_service()
 {
     pidpath="$1"
