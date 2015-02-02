@@ -7,6 +7,8 @@ import org.apache.cassandra.SchemaLoader;
 import org.apache.cassandra.db.*;
 import org.apache.cassandra.db.columniterator.IdentityQueryFilter;
 import org.apache.cassandra.db.filter.ExtendedFilter;
+import org.apache.cassandra.db.filter.IDiskAtomFilter;
+import org.apache.cassandra.db.filter.NamesQueryFilter;
 import org.apache.cassandra.db.marshal.AsciiType;
 import org.apache.cassandra.db.marshal.Int32Type;
 import org.apache.cassandra.db.marshal.UTF8Type;
@@ -16,6 +18,7 @@ import org.apache.cassandra.thrift.IndexExpression;
 import org.apache.cassandra.thrift.IndexOperator;
 import org.apache.cassandra.utils.*;
 
+import com.google.common.collect.Iterables;
 import com.google.common.collect.Iterators;
 import com.google.common.collect.Lists;
 
@@ -699,6 +702,57 @@ public class SuffixArraySecondaryIndexTest extends SchemaLoader
         rows = getIndexed(store, 100, new IndexExpression(firstName, IndexOperator.EQ, UTF8Type.instance.decompose("a")));
         Assert.assertEquals(rows.toString(), 1, rows.size());
     }
+
+    @Test
+    public void testSearchWithoutOrPartialPredicateFiltering()
+    {
+        ColumnFamilyStore store = Keyspace.open(KS_NAME).getColumnFamilyStore(CF_NAME);
+
+        final ByteBuffer firstName = UTF8Type.instance.decompose("first_name");
+        final ByteBuffer age = UTF8Type.instance.decompose("age");
+
+        RowMutation rm1 = new RowMutation("SASecondaryIndex", AsciiType.instance.decompose("key1"));
+        rm1.add("SAIndexed1", firstName, AsciiType.instance.decompose("pavel"), System.currentTimeMillis());
+        rm1.add("SAIndexed1", age, Int32Type.instance.decompose(26), System.currentTimeMillis());
+        rm1.add("SAIndexed1", UTF8Type.instance.decompose("/data/1"), Int32Type.instance.decompose(1), System.currentTimeMillis());
+        rm1.add("SAIndexed1", UTF8Type.instance.decompose("/data/2"), Int32Type.instance.decompose(2), System.currentTimeMillis());
+        rm1.add("SAIndexed1", UTF8Type.instance.decompose("/data/3"), Int32Type.instance.decompose(3), System.currentTimeMillis());
+        rm1.add("SAIndexed1", UTF8Type.instance.decompose("/data/4"), Int32Type.instance.decompose(4), System.currentTimeMillis());
+
+        rm1.apply();
+
+        store.forceBlockingFlush();
+
+        // don't request any columns that are in the index expressions
+        SortedSet<ByteBuffer> columns = new TreeSet<ByteBuffer>(store.getComparator())
+        {{
+            add(UTF8Type.instance.decompose("/data/2"));
+        }};
+
+        Set<String> rows = getIndexed(store, new NamesQueryFilter(columns), 10,
+                                      new IndexExpression(firstName, IndexOperator.EQ, UTF8Type.instance.decompose("a")),
+                                      new IndexExpression(age, IndexOperator.GTE, Int32Type.instance.decompose(26)));
+
+        Assert.assertEquals(rows.toString(), 1, rows.size());
+        Assert.assertEquals(rows.toString(), "key1", Iterables.get(rows, 0));
+
+        // now, let's request only one of the expressions to be returned as a column, this will make sure
+        // that when missing columns are filtered, only appropriate expressions are taken into consideration.
+        columns = new TreeSet<ByteBuffer>(store.getComparator())
+        {{
+                add(UTF8Type.instance.decompose("/data/1"));
+                add(UTF8Type.instance.decompose("/data/2"));
+                add(firstName);
+        }};
+
+        getIndexed(store, new NamesQueryFilter(columns), 10,
+                   new IndexExpression(firstName, IndexOperator.EQ, UTF8Type.instance.decompose("a")),
+                   new IndexExpression(age, IndexOperator.GTE, Int32Type.instance.decompose(26)));
+
+        Assert.assertEquals(rows.toString(), 1, rows.size());
+        Assert.assertEquals(rows.toString(), "key1", Iterables.get(rows, 0));
+    }
+
     private static ColumnFamilyStore loadData(Map<String, Pair<String, Integer>> data)
     {
         return loadData(data, System.currentTimeMillis());
@@ -718,7 +772,12 @@ public class SuffixArraySecondaryIndexTest extends SchemaLoader
 
     private static Set<String> getIndexed(ColumnFamilyStore store, int maxResults, IndexExpression... expressions)
     {
-        return getKeys(getIndexed(store, null, maxResults, expressions));
+        return getIndexed(store, new IdentityQueryFilter(), maxResults, expressions);
+    }
+
+    private static Set<String> getIndexed(ColumnFamilyStore store, IDiskAtomFilter columnFilter, int maxResults, IndexExpression... expressions)
+    {
+        return getKeys(getIndexed(store, columnFilter, null, maxResults, expressions));
     }
 
     private static Set<DecoratedKey> getPaged(ColumnFamilyStore store, int pageSize, IndexExpression... expressions)
@@ -729,7 +788,7 @@ public class SuffixArraySecondaryIndexTest extends SchemaLoader
         DecoratedKey lastKey = null;
         do
         {
-            currentPage = getIndexed(store, lastKey, pageSize, expressions);
+            currentPage = getIndexed(store, new IdentityQueryFilter(), lastKey, pageSize, expressions);
 
             if (currentPage == null)
                 break;
@@ -748,7 +807,7 @@ public class SuffixArraySecondaryIndexTest extends SchemaLoader
         return uniqueKeys;
     }
 
-    private static List<Row> getIndexed(ColumnFamilyStore store, DecoratedKey startKey, int maxResults, IndexExpression... expressions)
+    private static List<Row> getIndexed(ColumnFamilyStore store, IDiskAtomFilter columnFilter, DecoratedKey startKey, int maxResults, IndexExpression... expressions)
     {
         IPartitioner p = StorageService.getPartitioner();
         AbstractBounds<RowPosition> bounds;
@@ -763,16 +822,11 @@ public class SuffixArraySecondaryIndexTest extends SchemaLoader
         }
 
         return store.indexManager.search(ExtendedFilter.create(store,
-                                         new DataRange(bounds, new IdentityQueryFilter()),
+                                         new DataRange(bounds, columnFilter),
                                          Arrays.asList(expressions),
                                          maxResults,
                                          false,
                                          System.currentTimeMillis()));
-    }
-
-    private static RowMutation newMutation(String key, String firstName, int age)
-    {
-        return newMutation(key, firstName, age, System.currentTimeMillis());
     }
 
     private static RowMutation newMutation(String key, String firstName, int age, long timestamp)
