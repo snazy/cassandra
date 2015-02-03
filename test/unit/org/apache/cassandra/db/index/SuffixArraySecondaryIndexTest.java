@@ -76,6 +76,20 @@ public class SuffixArraySecondaryIndexTest extends SchemaLoader
     }
 
     @Test
+    public void testEmptyTokenizedResults() throws Exception
+    {
+        Map<String, Pair<String, Integer>> data = new HashMap<String, Pair<String, Integer>>()
+        {{
+                put("key1", Pair.create("  ", 14));
+        }};
+
+        ColumnFamilyStore store = loadData(data);
+
+        Set<String> rows= getIndexed(store, 10, new IndexExpression(UTF8Type.instance.decompose("first_name"), IndexOperator.EQ, UTF8Type.instance.decompose("doesntmatter")));
+        Assert.assertTrue(rows.toString(), Arrays.equals(new String[] { }, rows.toArray(new String[rows.size()])));
+    }
+
+    @Test
     public void testMultiExpressionQueries() throws Exception
     {
         Map<String, Pair<String, Integer>> data = new HashMap<String, Pair<String, Integer>>()
