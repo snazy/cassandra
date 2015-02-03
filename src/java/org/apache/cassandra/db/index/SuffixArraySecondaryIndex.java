@@ -36,7 +36,6 @@ import org.apache.cassandra.io.FSReadError;
 import org.apache.cassandra.io.sstable.*;
 import org.apache.cassandra.io.util.FileUtils;
 import org.apache.cassandra.notifications.*;
-import org.apache.cassandra.service.StorageProxy;
 import org.apache.cassandra.service.StorageService;
 import org.apache.cassandra.thrift.IndexExpression;
 import org.apache.cassandra.thrift.IndexOperator;
@@ -483,6 +482,9 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
 
             public void blockingFlush()
             {
+                if (keysPerTerm.size() == 0)
+                    return;
+
                 OnDiskSABuilder builder = new OnDiskSABuilder(column.getValidator(), indexingModes.get(column.name));
 
                 for (Map.Entry<ByteBuffer, TokenTreeBuilder> e : keysPerTerm.entrySet())
@@ -681,7 +683,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
             return dataTracker != null ? dataTracker.view.get() : null;
         }
 
-        private Row getRow(DecoratedKey key, IDiskAtomFilter columnFilter, List<Pair<ByteBuffer, Expression>> expressions)
+        private Row getRow(DecoratedKey key, IDiskAtomFilter columnFilter, Iterable<Pair<ByteBuffer, Expression>> expressions)
         {
             ReadCommand cmd = ReadCommand.create(baseCfs.keyspace.getName(),
                                                  key.key,
@@ -692,7 +694,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
             return new RowReader(cmd, expressions).call();
         }
 
-        private Row getRow(DecoratedKey key, ExtendedFilter filter, List<Pair<ByteBuffer, Expression>> expressions)
+        private Row getRow(DecoratedKey key, ExtendedFilter filter, Iterable<Pair<ByteBuffer, Expression>> expressions)
         {
             return getRow(key, filter.columnFilter(key.key), expressions);
         }
@@ -700,9 +702,9 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
         private class RowReader implements Callable<Row>
         {
             private final ReadCommand command;
-            private final List<Pair<ByteBuffer, Expression>> expressions;
+            private final Iterable<Pair<ByteBuffer, Expression>> expressions;
 
-            public RowReader(ReadCommand command, List<Pair<ByteBuffer, Expression>> expressions)
+            public RowReader(ReadCommand command, Iterable<Pair<ByteBuffer, Expression>> expressions)
             {
                 this.command = command;
                 this.expressions = expressions;
@@ -728,10 +730,10 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
              */
             private boolean satisfiesPredicates(Row row, boolean avoidFetchOnMisses)
             {
-                if (row.cf == null || row.cf.isMarkedForDelete())
+                if (row == null || row.cf == null || row.cf.isMarkedForDelete())
                     return false;
 
-                SortedSet<ByteBuffer> misses = new TreeSet<>(baseCfs.getComparator());
+                final SortedSet<ByteBuffer> misses = new TreeSet<>(baseCfs.getComparator());
 
                 long now = System.currentTimeMillis();
                 for (Pair<ByteBuffer, Expression> entry : expressions)
@@ -757,7 +759,18 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
                 // if we had some missing columns which where part of the index expressions we need to fetch them
                 // in the separate call and check for correctness of search results.
                 if (!misses.isEmpty() && !avoidFetchOnMisses)
-                    return satisfiesPredicates(getRow(row.key, new NamesQueryFilter(misses), expressions), true);
+                {
+                    return satisfiesPredicates(getRow(row.key,
+                                                      new NamesQueryFilter(misses),
+                                                      Iterables.filter(expressions, new Predicate<Pair<ByteBuffer, Expression>>()
+                                                      {
+                                                          @Override
+                                                          public boolean apply(Pair<ByteBuffer, Expression> expression)
+                                                          {
+                                                              return misses.contains(expression.left);
+                                                          }
+                                                      })), true);
+                }
 
                 return true;
             }
