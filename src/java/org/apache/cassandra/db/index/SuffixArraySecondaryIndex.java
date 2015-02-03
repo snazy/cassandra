@@ -482,6 +482,9 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
 
             public void blockingFlush()
             {
+                if (keysPerTerm.size() == 0)
+                    return;
+
                 OnDiskSABuilder builder = new OnDiskSABuilder(column.getValidator(), indexingModes.get(column.name));
 
                 for (Map.Entry<ByteBuffer, TokenTreeBuilder> e : keysPerTerm.entrySet())
