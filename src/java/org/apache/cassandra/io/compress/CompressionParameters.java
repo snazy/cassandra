@@ -342,7 +342,7 @@ public class CompressionParameters
     {
         public void serialize(CompressionParameters parameters, DataOutput out, int version) throws IOException
         {
-            out.writeUTF(parameters.sstableCompressionClass.getClass().getSimpleName());
+            out.writeUTF(parameters.sstableCompressionClass.getSimpleName());
             out.writeInt(parameters.otherOptions.size());
             for (Map.Entry<String, String> entry : parameters.otherOptions.entrySet())
             {
@@ -378,7 +378,7 @@ public class CompressionParameters
 
         public long serializedSize(CompressionParameters parameters, int version)
         {
-            long size = TypeSizes.NATIVE.sizeof(parameters.sstableCompressionClass.getClass().getSimpleName());
+            long size = TypeSizes.NATIVE.sizeof(parameters.sstableCompressionClass.getSimpleName());
             size += TypeSizes.NATIVE.sizeof(parameters.otherOptions.size());
             for (Map.Entry<String, String> entry : parameters.otherOptions.entrySet())
             {
