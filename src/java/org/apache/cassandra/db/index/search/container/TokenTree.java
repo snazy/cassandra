@@ -7,8 +7,12 @@ import java.util.*;
 import org.apache.cassandra.db.DecoratedKey;
 import org.apache.cassandra.db.index.utils.CombinedValue;
 import org.apache.cassandra.db.index.utils.SkippableIterator;
+import org.apache.cassandra.utils.MergeIterator;
 import org.apache.cassandra.utils.Pair;
 
+import com.carrotsearch.hppc.LongOpenHashSet;
+import com.carrotsearch.hppc.LongSet;
+import com.carrotsearch.hppc.cursors.LongCursor;
 import com.google.common.primitives.Longs;
 import com.google.common.base.Function;
 import com.google.common.collect.AbstractIterator;
@@ -321,15 +325,16 @@ public class TokenTree
 
     public static class Token implements CombinedValue<Long>, Iterable<DecoratedKey>
     {
-        private final long token;
-        private final Map<Function<Long, DecoratedKey>, Set<Long>> offsets;
+        protected final long token;
+        protected final Map<Function<Long, DecoratedKey>, LongSet> offsets;
 
         public Token(long token, final Pair<Function<Long, DecoratedKey>, long[]> offsets)
         {
             this.token = token;
-            this.offsets = new HashMap<Function<Long, DecoratedKey>, Set<Long>>()
+            this.offsets = new HashMap<Function<Long, DecoratedKey>, LongSet>()
             {{
-                    put(offsets.left, new HashSet<>(Longs.asList(offsets.right)));
+                    if (offsets != null)
+                        put(offsets.left, new LongOpenHashSet() {{ add(offsets.right); }});
             }};
         }
 
@@ -382,12 +387,13 @@ public class TokenTree
         public Set<Long> getOffsets()
         {
             Set<Long> result = null;
-            for (Set<Long> entry : offsets.values())
+            for (final LongSet entry : offsets.values())
             {
                 if (result == null)
-                    result = entry;
-                else
-                    result.addAll(entry);
+                    result = new HashSet<>();
+
+                for (LongCursor offset : entry)
+                    result.add(offset.value);
             }
 
             return result;
@@ -399,13 +405,18 @@ public class TokenTree
             Token token = (Token) other;
             assert this.token == token.token;
 
-            for (Map.Entry<Function<Long, DecoratedKey>, Set<Long>> e : token.offsets.entrySet())
+            for (Map.Entry<Function<Long, DecoratedKey>, LongSet> e : token.offsets.entrySet())
             {
-                Set<Long> existing = offsets.get(e.getKey());
+                LongSet existing = offsets.get(e.getKey());
                 if (existing == null)
+                {
                     offsets.put(e.getKey(), e.getValue());
+                }
                 else
-                    existing.addAll(e.getValue());
+                {
+                    for (LongCursor offset : e.getValue())
+                        existing.add(offset.value);
+                }
             }
         }
 
@@ -417,32 +428,33 @@ public class TokenTree
 
         public Iterator<DecoratedKey> iterator()
         {
-            return new AbstractIterator<DecoratedKey>()
-            {
-                private final Iterator<Map.Entry<Function<Long, DecoratedKey>, Set<Long>>> perSSTable = offsets.entrySet().iterator();
+            List<Iterator<DecoratedKey>> keys = new ArrayList<>(offsets.size());
 
-                private Iterator<Long> currentOffsets;
-                private Function<Long, DecoratedKey> currentFetcher;
+            for (Map.Entry<Function<Long, DecoratedKey>, LongSet> e : offsets.entrySet())
+                keys.add(new KeyIterator(e.getKey(), e.getValue()));
+
+            return MergeIterator.get(keys, DecoratedKey.comparator, new MergeIterator.Reducer<DecoratedKey, DecoratedKey>()
+            {
+                DecoratedKey reduced = null;
 
                 @Override
-                protected DecoratedKey computeNext()
+                public boolean trivialReduceIsTrivial()
                 {
-                    if (currentOffsets != null && currentOffsets.hasNext())
-                        return currentFetcher.apply(currentOffsets.next());
-
-                    while (perSSTable.hasNext())
-                    {
-                        Map.Entry<Function<Long, DecoratedKey>, Set<Long>> offsets = perSSTable.next();
-                        currentFetcher = offsets.getKey();
-                        currentOffsets = offsets.getValue().iterator();
-
-                        if (currentOffsets.hasNext())
-                            return currentFetcher.apply(currentOffsets.next());
-                    }
-
-                    return endOfData();
+                    return true;
                 }
-            };
+
+                @Override
+                public void reduce(DecoratedKey current)
+                {
+                    reduced = current;
+                }
+
+                @Override
+                protected DecoratedKey getReduced()
+                {
+                    return reduced;
+                }
+            });
         }
 
         @Override
@@ -471,6 +483,24 @@ public class TokenTree
         public String toString()
         {
             return String.format("TokenValue(token: %d, offsets: %s)", token, offsets);
+        }
+    }
+
+    private static class KeyIterator extends AbstractIterator<DecoratedKey>
+    {
+        private final Function<Long, DecoratedKey> keyFetcher;
+        private final Iterator<LongCursor> offsets;
+
+        public KeyIterator(Function<Long, DecoratedKey> keyFetcher, LongSet offsets)
+        {
+            this.keyFetcher = keyFetcher;
+            this.offsets = offsets.iterator();
+        }
+
+        @Override
+        public DecoratedKey computeNext()
+        {
+            return offsets.hasNext() ? keyFetcher.apply(offsets.next().value) : endOfData();
         }
     }
 }
