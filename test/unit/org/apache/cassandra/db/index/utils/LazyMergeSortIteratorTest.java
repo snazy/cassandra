@@ -83,6 +83,21 @@ public class LazyMergeSortIteratorTest
     }
 
     @Test
+    public void orWithTwoIteratorsWithSingleValues()
+    {
+        SkippableIterator<Long, LongValue> i1 = new TestSkippableIterator(convert(1L));
+        SkippableIterator<Long, LongValue> i2 = new TestSkippableIterator(convert(1L));
+        List<SkippableIterator<Long, LongValue>> union = Arrays.asList(i1, i2);
+
+        List<LongValue> found = new ArrayList<>();
+        SkippableIterator<Long, LongValue> it = new LazyMergeSortIterator<>(OperationType.OR, union);
+        while (it.hasNext())
+            found.add(it.next());
+
+        Assert.assertEquals(1, found.size());
+    }
+
+    @Test
     public void christopherNolanWouldBeProud()
     {
         List<List<LongValue>> rawMergedLists = new ArrayList<>();

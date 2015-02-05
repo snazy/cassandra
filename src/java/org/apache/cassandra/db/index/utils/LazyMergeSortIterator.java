@@ -156,7 +156,10 @@ public class LazyMergeSortIterator<K extends Comparable<K>, T extends CombinedVa
                             next.merge(lookahead);
                             nextElmPlusOne = findNextElement();
                             if (nextElmPlusOne == null)
+                            {
+                                lookahead = null;
                                 break;
+                            }
 
                             lookahead = nextElmPlusOne.currentMinElement.left;
                         }
