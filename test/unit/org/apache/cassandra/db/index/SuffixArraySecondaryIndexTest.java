@@ -380,13 +380,13 @@ public class SuffixArraySecondaryIndexTest extends SchemaLoader
                           new IndexExpression(firstName, IndexOperator.EQ, UTF8Type.instance.decompose("a")),
                           new IndexExpression(age, IndexOperator.GT, Int32Type.instance.decompose(10)));
 
-        Assert.assertEquals(rows.toString(), 6, rows.size());
+        Assert.assertEquals(rows.toString(), 10, rows.size());
 
         rows = getIndexed(store, 10,
                           new IndexExpression(firstName, IndexOperator.EQ, UTF8Type.instance.decompose("a")),
                           new IndexExpression(age, IndexOperator.LTE, Int32Type.instance.decompose(50)));
 
-        Assert.assertEquals(rows.toString(), 6, rows.size());
+        Assert.assertEquals(rows.toString(), 10, rows.size());
     }
 
     @Test
