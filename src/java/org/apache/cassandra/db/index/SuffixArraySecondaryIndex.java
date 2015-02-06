@@ -21,6 +21,7 @@ import org.apache.cassandra.db.filter.NamesQueryFilter;
 import org.apache.cassandra.db.index.search.OnDiskSA;
 import org.apache.cassandra.db.index.search.OnDiskSABuilder;
 import org.apache.cassandra.db.index.search.container.TokenTreeBuilder;
+import org.apache.cassandra.db.index.search.memory.IndexMemtable;
 import org.apache.cassandra.db.index.search.tokenization.AbstractTokenizer;
 import org.apache.cassandra.db.index.search.tokenization.NoOpTokenizer;
 import org.apache.cassandra.db.index.search.tokenization.StandardTokenizer;
@@ -100,6 +101,8 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
 
     private final Map<ByteBuffer, Mode> indexingModes = new HashMap<>();
     private final ConcurrentMap<Descriptor, CopyOnWriteArrayList<SSTableIndex>> currentIndexes;
+
+    private final AtomicReference<IndexMemtable> globalMemtable = new AtomicReference<>(new IndexMemtable(this));
 
     private AbstractType<?> keyComparator;
     private boolean isInitialized;
@@ -220,27 +223,17 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
 
     public long getLiveSize()
     {
-        // Live size means how many bytes from the memtable (or outside Memtable but not yet flushed) is used by index,
-        // as we write indexes at the point when Memtable has already been written to disk, we should return 0 from this
-        // method to avoid miscalculation of Memtable live size and spurious flushes.
-        return 0;
+        return globalMemtable.get().estimateSize();
     }
 
     public void reload()
     {
-        // nop, i think
+        invalidateMemtable();
     }
 
-    public void index(ByteBuffer rowKey, ColumnFamily cf)
+    public void index(ByteBuffer key, ColumnFamily cf)
     {
-        // this will index a whole row, or at least, what is passed in
-        // called from memtable path, as well as in index rebuild path
-        // need to be able to distinguish between the two
-        // should be reasonably easy to distinguish is the write is coming form memtable path
-
-        // better yet, the index rebuild path can be bypassed by overriding buildIndexAsync(), and just return
-        // some empty Future - all current callers of buildIndexAsync() ignore the returned Future.
-        // seems a little dangerous (not future proof) but good enough for a v1
+        globalMemtable.get().index(key, cf);
     }
 
     /**
@@ -253,6 +246,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
         return Futures.immediateCheckedFuture(null);
     }
 
+    @Override
     public void buildIndexes(Collection<SSTableReader> sstables, Set<String> indexNames)
     {
         SortedSet<ByteBuffer> indexes = new TreeSet<>(baseCfs.getComparator());
@@ -275,15 +269,6 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
 
         for (SSTableReader sstable : sstables)
             FBUtilities.waitOnFuture(CompactionManager.instance.submitIndexBuild(new IndexBuilder(sstable, indexes)));
-
-        logger.info("Index build of {} complete.", Iterables.transform(indexes, new Function<ByteBuffer, String>()
-        {
-            @Override
-            public String apply(ByteBuffer columnName)
-            {
-                return baseCfs.getComparator().getString(columnName);
-            }
-        }));
     }
 
     public void delete(DecoratedKey key)
@@ -311,18 +296,26 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
 
     public void invalidate()
     {
-        invalidate(System.currentTimeMillis());
+        invalidate(true, System.currentTimeMillis());
     }
 
-    public void invalidate(long truncateUntil)
+    public void invalidate(boolean invalidateMemtable, long truncateUntil)
     {
+        if (invalidateMemtable)
+            invalidateMemtable();
+
         for (ByteBuffer colName : new ArrayList<>(columnDefComponents.keySet()))
             dropIndexData(colName, truncateUntil);
     }
 
+    private void invalidateMemtable()
+    {
+        globalMemtable.getAndSet(new IndexMemtable(this));
+    }
+
     public void truncateBlocking(long truncatedAt)
     {
-        invalidate(truncatedAt);
+        invalidate(false, truncatedAt);
     }
 
     public void forceBlockingFlush()
@@ -538,12 +531,21 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
             AbstractBounds<RowPosition> requestedRange = filter.dataRange.keyRange();
 
             final int maxRows = Math.min(MAX_ROWS, filter.maxRows());
-            List<Row> rows = new ArrayList<>(maxRows);
+            Set<Row> rows = new TreeSet<>(new Comparator<Row>()
+            {
+                @Override
+                public int compare(Row a, Row b)
+                {
+                    return a.key.compareTo(b.key);
+                }
+            });
             List<Pair<ByteBuffer, Expression>> expressions = analyzeQuery(filter.getClause());
             List<Pair<ByteBuffer, Expression>> expressionsImmutable = ImmutableList.copyOf(expressions);
 
             List<SSTableIndex> primaryIndexes = null;
             Pair<ByteBuffer, Expression> primaryExpression = null;
+
+            final IndexMemtable currentMemtable = globalMemtable.get();
 
             for (Pair<ByteBuffer, Expression> e : expressions)
             {
@@ -560,8 +562,22 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
                 }
             }
 
+            // no SSTables found, let's try to fetch something from memtable only
             if (primaryIndexes == null || primaryIndexes.size() == 0)
-                return Collections.emptyList();
+            {
+                List<SkippableIterator<Long, Token>> unions = new ArrayList<>(expressions.size());
+                for (Pair<ByteBuffer, Expression> e : expressions)
+                {
+                    SkippableIterator<Long, Token> union = currentMemtable.search(e);
+                    if (union != null)
+                        unions.add(union);
+                }
+
+                // no need to close joiner because all data is in memory
+                fetch(new LazyMergeSortIterator<>(OperationType.AND, unions), requestedRange, filter, expressions, rows, maxRows);
+
+                return Lists.newArrayList(rows);
+            }
 
             /*
                Once we've figured out what primary index SSTables are,
@@ -629,7 +645,9 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
             {
                 List<SkippableIterator<Long, Token>> unions = new ArrayList<>(expressionsImmutable.size());
 
-                unions.add(new SuffixIterator(primaryExpression.right, bucket.bucket));
+                unions.add(new SuffixIterator(primaryExpression.right,
+                                              currentMemtable.search(primaryExpression),
+                                              bucket.bucket));
 
                 for (Pair<ByteBuffer, Expression> e : expressions)
                 {
@@ -644,29 +662,18 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
                     if (readers.isEmpty())
                         return Collections.emptyList();
 
-                    unions.add(new SuffixIterator(e.right, readers));
+                    unions.add(new SuffixIterator(e.right, currentMemtable.search(e), readers));
                 }
 
                 SkippableIterator<Long, Token> joiner = null;
+
                 try
                 {
-                    joiner = new LazyMergeSortIterator<>(OperationType.AND, unions);
+                    joiner = unions.get(0);//new LazyMergeSortIterator<>(OperationType.AND, unions);
 
-                    joiner.skipTo(((LongToken) requestedRange.left.getToken()).token);
-
-                    intersection:
-                    while (joiner.hasNext())
-                    {
-                        for (DecoratedKey key : joiner.next())
-                        {
-                            if (!requestedRange.contains(key) || rows.size() >= maxRows)
-                                break intersection;
-
-                            Row row = getRow(key, filter, expressionsImmutable);
-                            if (row != null)
-                                rows.add(row);
-                        }
-                    }
+                    fetch(joiner, requestedRange, filter, expressionsImmutable, rows, maxRows);
+                    if (rows.size() >= maxRows)
+                        break;
                 }
                 finally
                 {
@@ -674,7 +681,32 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
                 }
             }
 
-            return rows;
+            return Lists.newArrayList(rows);
+        }
+
+        protected void fetch(SkippableIterator<Long, Token> joiner,
+                             AbstractBounds<RowPosition> range,
+                             ExtendedFilter filter,
+                             List<Pair<ByteBuffer, Expression>> expressions,
+                             Set<Row> aggregator,
+                             int maxRows)
+        {
+
+            joiner.skipTo(((LongToken) range.left.getToken()).token);
+
+            intersection:
+            while (joiner.hasNext())
+            {
+                for (DecoratedKey key : joiner.next())
+                {
+                    if (!range.contains(key) || aggregator.size() >= maxRows)
+                        break intersection;
+
+                    Row row = getRow(key, filter, expressions);
+                    if (row != null)
+                        aggregator.add(row);
+                }
+            }
         }
 
         protected SAView getView(ByteBuffer columnName)
@@ -877,15 +909,16 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
         }
     }
 
-    private static class Expression
+    public static class Expression
     {
-        private final AbstractType<?> validator;
-        private final boolean isSuffix;
+        public final AbstractType<?> validator;
+        public final boolean isSuffix;
 
-        private Bound lower, upper;
-        private boolean isEquality;
+        public Bound lower, upper;
+        public boolean isEquality;
 
-        private Expression(AbstractType<?> validator)
+        // TODO: change back to private
+        public Expression(AbstractType<?> validator)
         {
             this.validator = validator;
             isSuffix = validator instanceof AsciiType || validator instanceof UTF8Type;
@@ -932,8 +965,13 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
                 }
                 else
                 {
-                    // range - (mainly) for numeric values
+                    // range or equals - (mainly) for numeric values
                     int cmp = validator.compare(lower.value, value);
+
+                    // in case of EQ lower == upper
+                    if (isEquality)
+                        return cmp == 0;
+
                     if (cmp > 0 || (cmp == 0 && !lower.inclusive))
                         return false;
                 }
@@ -959,10 +997,10 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
         }
     }
 
-    private static class Bound
+    public static class Bound
     {
-        private final ByteBuffer value;
-        private final boolean inclusive;
+        public final ByteBuffer value;
+        public final boolean inclusive;
 
         public Bound(ByteBuffer value, boolean inclusive)
         {
@@ -976,9 +1014,14 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
         private final SkippableIterator<Long, Token> union;
         private final List<SSTableIndex> referencedIndexes = new ArrayList<>();
 
-        public SuffixIterator(Expression expression, final Collection<SSTableIndex> perSSTableIndexes)
+        public SuffixIterator(Expression expression,
+                              SkippableIterator<Long, Token> memtableIterator,
+                              final Collection<SSTableIndex> perSSTableIndexes)
         {
             List<SkippableIterator<Long, Token>> keys = new ArrayList<>(perSSTableIndexes.size());
+
+            if (memtableIterator != null)
+                keys.add(memtableIterator);
 
             for (final SSTableIndex index : perSSTableIndexes)
             {
@@ -1251,6 +1294,10 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
                 SSTableDeletingNotification notif = (SSTableDeletingNotification) notification;
                 removeFromIntervalTree(Collections.singletonList(notif.deleting));
             }
+            else if (notification instanceof MemtableRenewedNotification)
+            {
+                invalidateMemtable();
+            }
         }
     }
 
@@ -1490,7 +1537,12 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
         }
     }
 
-    private static AbstractTokenizer getTokenizer(AbstractType<?> validator)
+    public Mode getMode(ByteBuffer columnName)
+    {
+        return indexingModes.get(columnName);
+    }
+
+    public static AbstractTokenizer getTokenizer(AbstractType<?> validator)
     {
         return TOKENIZABLE_TYPES.contains(validator) ? new StandardTokenizer() : new NoOpTokenizer();
     }
