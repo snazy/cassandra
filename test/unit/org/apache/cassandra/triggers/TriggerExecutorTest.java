@@ -19,8 +19,9 @@ package org.apache.cassandra.triggers;
 
 import java.nio.ByteBuffer;
 import java.util.*;
-import org.junit.Test;
 
+import org.junit.Test;
+import org.apache.cassandra.SchemaLoader;
 import org.apache.cassandra.config.CFMetaData;
 import org.apache.cassandra.config.ColumnDefinition;
 import org.apache.cassandra.config.TriggerDefinition;
@@ -31,10 +32,9 @@ import org.apache.cassandra.exceptions.ConfigurationException;
 import org.apache.cassandra.exceptions.InvalidRequestException;
 
 import static org.junit.Assert.*;
-
 import static org.apache.cassandra.utils.ByteBufferUtil.bytes;
 
-public class TriggerExecutorTest
+public class TriggerExecutorTest extends SchemaLoader
 {
     @Test
     public void sameKeySameCfColumnFamilies() throws ConfigurationException, InvalidRequestException
