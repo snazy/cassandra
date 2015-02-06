@@ -38,6 +38,7 @@ import org.apache.cassandra.db.commitlog.CommitLog;
 import org.apache.cassandra.db.compaction.LeveledCompactionStrategy;
 import org.apache.cassandra.db.filter.QueryFilter;
 import org.apache.cassandra.db.marshal.*;
+import org.apache.cassandra.dht.Murmur3Partitioner;
 import org.apache.cassandra.exceptions.ConfigurationException;
 import org.apache.cassandra.gms.Gossiper;
 import org.apache.cassandra.io.compress.CompressionParameters;
@@ -343,10 +344,11 @@ public class SchemaLoader
                                                    + "WITH COMPACT STORAGE", ks_cql)
                                            ));
 
-        schema.add(KSMetaData.testMetadata(ks_sai,
-                   simple,
-                   opts_rf1,
-                   saIndexedCFMD(ks_sai, "SAIndexed1")));
+        if (DatabaseDescriptor.getPartitioner() instanceof Murmur3Partitioner)
+            schema.add(KSMetaData.testMetadata(ks_sai,
+                       simple,
+                       opts_rf1,
+                       saIndexedCFMD(ks_sai, "SAIndexed1")));
 
 
         if (Boolean.parseBoolean(System.getProperty("cassandra.test.compression", "false")))

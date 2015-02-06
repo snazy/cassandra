@@ -1,5 +1,6 @@
 package org.apache.cassandra.db.index;
 
+import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.*;
 
@@ -14,6 +15,7 @@ import org.apache.cassandra.db.marshal.AsciiType;
 import org.apache.cassandra.db.marshal.Int32Type;
 import org.apache.cassandra.db.marshal.UTF8Type;
 import org.apache.cassandra.dht.*;
+import org.apache.cassandra.exceptions.ConfigurationException;
 import org.apache.cassandra.service.StorageService;
 import org.apache.cassandra.thrift.IndexExpression;
 import org.apache.cassandra.thrift.IndexOperator;
@@ -24,7 +26,9 @@ import com.google.common.collect.Iterators;
 import com.google.common.collect.Lists;
 
 import junit.framework.Assert;
+
 import org.junit.After;
+import org.junit.BeforeClass;
 import org.junit.Test;
 
 public class SuffixArraySecondaryIndexTest extends SchemaLoader
@@ -32,6 +36,13 @@ public class SuffixArraySecondaryIndexTest extends SchemaLoader
     private static final String KS_NAME = "SASecondaryIndex";
     private static final String CF_NAME = "SAIndexed1";
 
+    @BeforeClass
+    public static void loadSchema() throws IOException, ConfigurationException
+    {
+        System.setProperty("cassandra.config", "cassandra-murmur.yaml");
+        loadSchema(false);
+    }
+    
     @After
     public void cleanUp()
     {
