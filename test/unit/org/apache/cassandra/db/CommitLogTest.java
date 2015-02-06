@@ -28,9 +28,10 @@ import java.util.zip.CRC32;
 import java.util.zip.Checksum;
 
 import com.google.common.util.concurrent.Uninterruptibles;
-import org.junit.Assert;
-import org.junit.Test;
 
+import org.junit.Assert;
+import org.junit.Ignore;
+import org.junit.Test;
 import org.apache.cassandra.SchemaLoader;
 import org.apache.cassandra.Util;
 import org.apache.cassandra.config.Config;
@@ -236,6 +237,7 @@ public class CommitLogTest extends SchemaLoader
         Assert.assertEquals(MessagingService.current_version, CommitLogDescriptor.fromFileName(newCLName).getMessagingVersion());
     }
 
+    @Ignore("See https://issues.apache.org/jira/browse/CASSANDRA-7713 for details")
     @Test
     public void testCommitFailurePolicy_stop()
     {
