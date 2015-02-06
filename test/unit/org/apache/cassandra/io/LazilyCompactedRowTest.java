@@ -23,12 +23,13 @@ import java.nio.ByteBuffer;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
 
 import com.google.common.base.Objects;
-import org.junit.Test;
 
+import org.junit.Test;
 import org.apache.cassandra.SchemaLoader;
 import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.db.*;
@@ -90,8 +91,8 @@ public class LazilyCompactedRowTest extends SchemaLoader
             AbstractCompactedRow row2 = iter2.next();
             DataOutputBuffer out1 = new DataOutputBuffer();
             DataOutputBuffer out2 = new DataOutputBuffer();
-            row1.write(Pair.create(-1l, -1l), out1, null);
-            row2.write(Pair.create(-1l, -1l), out2, null);
+            row1.write(Pair.create(-1l, -1l), out1, Collections.EMPTY_SET);
+            row2.write(Pair.create(-1l, -1l), out2, Collections.EMPTY_SET);
 
             File tmpFile1 = File.createTempFile("lcrt1", null);
             File tmpFile2 = File.createTempFile("lcrt2", null);
