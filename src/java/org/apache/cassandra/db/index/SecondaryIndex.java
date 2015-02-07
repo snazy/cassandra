@@ -393,4 +393,11 @@ public abstract class SecondaryIndex
     {
         return Collections.EMPTY_LIST;
     }
+
+    public void buildIndexes(Collection<SSTableReader> sstables, Set<String> idxNames)
+    {
+        SecondaryIndexBuilder builder = new SecondaryIndexBuilder(baseCfs, idxNames, new ReducingKeyIterator(sstables));
+        Future<?> future = CompactionManager.instance.submitIndexBuild(builder);
+        FBUtilities.waitOnFuture(future);
+    }
 }

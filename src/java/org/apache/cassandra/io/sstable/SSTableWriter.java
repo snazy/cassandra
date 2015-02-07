@@ -95,9 +95,19 @@ public class SSTableWriter extends SSTable
         //TODO:JEB would be great to pass the listeners in here, rather than reaching out to an explicit component
         if (!metadata.cfName.contains(".")) // hack to make sure current SSTW is not for a native, in-built secondary index
         {
-            ColumnFamilyStore cfs = Keyspace.open(metadata.ksName).getColumnFamilyStore(metadata.cfName);
-            for (SecondaryIndex secondaryIndex : cfs.indexManager.getIndexes())
-                components.addAll(secondaryIndex.getIndexComponents());
+            try
+            {
+                ColumnFamilyStore cfs = getColumnFamilyStore(metadata);
+                if (cfs == null)
+                    return components;
+
+                for (SecondaryIndex secondaryIndex : cfs.indexManager.getIndexes())
+                    components.addAll(secondaryIndex.getIndexComponents());
+            }
+            catch (Exception e)
+            {
+                logger.error("Failed to retrieve secondary index components.", e);
+            }
         }
 
         return components;
@@ -143,18 +153,24 @@ public class SSTableWriter extends SSTable
 
         this.sstableMetadataCollector = sstableMetadataCollector;
 
-        //TODO:JEB would be great to pass the listeners in here, rather than reaching out to an explicit component
+        // TODO:JEB would be great to pass the listeners in here, rather than reaching out to an explicit component
         // TODO:JEB esp, think about how this will work with offline components (scrub, etc)
         if (!metadata.cfName.contains(".")) // hack to make sure current SSTW is not for a native, in-built secondary index
         {
-            ColumnFamilyStore cfs = Keyspace.open(metadata.ksName).getColumnFamilyStore(metadata.cfName);
+            ColumnFamilyStore cfs = getColumnFamilyStore(metadata);
+            if (cfs == null)
+            {
+                listeners = Collections.emptySet();
+                return;
+            }
+
             listeners = cfs.indexManager.getSSTableWriterListsners(descriptor, source);
             for (SSTableWriterListener listener : listeners)
                 listener.begin();
         }
         else
         {
-            listeners = Collections.EMPTY_SET;
+            listeners = Collections.emptySet();
         }
     }
 
@@ -547,5 +563,21 @@ public class SSTableWriter extends SSTable
         {
             return "IndexWriter(" + descriptor + ")";
         }
+    }
+
+    private static ColumnFamilyStore getColumnFamilyStore(CFMetaData metadata)
+    {
+        try
+        {
+            // there could be situation when memtable is flushed for ks/cf which has already
+            // been removed from schema, so we need to handle IllegalArgumentException case.
+            return Keyspace.open(metadata.ksName).getColumnFamilyStore(metadata.cfId);
+        }
+        catch (Exception e)
+        {
+            logger.error("Failed to retrieve CFS for {}.{}", metadata.ksName, metadata.cfName, e);
+        }
+
+        return null;
     }
 }

@@ -5,6 +5,7 @@ import java.nio.ByteBuffer;
 import java.util.*;
 
 import org.apache.cassandra.SchemaLoader;
+import org.apache.cassandra.config.ColumnDefinition;
 import org.apache.cassandra.db.*;
 import org.apache.cassandra.db.columniterator.IdentityQueryFilter;
 import org.apache.cassandra.db.filter.ExtendedFilter;
@@ -51,6 +52,13 @@ public class SuffixArraySecondaryIndexTest extends SchemaLoader
     @Test
     public void testSingleExpressionQueries() throws Exception
     {
+        testSingleExpressionQueries(false);
+        cleanupData();
+        testSingleExpressionQueries(true);
+    }
+
+    private void testSingleExpressionQueries(boolean forceFlush) throws Exception
+    {
         Map<String, Pair<String, Integer>> data = new HashMap<String, Pair<String, Integer>>()
         {{
             put("key1", Pair.create("Pavel", 14));
@@ -59,7 +67,7 @@ public class SuffixArraySecondaryIndexTest extends SchemaLoader
             put("key4", Pair.create("Jason", 27));
         }};
 
-        ColumnFamilyStore store = loadData(data);
+        ColumnFamilyStore store = loadData(data, forceFlush);
 
         final ByteBuffer firstName = UTF8Type.instance.decompose("first_name");
         final ByteBuffer age = UTF8Type.instance.decompose("age");
@@ -89,12 +97,19 @@ public class SuffixArraySecondaryIndexTest extends SchemaLoader
     @Test
     public void testEmptyTokenizedResults() throws Exception
     {
+        testEmptyTokenizedResults(false);
+        cleanupData();
+        testEmptyTokenizedResults(true);
+    }
+
+    private void testEmptyTokenizedResults(boolean forceFlush) throws Exception
+    {
         Map<String, Pair<String, Integer>> data = new HashMap<String, Pair<String, Integer>>()
         {{
                 put("key1", Pair.create("  ", 14));
         }};
 
-        ColumnFamilyStore store = loadData(data);
+        ColumnFamilyStore store = loadData(data, forceFlush);
 
         Set<String> rows= getIndexed(store, 10, new IndexExpression(UTF8Type.instance.decompose("first_name"), IndexOperator.EQ, UTF8Type.instance.decompose("doesntmatter")));
         Assert.assertTrue(rows.toString(), Arrays.equals(new String[] { }, rows.toArray(new String[rows.size()])));
@@ -102,6 +117,13 @@ public class SuffixArraySecondaryIndexTest extends SchemaLoader
 
     @Test
     public void testMultiExpressionQueries() throws Exception
+    {
+        testMultiExpressionQueries(false);
+        cleanupData();
+        testMultiExpressionQueries(true);
+    }
+
+    public void testMultiExpressionQueries(boolean forceFlush) throws Exception
     {
         Map<String, Pair<String, Integer>> data = new HashMap<String, Pair<String, Integer>>()
         {{
@@ -111,7 +133,7 @@ public class SuffixArraySecondaryIndexTest extends SchemaLoader
                 put("key4", Pair.create("Jason", 27));
         }};
 
-        ColumnFamilyStore store = loadData(data);
+        ColumnFamilyStore store = loadData(data, forceFlush);
 
         final ByteBuffer firstName = UTF8Type.instance.decompose("first_name");
         final ByteBuffer age = UTF8Type.instance.decompose("age");
@@ -167,6 +189,14 @@ public class SuffixArraySecondaryIndexTest extends SchemaLoader
     @Test
     public void testCrossSSTableQueries() throws Exception
     {
+        testCrossSSTableQueries(false);
+        cleanupData();
+        testCrossSSTableQueries(true);
+
+    }
+
+    private void testCrossSSTableQueries(boolean forceFlush) throws Exception
+    {
         Map<String, Pair<String, Integer>> part1 = new HashMap<String, Pair<String, Integer>>()
         {{
                 put("key0", Pair.create("Maxie", 43));
@@ -176,7 +206,7 @@ public class SuffixArraySecondaryIndexTest extends SchemaLoader
                 put("key4", Pair.create("Amiya", 36));
             }};
 
-        loadData(part1); // first sstable
+        loadData(part1, forceFlush); // first sstable
 
         Map<String, Pair<String, Integer>> part2 = new HashMap<String, Pair<String, Integer>>()
         {{
@@ -187,7 +217,7 @@ public class SuffixArraySecondaryIndexTest extends SchemaLoader
                 put("key9", Pair.create("Amely", 40));
             }};
 
-        loadData(part2);
+        loadData(part2, forceFlush);
 
         Map<String, Pair<String, Integer>> part3 = new HashMap<String, Pair<String, Integer>>()
         {{
@@ -198,7 +228,7 @@ public class SuffixArraySecondaryIndexTest extends SchemaLoader
                 put("key14", Pair.create("Demario", 28));
             }};
 
-        ColumnFamilyStore store = loadData(part3);
+        ColumnFamilyStore store = loadData(part3, forceFlush);
 
         final ByteBuffer firstName = UTF8Type.instance.decompose("first_name");
         final ByteBuffer age = UTF8Type.instance.decompose("age");
@@ -256,6 +286,13 @@ public class SuffixArraySecondaryIndexTest extends SchemaLoader
     @Test
     public void testQueriesThatShouldBeTokenized() throws Exception
     {
+        testQueriesThatShouldBeTokenized(false);
+        cleanupData();
+        testQueriesThatShouldBeTokenized(true);
+    }
+
+    private void testQueriesThatShouldBeTokenized(boolean forceFlush) throws Exception
+    {
         Map<String, Pair<String, Integer>> part1 = new HashMap<String, Pair<String, Integer>>()
         {{
                 put("key0", Pair.create("If you can dream it, you can do it.", 43));
@@ -267,7 +304,7 @@ public class SuffixArraySecondaryIndexTest extends SchemaLoader
                         "help someone.", 27));
             }};
 
-        ColumnFamilyStore store = loadData(part1);
+        ColumnFamilyStore store = loadData(part1, forceFlush);
 
         final ByteBuffer firstName = UTF8Type.instance.decompose("first_name");
         final ByteBuffer age = UTF8Type.instance.decompose("age");
@@ -288,6 +325,13 @@ public class SuffixArraySecondaryIndexTest extends SchemaLoader
     @Test
     public void testMultiExpressionQueriesWhereRowSplitBetweenSSTables() throws Exception
     {
+        testMultiExpressionQueriesWhereRowSplitBetweenSSTables(false);
+        cleanupData();
+        testMultiExpressionQueriesWhereRowSplitBetweenSSTables(true);
+    }
+
+    private void testMultiExpressionQueriesWhereRowSplitBetweenSSTables(boolean forceFlush) throws Exception
+    {
         Map<String, Pair<String, Integer>> part1 = new HashMap<String, Pair<String, Integer>>()
         {{
                 put("key0", Pair.create("Maxie", -1));
@@ -297,7 +341,7 @@ public class SuffixArraySecondaryIndexTest extends SchemaLoader
                 put("key4", Pair.create("Amiya", 36));
         }};
 
-        loadData(part1); // first sstable
+        loadData(part1, forceFlush); // first sstable
 
         Map<String, Pair<String, Integer>> part2 = new HashMap<String, Pair<String, Integer>>()
         {{
@@ -309,7 +353,7 @@ public class SuffixArraySecondaryIndexTest extends SchemaLoader
                 put("key14", Pair.create((String)null, 28));
         }};
 
-        loadData(part2);
+        loadData(part2, forceFlush);
 
         Map<String, Pair<String, Integer>> part3 = new HashMap<String, Pair<String, Integer>>()
         {{
@@ -322,7 +366,7 @@ public class SuffixArraySecondaryIndexTest extends SchemaLoader
                 put("key2", Pair.create("Josephine", -1));
         }};
 
-        ColumnFamilyStore store = loadData(part3);
+        ColumnFamilyStore store = loadData(part3, forceFlush);
 
         final ByteBuffer firstName = UTF8Type.instance.decompose("first_name");
         final ByteBuffer age = UTF8Type.instance.decompose("age");
@@ -371,7 +415,8 @@ public class SuffixArraySecondaryIndexTest extends SchemaLoader
                 put("key2", Pair.create("Frank", -1));
         }};
 
-        store = loadData(part4);
+        store = loadData(part4, forceFlush);
+
         rows = getIndexed(store, 10,
                           new IndexExpression(firstName, IndexOperator.EQ, UTF8Type.instance.decompose("Susana")),
                           new IndexExpression(age, IndexOperator.LTE, Int32Type.instance.decompose(13)),
@@ -402,6 +447,13 @@ public class SuffixArraySecondaryIndexTest extends SchemaLoader
 
     @Test
     public void testPagination()
+    {
+        testPagination(false);
+        cleanupData();
+        testPagination(true);
+    }
+
+    private void testPagination(boolean forceFlush)
     {
         // split data into 3 distinct SSTables to test paging with overlapping token intervals.
 
@@ -443,10 +495,10 @@ public class SuffixArraySecondaryIndexTest extends SchemaLoader
                 put("key26", Pair.create("Dennis", 32));
         }};
 
-        ColumnFamilyStore store = loadData(part1);
+        ColumnFamilyStore store = loadData(part1, forceFlush);
 
-        loadData(part2);
-        loadData(part3);
+        loadData(part2, forceFlush);
+        loadData(part3, forceFlush);
 
         final ByteBuffer firstName = UTF8Type.instance.decompose("first_name");
         final ByteBuffer age = UTF8Type.instance.decompose("age");
@@ -526,7 +578,6 @@ public class SuffixArraySecondaryIndexTest extends SchemaLoader
         Assert.assertEquals(expected, convert(uniqueKeys));
 
         // and last but not least, test age range query with pagination
-
         uniqueKeys = getPaged(store, 4,
                 new IndexExpression(firstName, IndexOperator.EQ, UTF8Type.instance.decompose("a")),
                 new IndexExpression(age, IndexOperator.GT, Int32Type.instance.decompose(20)),
@@ -554,14 +605,21 @@ public class SuffixArraySecondaryIndexTest extends SchemaLoader
     @Test
     public void testColumnNamesWithSlashes()
     {
-        RowMutation rm1 = new RowMutation("SASecondaryIndex", AsciiType.instance.decompose("key1"));
-        rm1.add("SAIndexed1", ByteBufferUtil.bytes("/data/output/id"), AsciiType.instance.decompose("jason"), System.currentTimeMillis());
+        testColumnNamesWithSlashes(false);
+        cleanupData();
+        testColumnNamesWithSlashes(true);
+    }
 
-        RowMutation rm2 = new RowMutation("SASecondaryIndex", AsciiType.instance.decompose("key2"));
-        rm2.add("SAIndexed1", ByteBufferUtil.bytes("/data/output/id"), AsciiType.instance.decompose("pavel"), System.currentTimeMillis());
+    private void testColumnNamesWithSlashes(boolean forceFlush)
+    {
+        RowMutation rm1 = new RowMutation(KS_NAME, AsciiType.instance.decompose("key1"));
+        rm1.add(CF_NAME, UTF8Type.instance.decompose("/data/output/id"), AsciiType.instance.decompose("jason"), System.currentTimeMillis());
 
-        RowMutation rm3 = new RowMutation("SASecondaryIndex", AsciiType.instance.decompose("key3"));
-        rm3.add("SAIndexed1", ByteBufferUtil.bytes("/data/output/id"), AsciiType.instance.decompose("Aleksey"), System.currentTimeMillis());
+        RowMutation rm2 = new RowMutation(KS_NAME, AsciiType.instance.decompose("key2"));
+        rm2.add(CF_NAME, UTF8Type.instance.decompose("/data/output/id"), AsciiType.instance.decompose("pavel"), System.currentTimeMillis());
+
+        RowMutation rm3 = new RowMutation(KS_NAME, AsciiType.instance.decompose("key3"));
+        rm3.add(CF_NAME, UTF8Type.instance.decompose("/data/output/id"), AsciiType.instance.decompose("Aleksey"), System.currentTimeMillis());
 
         rm1.apply();
         rm2.apply();
@@ -569,7 +627,8 @@ public class SuffixArraySecondaryIndexTest extends SchemaLoader
 
         ColumnFamilyStore store = Keyspace.open(KS_NAME).getColumnFamilyStore(CF_NAME);
 
-        store.forceBlockingFlush();
+        if (forceFlush)
+            store.forceBlockingFlush();
 
         final ByteBuffer dataOutputId = UTF8Type.instance.decompose("/data/output/id");
 
@@ -579,6 +638,9 @@ public class SuffixArraySecondaryIndexTest extends SchemaLoader
         rows = getIndexed(store, 10, new IndexExpression(dataOutputId, IndexOperator.EQ, UTF8Type.instance.decompose("A")));
         Assert.assertTrue(rows.toString(), Arrays.equals(new String[]{ "key3" }, rows.toArray(new String[rows.size()])));
 
+        // we are going to delete this column and right after we validate results we'll bring it back to life
+        ColumnDefinition zombie = store.metadata.getColumnDefinition(dataOutputId);
+
         store.indexManager.removeIndexedColumn(dataOutputId);
 
         rows = getIndexed(store, 10, new IndexExpression(dataOutputId, IndexOperator.EQ, UTF8Type.instance.decompose("a")));
@@ -586,10 +648,19 @@ public class SuffixArraySecondaryIndexTest extends SchemaLoader
 
         rows = getIndexed(store, 10, new IndexExpression(dataOutputId, IndexOperator.EQ, UTF8Type.instance.decompose("A")));
         Assert.assertTrue(rows.toString(), rows.isEmpty());
+
+        store.indexManager.addIndexedColumn(zombie);
     }
 
     @Test
     public void testInvalidate() throws Exception
+    {
+        testInvalidate(false);
+        cleanupData();
+        testInvalidate(true);
+    }
+
+    private void testInvalidate(boolean forceFlush) throws Exception
     {
         Map<String, Pair<String, Integer>> part1 = new HashMap<String, Pair<String, Integer>>()
         {{
@@ -600,7 +671,7 @@ public class SuffixArraySecondaryIndexTest extends SchemaLoader
                 put("key4", Pair.create("Amiya", 36));
         }};
 
-        ColumnFamilyStore store = loadData(part1);
+        ColumnFamilyStore store = loadData(part1, forceFlush);
 
         final ByteBuffer firstName = UTF8Type.instance.decompose("first_name");
         final ByteBuffer age = UTF8Type.instance.decompose("age");
@@ -630,7 +701,7 @@ public class SuffixArraySecondaryIndexTest extends SchemaLoader
                 put("key14", Pair.create("Dino", 28));
         }};
 
-        loadData(part2);
+        loadData(part2, forceFlush);
 
         rows = getIndexed(store, 10, new IndexExpression(firstName, IndexOperator.EQ, UTF8Type.instance.decompose("a")));
         Assert.assertTrue(rows.toString(), Arrays.equals(new String[]{ "key6", "key7" }, rows.toArray(new String[rows.size()])));
@@ -680,10 +751,10 @@ public class SuffixArraySecondaryIndexTest extends SchemaLoader
                 put("key26", Pair.create("Dennis", 32));
         }};
 
-        ColumnFamilyStore store = loadData(part1, 1000);
+        ColumnFamilyStore store = loadData(part1, 1000, true);
 
-        loadData(part2, 2000);
-        loadData(part3, 3000);
+        loadData(part2, 2000, true);
+        loadData(part3, 3000, true);
 
         final ByteBuffer firstName = UTF8Type.instance.decompose("first_name");
 
@@ -722,7 +793,7 @@ public class SuffixArraySecondaryIndexTest extends SchemaLoader
                 put("key41", Pair.create("Dennis", 32));
         }};
 
-        loadData(part4, 4000);
+        loadData(part4, 4000, true);
 
         rows = getIndexed(store, 100, new IndexExpression(firstName, IndexOperator.EQ, UTF8Type.instance.decompose("a")));
         Assert.assertEquals(rows.toString(), 1, rows.size());
@@ -730,6 +801,13 @@ public class SuffixArraySecondaryIndexTest extends SchemaLoader
 
     @Test
     public void testSearchWithoutOrPartialPredicateFiltering()
+    {
+        testSearchWithoutOrPartialPredicateFiltering(false);
+        cleanupData();
+        testSearchWithoutOrPartialPredicateFiltering(true);
+    }
+
+    private void testSearchWithoutOrPartialPredicateFiltering(boolean forceFlush)
     {
         ColumnFamilyStore store = Keyspace.open(KS_NAME).getColumnFamilyStore(CF_NAME);
 
@@ -746,7 +824,8 @@ public class SuffixArraySecondaryIndexTest extends SchemaLoader
 
         rm1.apply();
 
-        store.forceBlockingFlush();
+        if (forceFlush)
+            store.forceBlockingFlush();
 
         // don't request any columns that are in the index expressions
         SortedSet<ByteBuffer> columns = new TreeSet<ByteBuffer>(store.getComparator())
@@ -778,21 +857,27 @@ public class SuffixArraySecondaryIndexTest extends SchemaLoader
         Assert.assertEquals(rows.toString(), "key1", Iterables.get(rows, 0));
     }
 
-    private static ColumnFamilyStore loadData(Map<String, Pair<String, Integer>> data)
+    private static ColumnFamilyStore loadData(Map<String, Pair<String, Integer>> data, boolean forceFlush)
     {
-        return loadData(data, System.currentTimeMillis());
+        return loadData(data, System.currentTimeMillis(), forceFlush);
     }
 
-    private static ColumnFamilyStore loadData(Map<String, Pair<String, Integer>> data, long timestamp)
+    private static ColumnFamilyStore loadData(Map<String, Pair<String, Integer>> data, long timestamp, boolean forceFlush)
     {
         for (Map.Entry<String, Pair<String, Integer>> e : data.entrySet())
             newMutation(e.getKey(), e.getValue().left, e.getValue().right, timestamp).apply();
 
         ColumnFamilyStore store = Keyspace.open(KS_NAME).getColumnFamilyStore(CF_NAME);
 
-        store.forceBlockingFlush();
+        if (forceFlush)
+            store.forceBlockingFlush();
 
         return store;
+    }
+
+    private void cleanupData()
+    {
+        Keyspace.open(KS_NAME).getColumnFamilyStore(CF_NAME).truncateBlocking();
     }
 
     private static Set<String> getIndexed(ColumnFamilyStore store, int maxResults, IndexExpression... expressions)

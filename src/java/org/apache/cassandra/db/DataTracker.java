@@ -120,6 +120,7 @@ public class DataTracker
         }
         while (!view.compareAndSet(currentView, newView));
 
+        notifyRenewed(toFlushMemtable);
         return toFlushMemtable;
     }
 

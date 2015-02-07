@@ -34,6 +34,7 @@ import java.util.concurrent.ConcurrentSkipListMap;
 import java.util.concurrent.Future;
 
 import com.google.common.collect.ImmutableSet;
+import com.google.common.collect.Sets;
 import org.apache.commons.lang3.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -45,18 +46,15 @@ import org.apache.cassandra.db.ColumnFamilyStore;
 import org.apache.cassandra.db.DecoratedKey;
 import org.apache.cassandra.db.Row;
 import org.apache.cassandra.db.SystemKeyspace;
-import org.apache.cassandra.db.compaction.CompactionManager;
 import org.apache.cassandra.db.filter.ExtendedFilter;
 import org.apache.cassandra.exceptions.ConfigurationException;
 import org.apache.cassandra.io.sstable.Descriptor;
-import org.apache.cassandra.io.sstable.ReducingKeyIterator;
 import org.apache.cassandra.io.sstable.SSTableReader;
 import org.apache.cassandra.io.sstable.SSTableWriterListenable;
 import org.apache.cassandra.io.sstable.SSTableWriterListenable.Source;
 import org.apache.cassandra.io.sstable.SSTableWriterListener;
 import org.apache.cassandra.thrift.IndexExpression;
 import org.apache.cassandra.thrift.IndexType;
-import org.apache.cassandra.utils.FBUtilities;
 
 /**
  * Manages all the indexes associated with a given CFS
@@ -162,24 +160,15 @@ public class SecondaryIndexManager
         logger.info(String.format("Submitting index build of %s for data in %s",
                                   idxNames, StringUtils.join(sstables, ", ")));
 
-        // TODO: this is hack to work around limitations of index re-build process
+        Set<String> names = Sets.newHashSet(idxNames);
         for (SecondaryIndex index : baseCfs.indexManager.getIndexesNotBackedByCfs())
         {
-            if (index instanceof SuffixArraySecondaryIndex)
-            {
-                ((SuffixArraySecondaryIndex) index).buildIndexes(sstables, idxNames);
+            index.buildIndexes(sstables, names);
+            flushIndexesBlocking();
+
+            if (names.isEmpty())
                 break;
-            }
         }
-
-        if (idxNames.isEmpty())
-            return;
-
-        SecondaryIndexBuilder builder = new SecondaryIndexBuilder(baseCfs, idxNames, new ReducingKeyIterator(sstables));
-        Future<?> future = CompactionManager.instance.submitIndexBuild(builder);
-        FBUtilities.waitOnFuture(future);
-
-        flushIndexesBlocking();
 
         logger.info("Index build of " + idxNames + " complete");
     }
