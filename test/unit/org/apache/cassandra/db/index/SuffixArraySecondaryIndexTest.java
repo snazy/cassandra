@@ -650,6 +650,27 @@ public class SuffixArraySecondaryIndexTest extends SchemaLoader
         Assert.assertTrue(rows.toString(), rows.isEmpty());
 
         store.indexManager.addIndexedColumn(zombie);
+
+        // doesn't really make sense to rebuild index for in-memory data
+        if (!forceFlush)
+            return;
+
+        store.indexManager.invalidate();
+
+        rows = getIndexed(store, 10, new IndexExpression(dataOutputId, IndexOperator.EQ, UTF8Type.instance.decompose("A")));
+        Assert.assertTrue(rows.toString(), rows.isEmpty());
+
+        // now let's trigger index rebuild and check if we got the data back
+        store.indexManager.maybeBuildSecondaryIndexes(store.getSSTables(), Collections.singleton("data_output_id"));
+
+        rows = getIndexed(store, 10, new IndexExpression(dataOutputId, IndexOperator.EQ, UTF8Type.instance.decompose("a")));
+        Assert.assertTrue(rows.toString(), Arrays.equals(new String[] { "key1", "key2" }, rows.toArray(new String[rows.size()])));
+
+        // also let's try to build an index for column which has no data to make sure that doesn't fail
+        store.indexManager.maybeBuildSecondaryIndexes(store.getSSTables(), Collections.singleton("first_name,data_output_id"));
+
+        rows = getIndexed(store, 10, new IndexExpression(dataOutputId, IndexOperator.EQ, UTF8Type.instance.decompose("a")));
+        Assert.assertTrue(rows.toString(), Arrays.equals(new String[] { "key1", "key2" }, rows.toArray(new String[rows.size()])));
     }
 
     @Test

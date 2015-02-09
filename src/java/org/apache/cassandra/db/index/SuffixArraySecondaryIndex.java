@@ -1529,8 +1529,11 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
             {
                 String indexName = String.format(FILE_NAME_FORMAT, columnDef.getIndexName());
 
-                FileUtils.renameWithConfirm(indexWriter.descriptor.filenameFor(indexName),
-                                            sstable.descriptor.filenameFor(indexName));
+                File tmpIndex = new File(indexWriter.descriptor.filenameFor(indexName));
+                if (!tmpIndex.exists()) // no data was inserted into the index for given sstable
+                    continue;
+
+                FileUtils.renameWithConfirm(tmpIndex, new File(sstable.descriptor.filenameFor(indexName)));
             }
 
             addToIntervalTree(Collections.singletonList(sstable), indexes);
