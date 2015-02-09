@@ -161,7 +161,7 @@ public class SecondaryIndexManager
                                   idxNames, StringUtils.join(sstables, ", ")));
 
         Set<String> names = Sets.newHashSet(idxNames);
-        for (SecondaryIndex index : baseCfs.indexManager.getIndexesNotBackedByCfs())
+        for (SecondaryIndex index : baseCfs.indexManager.getIndexes())
         {
             index.buildIndexes(sstables, names);
             flushIndexesBlocking();
