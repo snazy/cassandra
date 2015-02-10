@@ -387,11 +387,7 @@ public abstract class SecondaryIndex
     @Override
     public String toString()
     {
-<<<<<<< HEAD
         return Objects.toStringHelper(this).add("columnDefs", columnDefs).toString();
-=======
-        return String.format("%s: columnDefs %s", getClass().getName(), columnDefs);
->>>>>>> 7050d034afaa6ad39fd8c2f2f0689236059f0107
     }
 
     public Collection<Component> getIndexComponents()

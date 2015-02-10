@@ -624,18 +624,6 @@ public class SecondaryIndexManager
         return set.build();
     }
 
-    /**
-     * @return a immutable view of the current SSTableWriter listeners
-     * @param descriptor
-     */
-    public Set<SSTableWriterListener> getSSTableWriterListsners(Descriptor descriptor, Source source)
-    {
-        ImmutableSet.Builder<SSTableWriterListener> set = ImmutableSet.builder();
-        for (SSTableWriterListenable listenable : writerListenables)
-            set.add(listenable.getListener(descriptor, source));
-        return set.build();
-    }
-
     public static interface Updater
     {
         /** called when constructing the index against pre-existing data */

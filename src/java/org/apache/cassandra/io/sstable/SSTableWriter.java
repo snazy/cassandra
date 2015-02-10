@@ -335,16 +335,10 @@ public class SSTableWriter extends SSTable
             throw new FSWriteError(e, dataFile.getPath());
         }
 
-<<<<<<< HEAD
         sstableMetadataCollector.updateMinTimestamp(minTimestampTracker.get());
         sstableMetadataCollector.updateMaxTimestamp(maxTimestampTracker.get());
         sstableMetadataCollector.updateMaxLocalDeletionTime(maxDeletionTimeTracker.get());
-=======
-        sstableMetadataCollector.updateMinTimestamp(minTimestamp);
-        sstableMetadataCollector.updateMaxTimestamp(maxTimestamp);
-        sstableMetadataCollector.updateMaxLocalDeletionTime(maxLocalDeletionTime);
->>>>>>> 7050d034afaa6ad39fd8c2f2f0689236059f0107
-        sstableMetadataCollector.addRowSize(dataFile.getFilePointer() - currentPositions.right);
+       sstableMetadataCollector.addRowSize(dataFile.getFilePointer() - currentPositions.right);
         sstableMetadataCollector.addColumnCount(columnIndexer.writtenAtomCount());
         sstableMetadataCollector.mergeTombstoneHistogram(tombstones);
         sstableMetadataCollector.updateMinColumnNames(minColumnNames);
