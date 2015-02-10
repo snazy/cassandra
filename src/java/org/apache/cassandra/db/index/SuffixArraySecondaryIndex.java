@@ -267,6 +267,9 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
             }
         }
 
+        if (indexes.isEmpty())
+            return;
+
         for (SSTableReader sstable : sstables)
             FBUtilities.waitOnFuture(CompactionManager.instance.submitIndexBuild(new IndexBuilder(sstable, indexes)));
     }
@@ -278,7 +281,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
 
     public void removeIndex(ByteBuffer columnName)
     {
-        removeIndex(columnName, System.currentTimeMillis());
+        removeIndex(columnName, FBUtilities.timestampMicros());
     }
 
     public void removeIndex(ByteBuffer columnName, long truncateUntil)
@@ -296,7 +299,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
 
     public void invalidate()
     {
-        invalidate(true, System.currentTimeMillis());
+        invalidate(true, FBUtilities.timestampMicros());
     }
 
     public void invalidate(boolean invalidateMemtable, long truncateUntil)
@@ -1096,22 +1099,31 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
                     continue;
 
                 for (SSTableIndex index : indexes)
-                    index.release();
+                {
+                    // reference count has already been decremented by marking as obsolete
+                    if (!index.isObsolete())
+                        index.release();
+                }
             }
         }
 
         public void dropData(long truncateUntil)
         {
+            SAView currentView = view.get();
+            if (currentView == null)
+                return;
+
             Set<SSTableReader> toRemove = new HashSet<>();
-            for (SSTableIndex index : view.get())
+            for (SSTableIndex index : currentView)
             {
                 if (index.sstable.getMaxTimestamp() > truncateUntil)
                     continue;
+
                 index.markObsolete();
                 toRemove.add(index.sstable);
             }
 
-            view.get().update(toRemove, Collections.<SSTableReader>emptyList());
+            update(toRemove, Collections.<SSTableReader>emptyList());
         }
     }
 
@@ -1132,7 +1144,9 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
         private SAView(SAView previous, ByteBuffer col, final Collection<SSTableReader> toRemove, Collection<SSTableReader> toAdd)
         {
             this.col = col;
-            this.validator = baseCfs.metadata.getColumnDefinitionFromColumnName(col).getValidator();
+            this.validator = previous == null
+                                ? baseCfs.metadata.getColumnDefinitionFromColumnName(col).getValidator()
+                                : previous.validator;
 
             String name = baseCfs.getComparator().getString(col);
 
@@ -1416,6 +1430,11 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
         {
             obsolete.getAndSet(true);
             release();
+        }
+
+        public boolean isObsolete()
+        {
+            return obsolete.get();
         }
 
         @Override
