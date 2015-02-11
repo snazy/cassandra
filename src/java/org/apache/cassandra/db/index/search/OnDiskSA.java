@@ -202,8 +202,8 @@ public class OnDiskSA implements Iterable<OnDiskSA.DataSuffix>, Closeable
             //  - it *is* but shouldn't be included (dictated by upperInclusive)
             if (upperPosition.index != lastIndex || !upperInclusive)
             {
-                int end = (upperPosition.cmp > 0 && upperInclusive) || (upperPosition.cmp >= 0 && !upperInclusive)
-                                ? upperPosition.index : upperPosition.index - 1;
+                int end = (upperPosition.cmp < 0 || (upperPosition.cmp == 0 && upperInclusive))
+                                ? upperPosition.index + 1 : upperPosition.index;
 
                 union.add(block.getRange(0, end));
                 lastFullBlockIdx = upperBlock - 1;
