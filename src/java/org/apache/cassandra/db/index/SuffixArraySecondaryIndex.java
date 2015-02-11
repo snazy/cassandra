@@ -551,6 +551,9 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
                     return a.key.compareTo(b.key);
                 }
             });
+
+            walkIndexExpressions(filter.getClause());
+
             List<Pair<ByteBuffer, Expression>> expressions = analyzeQuery(filter.getClause());
             List<Pair<ByteBuffer, Expression>> expressionsImmutable = ImmutableList.copyOf(expressions);
 
@@ -838,6 +841,9 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
 
             for (final IndexExpression e : expressions)
             {
+                if (e.getLogicalOp() != null)
+                    continue;
+
                 ByteBuffer name = ByteBuffer.wrap(e.getColumn_name());
                 ColumnDefinition columnDefinition = getColumnDefinition(name);
                 AbstractType<?> validator = columnDefinition.getValidator();
@@ -918,6 +924,64 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
                     result.add(Pair.create(e.getKey(), e.getValue()));
 
             return result;
+        }
+
+        private void walkIndexExpressions(List<IndexExpression> indexExpressions)
+        {
+            Stack<IndexExpression> mergeBuffer = new Stack<>();
+
+            IndexExpression elm1Buffer = null;
+            IndexExpression elm2Buffer = null;
+
+            logger.info("**** START WALK OF FLATTENED TREE");
+            for (IndexExpression relation : indexExpressions)
+            {
+                if (relation.getLogicalOp() != null)
+                {
+                    if (elm1Buffer != null && elm2Buffer == null && !mergeBuffer.empty())
+                    {
+                        elm2Buffer = mergeBuffer.pop();
+                    }
+                    else if (mergeBuffer.size() >= 2 && elm2Buffer == null)
+                    {
+                        elm1Buffer = mergeBuffer.pop();
+                        elm2Buffer = mergeBuffer.pop();
+                    }
+
+                    // merge results from elm1 and elm2 according to this dequeued logical operation
+                    logger.info("Should merge [" + relation.getLogicalOp() + "] 1: " + elm1Buffer.toString() + " && 2: " + elm2Buffer.toString());
+                    try
+                    {
+                        String mergedColStr = "merged_"+new String(elm1Buffer.getColumn_name())+"_"
+                                +new String(elm2Buffer.getColumn_name());
+                        IndexExpression tmpMergedIndexExpression = new IndexExpression(ByteBufferUtil.bytes(mergedColStr), elm1Buffer.getOp(), elm1Buffer.value);
+                        mergeBuffer.push(tmpMergedIndexExpression);
+                        elm1Buffer = null;
+                        elm2Buffer = null;
+                    }
+                    catch (Exception e)
+                    {
+                        logger.error("Failed to create fake merged relation..", e);
+                    }
+                }
+                else
+                {
+                    if (elm1Buffer == null)
+                        elm1Buffer = relation;
+                    else if (elm2Buffer == null)
+                        elm2Buffer = relation;
+                    else
+                        mergeBuffer.push(relation);
+                }
+            }
+
+            logger.info("**** END WALK OF FLATTENED TREE");
+
+            if (mergeBuffer.size() == 1)
+            {
+                IndexExpression mergedIndexExpression = mergeBuffer.pop();
+                logger.info("FINAL MERGED RESULT --> op: " + mergedIndexExpression.getLogicalOp() + " " + mergedIndexExpression.toString());
+            }
         }
     }
 

@@ -3,6 +3,7 @@ package org.apache.cassandra.db.index.search.memory;
 import java.nio.ByteBuffer;
 import java.util.Collections;
 import java.util.IdentityHashMap;
+import java.util.Iterator;
 import java.util.Set;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ConcurrentMap;
@@ -55,7 +56,17 @@ public class IndexMemtable
     {
         for (ColumnDefinition indexedColumn : backend.getColumnDefs())
         {
-            Column column = cf.getColumn(indexedColumn.name);
+            Iterator<Column> itr = cf.iterator();
+            Column column = null;
+            while (itr.hasNext())
+            {
+                Column col = itr.next();
+                if (col.name().equals(indexedColumn.name))
+                {
+                    column = col;
+                    break;
+                }
+            }
             if (column == null)
                 continue;
 

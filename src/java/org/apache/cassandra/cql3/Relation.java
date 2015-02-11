@@ -17,7 +17,10 @@
  */
 package org.apache.cassandra.cql3;
 
-public abstract class Relation {
+public abstract class Relation
+{
+    protected LogicalOperator logicalOperator;
+    protected Relation leftRelation, rightRelation;
 
     protected Type relationType;
 
@@ -48,10 +51,50 @@ public abstract class Relation {
         }
     }
 
+    public static enum LogicalOperator
+    {
+        OR, AND
+    }
+
     public Type operator()
     {
         return relationType;
     }
 
     public abstract boolean isMultiColumn();
+
+    public boolean hasChildren()
+    {
+        return (logicalOperator != null);
+    }
+
+    public Relation getLeftRelation()
+    {
+        return leftRelation;
+    }
+
+    public void setLeftRelation(Relation leftRelation)
+    {
+        this.leftRelation = leftRelation;
+    }
+
+    public Relation getRightRelation()
+    {
+        return rightRelation;
+    }
+
+    public void setRightRelation(Relation rightRelation)
+    {
+        this.rightRelation = rightRelation;
+    }
+
+    public LogicalOperator logicalOperator()
+    {
+        return logicalOperator;
+    }
+
+    public boolean isLogical()
+    {
+        return logicalOperator != null;
+    }
 }
