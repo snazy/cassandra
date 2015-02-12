@@ -672,7 +672,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
 
                 try
                 {
-                    joiner = unions.get(0);//new LazyMergeSortIterator<>(OperationType.AND, unions);
+                    joiner = new LazyMergeSortIterator<>(OperationType.AND, unions);
 
                     fetch(joiner, requestedRange, filter, expressionsImmutable, rows, maxRows);
                     if (rows.size() >= maxRows)
