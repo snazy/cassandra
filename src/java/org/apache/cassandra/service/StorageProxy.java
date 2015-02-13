@@ -304,6 +304,7 @@ public class StorageProxy implements StorageProxyMBean
         Token tk = StorageService.getPartitioner().getToken(key);
         List<InetAddress> naturalEndpoints = StorageService.instance.getNaturalEndpoints(keyspaceName, tk);
         Collection<InetAddress> pendingEndpoints = StorageService.instance.getTokenMetadata().pendingEndpointsFor(tk, keyspaceName);
+
         if (consistencyForPaxos == ConsistencyLevel.LOCAL_SERIAL)
         {
             // Restrict naturalEndpoints and pendingEndpoints to node in the local DC only
@@ -312,10 +313,21 @@ public class StorageProxy implements StorageProxyMBean
             naturalEndpoints = ImmutableList.copyOf(Iterables.filter(naturalEndpoints, isLocalDc));
             pendingEndpoints = ImmutableList.copyOf(Iterables.filter(pendingEndpoints, isLocalDc));
         }
-        int requiredParticipants = pendingEndpoints.size() + 1 + naturalEndpoints.size() / 2; // See CASSANDRA-833
+        int participants = pendingEndpoints.size() + naturalEndpoints.size();
+        int requiredParticipants = participants / 2 + 1; // See CASSANDRA-8346, CASSANDRA-833
         List<InetAddress> liveEndpoints = ImmutableList.copyOf(Iterables.filter(Iterables.concat(naturalEndpoints, pendingEndpoints), IAsyncCallback.isAlive));
         if (liveEndpoints.size() < requiredParticipants)
             throw new UnavailableException(consistencyForPaxos, requiredParticipants, liveEndpoints.size());
+
+        // We cannot allow CAS operations with 2 or more pending endpoints, see #8346.
+        // Note that we fake an impossible number of required nodes in the unavailable exception
+        // to nail home the point that it's an impossible operation no matter how many nodes are live.
+        if (pendingEndpoints.size() > 1)
+            throw new UnavailableException(String.format("Cannot perform LWT operation as there is more than one (%d) pending range movement", pendingEndpoints.size()),
+                                           consistencyForPaxos,
+                                           participants + 1,
+                                           liveEndpoints.size());
+
         return Pair.create(liveEndpoints, requiredParticipants);
     }
 
@@ -1356,6 +1368,17 @@ public class StorageProxy implements StorageProxyMBean
                     {
                         throw new AssertionError(e); // full data requested from each node here, no digests should be sent
                     }
+                    catch (ReadTimeoutException e)
+                    {
+                        if (Tracing.isTracing())
+                            Tracing.trace("Timed out waiting on digest mismatch repair requests");
+                        else
+                            logger.debug("Timed out waiting on digest mismatch repair requests");
+                        // the caught exception here will have CL.ALL from the repair command,
+                        // not whatever CL the initial command was at (CASSANDRA-7947)
+                        int blockFor = consistencyLevel.blockFor(Keyspace.open(command.getKeyspace()));
+                        throw new ReadTimeoutException(consistencyLevel, blockFor-1, blockFor, true);
+                    }
 
                     RowDataResolver resolver = (RowDataResolver)handler.resolver;
                     try
@@ -1366,7 +1389,10 @@ public class StorageProxy implements StorageProxyMBean
                     }
                     catch (TimeoutException e)
                     {
-                        Tracing.trace("Timed out on digest mismatch retries");
+                        if (Tracing.isTracing())
+                            Tracing.trace("Timed out waiting on digest mismatch repair acknowledgements");
+                        else
+                            logger.debug("Timed out waiting on digest mismatch repair acknowledgements");
                         int blockFor = consistencyLevel.blockFor(Keyspace.open(command.getKeyspace()));
                         throw new ReadTimeoutException(consistencyLevel, blockFor-1, blockFor, true);
                     }
@@ -1473,7 +1499,8 @@ public class StorageProxy implements StorageProxyMBean
         // now scan until we have enough results
         try
         {
-            int cql3RowCount = 0;
+            int liveRowCount = 0;
+            boolean countLiveRows = command.countCQL3Rows() || command.ignoredTombstonedPartitions();
             rows = new ArrayList<>();
 
             // when dealing with LocalStrategy keyspaces, we can skip the range splitting and merging (which can be
@@ -1568,8 +1595,8 @@ public class StorageProxy implements StorageProxyMBean
                     for (Row row : handler.get())
                     {
                         rows.add(row);
-                        if (nodeCmd.countCQL3Rows())
-                            cql3RowCount += row.getLiveCount(command.predicate, command.timestamp);
+                        if (countLiveRows)
+                            liveRowCount += row.getLiveCount(command.predicate, command.timestamp);
                     }
                     FBUtilities.waitOnFutures(resolver.repairResults, DatabaseDescriptor.getWriteRpcTimeout());
                 }
@@ -1610,7 +1637,7 @@ public class StorageProxy implements StorageProxyMBean
                 }
 
                 // if we're done, great, otherwise, move to the next range
-                int count = nodeCmd.countCQL3Rows() ? cql3RowCount : rows.size();
+                int count = countLiveRows ? liveRowCount : rows.size();
                 if (count >= nodeCmd.limit())
                     break;
             }
@@ -1626,8 +1653,8 @@ public class StorageProxy implements StorageProxyMBean
 
     private static List<Row> trim(AbstractRangeCommand command, List<Row> rows)
     {
-        // When maxIsColumns, we let the caller trim the result.
-        if (command.countCQL3Rows())
+        // for CQL3 queries, let the caller trim the results
+        if (command.countCQL3Rows() || command.ignoredTombstonedPartitions())
             return rows;
         else
             return rows.size() > command.limit() ? rows.subList(0, command.limit()) : rows;

@@ -220,8 +220,14 @@ public class CompactionManager implements CompactionManagerMBean
         {
             public Object call() throws IOException
             {
-                operation.perform(cfs, sstables);
-                cfs.getDataTracker().unmarkCompacting(sstables);
+                try
+                {
+                    operation.perform(cfs, sstables);
+                }
+                finally
+                {
+                    cfs.getDataTracker().unmarkCompacting(sstables);
+                }
                 return this;
             }
         };
@@ -555,8 +561,7 @@ public class CompactionManager implements CompactionManagerMBean
                 logger.debug("Expected bloom filter size : " + expectedBloomFilterSize);
 
             logger.info("Cleaning up " + sstable);
-
-            File compactionFileLocation = cfs.directories.getDirectoryForNewSSTables();
+            File compactionFileLocation = cfs.directories.getWriteableLocationAsFile(cfs.getExpectedCompactedFileSize(sstables, OperationType.CLEANUP));
             if (compactionFileLocation == null)
                 throw new IOException("disk full");
 
@@ -766,8 +771,8 @@ public class CompactionManager implements CompactionManagerMBean
             sstables = cfs.getSnapshotSSTableReader(snapshotName);
 
             // Computing gcbefore based on the current time wouldn't be very good because we know each replica will execute
-            // this at a different time (that's the whole purpose of repair with snaphsot). So instead we take the creation
-            // time of the snapshot, which should give us roughtly the same time on each replica (roughtly being in that case
+            // this at a different time (that's the whole purpose of repair with snapshot). So instead we take the creation
+            // time of the snapshot, which should give us roughly the same time on each replica (roughly being in that case
             // 'as good as in the non-snapshot' case)
             gcBefore = cfs.gcBefore(cfs.getSnapshotCreationTime(snapshotName));
         }
@@ -804,15 +809,10 @@ public class CompactionManager implements CompactionManagerMBean
         finally
         {
             iter.close();
+            SSTableReader.releaseReferences(sstables);
             if (isSnapshotValidation)
             {
-                for (SSTableReader sstable : sstables)
-                    FileUtils.closeQuietly(sstable);
                 cfs.clearSnapshot(snapshotName);
-            }
-            else
-            {
-                SSTableReader.releaseReferences(sstables);
             }
 
             metrics.finishCompaction(ci);
@@ -957,7 +957,7 @@ public class CompactionManager implements CompactionManagerMBean
         public void afterExecute(Runnable r, Throwable t)
         {
             DebuggableThreadPoolExecutor.maybeResetTraceSessionWrapper(r);
-    
+
             if (t == null)
                 t = DebuggableThreadPoolExecutor.extractThrowable(r);
 

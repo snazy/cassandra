@@ -77,7 +77,7 @@ public class OnDiskSATest
         Assert.assertEquals(convert(7), convert(onDisk.search(UTF8Type.instance.fromString("o"))));
         Assert.assertEquals(convert(1, 2, 3, 4, 6), convert(onDisk.search(UTF8Type.instance.fromString("t"))));
 
-        Assert.assertEquals(Collections.emptySet(), convert(onDisk.search(UTF8Type.instance.decompose("hello"))));
+        Assert.assertEquals(Collections.<DecoratedKey>emptySet(), convert(onDisk.search(UTF8Type.instance.decompose("hello"))));
 
         onDisk.close();
     }
@@ -269,13 +269,70 @@ public class OnDiskSATest
         Assert.assertEquals(convert(1, 2, 3, 4, 5, 6), convert(onDisk.search(UTF8Type.instance.decompose("za"))));
         Assert.assertEquals(convert(3, 4), convert(onDisk.search(UTF8Type.instance.decompose("ab"))));
 
-        Assert.assertEquals(Collections.emptySet(), convert(onDisk.search(UTF8Type.instance.decompose("Pi"))));
-        Assert.assertEquals(Collections.emptySet(), convert(onDisk.search(UTF8Type.instance.decompose("ethz"))));
-        Assert.assertEquals(Collections.emptySet(), convert(onDisk.search(UTF8Type.instance.decompose("liw"))));
-        Assert.assertEquals(Collections.emptySet(), convert(onDisk.search(UTF8Type.instance.decompose("Taw"))));
-        Assert.assertEquals(Collections.emptySet(), convert(onDisk.search(UTF8Type.instance.decompose("Av"))));
+        Assert.assertEquals(Collections.<DecoratedKey>emptySet(), convert(onDisk.search(UTF8Type.instance.decompose("Pi"))));
+        Assert.assertEquals(Collections.<DecoratedKey>emptySet(), convert(onDisk.search(UTF8Type.instance.decompose("ethz"))));
+        Assert.assertEquals(Collections.<DecoratedKey>emptySet(), convert(onDisk.search(UTF8Type.instance.decompose("liw"))));
+        Assert.assertEquals(Collections.<DecoratedKey>emptySet(), convert(onDisk.search(UTF8Type.instance.decompose("Taw"))));
+        Assert.assertEquals(Collections.<DecoratedKey>emptySet(), convert(onDisk.search(UTF8Type.instance.decompose("Av"))));
 
         onDisk.close();
+    }
+
+    @Test
+    public void testSparseMode() throws Exception
+    {
+        OnDiskSABuilder builder = new OnDiskSABuilder(LongType.instance, OnDiskSABuilder.Mode.SPARSE);
+
+        final long start = System.currentTimeMillis();
+        final int numIterations = 100000;
+
+        for (long i = 0; i < numIterations; i++)
+            builder.add(LongType.instance.decompose(start + i), keyBuilder(i));
+
+        File index = File.createTempFile("on-disk-sa-sparse", "db");
+        index.deleteOnExit();
+
+        builder.finish(Pair.create(keyAt(start), keyAt(start + numIterations)), index);
+
+        OnDiskSA onDisk = new OnDiskSA(index, LongType.instance, new KeyConverter());
+
+        ThreadLocalRandom random = ThreadLocalRandom.current();
+
+        for (long step = start; step < (start + numIterations); step += 1000)
+        {
+            boolean lowerInclusive = random.nextBoolean();
+            boolean upperInclusive = random.nextBoolean();
+
+            long limit = random.nextLong(step, start + numIterations);
+            SkippableIterator<Long, TokenTree.Token> rows = onDisk.search(LongType.instance.decompose(step),
+                                                                          lowerInclusive,
+                                                                          LongType.instance.decompose(limit),
+                                                                          upperInclusive);
+
+            long lowerKey = step - start;
+            long upperKey = lowerKey + (limit - step);
+
+            if (!lowerInclusive)
+                lowerKey += 1;
+
+            if (upperInclusive)
+                upperKey += 1;
+
+            Set<DecoratedKey> actual = convert(rows);
+            for (long key = lowerKey; key < upperKey; key++)
+                Assert.assertTrue("key" + key + " wasn't found", actual.contains(keyAt(key)));
+
+            Assert.assertEquals((upperKey - lowerKey), actual.size());
+        }
+
+        // let's also explicitly test whole range search
+        SkippableIterator<Long, TokenTree.Token> rows = onDisk.search(LongType.instance.decompose(start),
+                                                                      true,
+                                                                      LongType.instance.decompose(start + numIterations),
+                                                                      true);
+
+        Set<DecoratedKey> actual = convert(rows);
+        Assert.assertEquals(numIterations, actual.size());
     }
 
     /*
@@ -480,7 +537,7 @@ public class OnDiskSATest
 
     private static Set<DecoratedKey> convert(SkippableIterator<Long, TokenTree.Token> results)
     {
-        Set<DecoratedKey> keys = new HashSet<>();
+        Set<DecoratedKey> keys = new TreeSet<>(DecoratedKey.comparator);
 
         while (results.hasNext())
         {

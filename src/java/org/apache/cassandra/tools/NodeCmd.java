@@ -27,6 +27,7 @@ import java.text.SimpleDateFormat;
 import java.util.*;
 import java.util.Map.Entry;
 import java.util.concurrent.ExecutionException;
+
 import javax.management.openmbean.TabularData;
 
 import com.google.common.base.Joiner;
@@ -46,6 +47,7 @@ import org.apache.cassandra.db.compaction.OperationType;
 import org.apache.cassandra.io.util.FileUtils;
 import org.apache.cassandra.locator.EndpointSnitchInfoMBean;
 import org.apache.cassandra.net.MessagingServiceMBean;
+import org.apache.cassandra.repair.RepairParallelism;
 import org.apache.cassandra.service.CacheServiceMBean;
 import org.apache.cassandra.service.StorageProxyMBean;
 import org.apache.cassandra.streaming.StreamState;
@@ -69,6 +71,7 @@ public class NodeCmd
     private static final Pair<String, String> TOKENS_OPT = Pair.create("T", "tokens");
     private static final Pair<String, String> PRIMARY_RANGE_OPT = Pair.create("pr", "partitioner-range");
     private static final Pair<String, String> PARALLEL_REPAIR_OPT = Pair.create("par", "parallel");
+    private static final Pair<String, String> DCPARALLEL_REPAIR_OPT = Pair.create("dcpar", "dcparallel");
     private static final Pair<String, String> LOCAL_DC_REPAIR_OPT = Pair.create("local", "in-local-dc");
     private static final Pair<String, String> HOST_REPAIR_OPT = Pair.create("hosts", "in-host");
     private static final Pair<String, String> DC_REPAIR_OPT = Pair.create("dc", "in-dc");
@@ -99,6 +102,7 @@ public class NodeCmd
         options.addOption(TOKENS_OPT,   false, "display all tokens");
         options.addOption(PRIMARY_RANGE_OPT, false, "only repair the first range returned by the partitioner for the node");
         options.addOption(PARALLEL_REPAIR_OPT, false, "repair nodes in parallel.");
+        options.addOption(DCPARALLEL_REPAIR_OPT, false, "repair data centers in parallel.");
         options.addOption(LOCAL_DC_REPAIR_OPT, false, "only repair against nodes in the same datacenter");
         options.addOption(DC_REPAIR_OPT, true, "only repair against nodes in the specified datacenters (comma separated)");
         options.addOption(HOST_REPAIR_OPT, true, "only repair against specified nodes (comma separated)");
@@ -171,6 +175,7 @@ public class NodeCmd
         SNAPSHOT,
         STATUS,
         STATUSBINARY,
+        STATUSGOSSIP,
         STATUSTHRIFT,
         STOP,
         STOPDAEMON,
@@ -201,10 +206,10 @@ public class NodeCmd
         StringBuilder header = new StringBuilder(512);
         header.append("\nAvailable commands\n");
         final NodeToolHelp ntHelp = loadHelp();
-        Collections.sort(ntHelp.commands, new Comparator<NodeToolHelp.NodeToolCommand>() 
+        Collections.sort(ntHelp.commands, new Comparator<NodeToolHelp.NodeToolCommand>()
         {
             @Override
-            public int compare(NodeToolHelp.NodeToolCommand o1, NodeToolHelp.NodeToolCommand o2) 
+            public int compare(NodeToolHelp.NodeToolCommand o1, NodeToolHelp.NodeToolCommand o2)
             {
                 return o1.name.compareTo(o2.name);
             }
@@ -523,7 +528,7 @@ public class NodeCmd
         }
     }
 
-    private Map<String, SetHostStat> getOwnershipByDc(boolean resolveIp, Map<String, String> tokenToEndpoint, 
+    private Map<String, SetHostStat> getOwnershipByDc(boolean resolveIp, Map<String, String> tokenToEndpoint,
                                                       Map<InetAddress, Float> ownerships) throws UnknownHostException
     {
         Map<String, SetHostStat> ownershipByDc = Maps.newLinkedHashMap();
@@ -572,7 +577,7 @@ public class NodeCmd
         public final Float owns;
         public final String token;
 
-        public HostStat(String token, InetAddress endpoint, boolean resolveIp, Float owns) 
+        public HostStat(String token, InetAddress endpoint, boolean resolveIp, Float owns)
         {
             this.token = token;
             this.endpoint = endpoint;
@@ -630,41 +635,44 @@ public class NodeCmd
         // If there is just 1 token, print it now like we always have, otherwise,
         // require that -T/--tokens be passed (that output is potentially verbose).
         if (toks.size() == 1)
-            outs.printf("%-17s: %s%n", "Token", toks.get(0));
+            outs.printf("%-23s: %s%n", "Token", toks.get(0));
         else if (!cmd.hasOption(TOKENS_OPT.left))
-            outs.printf("%-17s: (invoke with -T/--tokens to see all %d tokens)%n", "Token", toks.size());
+            outs.printf("%-23s: (invoke with -T/--tokens to see all %d tokens)%n", "Token", toks.size());
 
-        outs.printf("%-17s: %s%n", "ID", probe.getLocalHostId());
-        outs.printf("%-17s: %s%n", "Gossip active", gossipInitialized);
-        outs.printf("%-17s: %s%n", "Thrift active", probe.isThriftServerRunning());
-        outs.printf("%-17s: %s%n", "Native Transport active", probe.isNativeTransportRunning());
-        outs.printf("%-17s: %s%n", "Load", probe.getLoadString());
+        outs.printf("%-23s: %s%n", "ID", probe.getLocalHostId());
+        outs.printf("%-23s: %s%n", "Gossip active", gossipInitialized);
+        outs.printf("%-23s: %s%n", "Thrift active", probe.isThriftServerRunning());
+        outs.printf("%-23s: %s%n", "Native Transport active", probe.isNativeTransportRunning());
+        outs.printf("%-23s: %s%n", "Load", probe.getLoadString());
         if (gossipInitialized)
-            outs.printf("%-17s: %s%n", "Generation No", probe.getCurrentGenerationNumber());
+            outs.printf("%-23s: %s%n", "Generation No", probe.getCurrentGenerationNumber());
         else
-            outs.printf("%-17s: %s%n", "Generation No", 0);
+            outs.printf("%-23s: %s%n", "Generation No", 0);
 
         // Uptime
         long secondsUp = probe.getUptime() / 1000;
-        outs.printf("%-17s: %d%n", "Uptime (seconds)", secondsUp);
+        outs.printf("%-23s: %d%n", "Uptime (seconds)", secondsUp);
 
         // Memory usage
         MemoryUsage heapUsage = probe.getHeapMemoryUsage();
         double memUsed = (double)heapUsage.getUsed() / (1024 * 1024);
         double memMax = (double)heapUsage.getMax() / (1024 * 1024);
-        outs.printf("%-17s: %.2f / %.2f%n", "Heap Memory (MB)", memUsed, memMax);
+        outs.printf("%-23s: %.2f / %.2f%n", "Heap Memory (MB)", memUsed, memMax);
+
+        // Off heap memory usage
+        outs.printf("%-23s: %.2f%n", "Off Heap Memory (MB)", getOffHeapMemoryUsed());
 
         // Data Center/Rack
-        outs.printf("%-17s: %s%n", "Data Center", probe.getDataCenter());
-        outs.printf("%-17s: %s%n", "Rack", probe.getRack());
+        outs.printf("%-23s: %s%n", "Data Center", probe.getDataCenter());
+        outs.printf("%-23s: %s%n", "Rack", probe.getRack());
 
         // Exceptions
-        outs.printf("%-17s: %s%n", "Exceptions", probe.getExceptionCount());
+        outs.printf("%-23s: %s%n", "Exceptions", probe.getExceptionCount());
 
         CacheServiceMBean cacheService = probe.getCacheServiceMBean();
 
         // Key Cache: Hits, Requests, RecentHitRate, SavePeriodInSeconds
-        outs.printf("%-17s: size %d (bytes), capacity %d (bytes), %d hits, %d requests, %.3f recent hit rate, %d save period in seconds%n",
+        outs.printf("%-23s: size %d (bytes), capacity %d (bytes), %d hits, %d requests, %.3f recent hit rate, %d save period in seconds%n",
                     "Key Cache",
                     cacheService.getKeyCacheSize(),
                     cacheService.getKeyCacheCapacityInBytes(),
@@ -674,7 +682,7 @@ public class NodeCmd
                     cacheService.getKeyCacheSavePeriodInSeconds());
 
         // Row Cache: Hits, Requests, RecentHitRate, SavePeriodInSeconds
-        outs.printf("%-17s: size %d (bytes), capacity %d (bytes), %d hits, %d requests, %.3f recent hit rate, %d save period in seconds%n",
+        outs.printf("%-23s: size %d (bytes), capacity %d (bytes), %d hits, %d requests, %.3f recent hit rate, %d save period in seconds%n",
                     "Row Cache",
                     cacheService.getRowCacheSize(),
                     cacheService.getRowCacheCapacityInBytes(),
@@ -686,8 +694,30 @@ public class NodeCmd
         if (toks.size() > 1 && cmd.hasOption(TOKENS_OPT.left))
         {
             for (String tok : toks)
-                outs.printf("%-17s: %s%n", "Token", tok);
+                outs.printf("%-23s: %s%n", "Token", tok);
         }
+    }
+
+    /**
+     * Returns the total off heap memory used in MB.
+     * @return the total off heap memory used in MB.
+     */
+    private double getOffHeapMemoryUsed()
+    {
+        long offHeapMemUsedInBytes = 0;
+        // get a list of column family stores
+        Iterator<Map.Entry<String, ColumnFamilyStoreMBean>> cfamilies = probe.getColumnFamilyStoreMBeanProxies();
+
+        while (cfamilies.hasNext())
+        {
+            Entry<String, ColumnFamilyStoreMBean> entry = cfamilies.next();
+            ColumnFamilyStoreMBean cfsProxy = entry.getValue();
+            offHeapMemUsedInBytes += cfsProxy.getBloomFilterOffHeapMemoryUsed();
+            offHeapMemUsedInBytes += cfsProxy.getIndexSummaryOffHeapMemoryUsed();
+            offHeapMemUsedInBytes += cfsProxy.getCompressionMetadataOffHeapMemoryUsed();
+        }
+
+        return offHeapMemUsedInBytes / (1024d * 1024);
     }
 
     public void printReleaseVersion(PrintStream outs)
@@ -732,32 +762,35 @@ public class NodeCmd
             }
         }
 
-        outs.printf("Read Repair Statistics:%nAttempted: %d%nMismatch (Blocking): %d%nMismatch (Background): %d%n", probe.getReadRepairAttempted(), probe.getReadRepairRepairedBlocking(), probe.getReadRepairRepairedBackground());
+        if (!probe.isStarting())
+        {
+	        outs.printf("Read Repair Statistics:%nAttempted: %d%nMismatch (Blocking): %d%nMismatch (Background): %d%n", probe.getReadRepairAttempted(), probe.getReadRepairRepairedBlocking(), probe.getReadRepairRepairedBackground());
 
-        MessagingServiceMBean ms = probe.msProxy;
-        outs.printf("%-25s", "Pool Name");
-        outs.printf("%10s", "Active");
-        outs.printf("%10s", "Pending");
-        outs.printf("%15s%n", "Completed");
+	        MessagingServiceMBean ms = probe.msProxy;
+	        outs.printf("%-25s", "Pool Name");
+	        outs.printf("%10s", "Active");
+	        outs.printf("%10s", "Pending");
+	        outs.printf("%15s%n", "Completed");
 
-        int pending;
-        long completed;
+	        int pending;
+	        long completed;
 
-        pending = 0;
-        for (int n : ms.getCommandPendingTasks().values())
-            pending += n;
-        completed = 0;
-        for (long n : ms.getCommandCompletedTasks().values())
-            completed += n;
-        outs.printf("%-25s%10s%10s%15s%n", "Commands", "n/a", pending, completed);
+	        pending = 0;
+	        for (int n : ms.getCommandPendingTasks().values())
+	            pending += n;
+	        completed = 0;
+	        for (long n : ms.getCommandCompletedTasks().values())
+	            completed += n;
+	        outs.printf("%-25s%10s%10s%15s%n", "Commands", "n/a", pending, completed);
 
-        pending = 0;
-        for (int n : ms.getResponsePendingTasks().values())
-            pending += n;
-        completed = 0;
-        for (long n : ms.getResponseCompletedTasks().values())
-            completed += n;
-        outs.printf("%-25s%10s%10s%15s%n", "Responses", "n/a", pending, completed);
+	        pending = 0;
+	        for (int n : ms.getResponsePendingTasks().values())
+	            pending += n;
+	        completed = 0;
+	        for (long n : ms.getResponseCompletedTasks().values())
+	            completed += n;
+	        outs.printf("%-25s%10s%10s%15s%n", "Responses", "n/a", pending, completed);
+        }
     }
 
     public void printCompactionStats(PrintStream outs)
@@ -943,8 +976,16 @@ public class NodeCmd
                             outs.println("]");
                     }
                 }
+
+                long bloomFilterOffHeapSize = cfstore.getBloomFilterOffHeapMemoryUsed();
+                long indexSummaryOffHeapSize = cfstore.getIndexSummaryOffHeapMemoryUsed();
+                long compressionMetadataOffHeapSize = cfstore.getCompressionMetadataOffHeapMemoryUsed();
+
+                long offHeapSize = bloomFilterOffHeapSize + indexSummaryOffHeapSize + compressionMetadataOffHeapSize;
+
                 outs.println("\t\tSpace used (live), bytes: " + cfstore.getLiveDiskSpaceUsed());
                 outs.println("\t\tSpace used (total), bytes: " + cfstore.getTotalDiskSpaceUsed());
+                outs.println("\t\tOff heap memory used (total), bytes: " + offHeapSize);
                 outs.println("\t\tSSTable Compression Ratio: " + cfstore.getCompressionRatio());
                 outs.println("\t\tNumber of keys (estimate): " + cfstore.estimateKeys());
                 outs.println("\t\tMemtable cell count: " + cfstore.getMemtableColumnsCount());
@@ -958,6 +999,9 @@ public class NodeCmd
                 outs.println("\t\tBloom filter false positives: " + cfstore.getBloomFilterFalsePositives());
                 outs.println("\t\tBloom filter false ratio: " + String.format("%01.5f", cfstore.getRecentBloomFilterFalseRatio()));
                 outs.println("\t\tBloom filter space used, bytes: " + cfstore.getBloomFilterDiskSpaceUsed());
+                outs.println("\t\tBloom filter off heap memory used, bytes: " + bloomFilterOffHeapSize);
+                outs.println("\t\tIndex summary off heap memory used, bytes: " + indexSummaryOffHeapSize);
+                outs.println("\t\tCompression metadata off heap memory used, bytes: " + compressionMetadataOffHeapSize);
                 outs.println("\t\tCompacted partition minimum bytes: " + cfstore.getMinRowSize());
                 outs.println("\t\tCompacted partition maximum bytes: " + cfstore.getMaxRowSize());
                 outs.println("\t\tCompacted partition mean bytes: " + cfstore.getMeanRowSize());
@@ -1246,6 +1290,7 @@ public class NodeCmd
                 case STATUSBINARY    : nodeCmd.printIsNativeTransportRunning(System.out); break;
                 case DISABLEGOSSIP   : probe.stopGossiping(); break;
                 case ENABLEGOSSIP    : probe.startGossiping(); break;
+                case STATUSGOSSIP    : nodeCmd.printIsGossipRunning(System.out); break;
                 case DISABLEHANDOFF  : probe.disableHintedHandoff(); break;
                 case ENABLEHANDOFF   :
                     if (arguments.length > 0) { probe.enableHintedHandoff(arguments[0]); }
@@ -1494,6 +1539,11 @@ public class NodeCmd
         System.exit(probe.isFailed() ? 1 : 0);
     }
 
+    private void printIsGossipRunning(PrintStream outs)
+    {
+        outs.println(probe.isGossipRunning() ? "running" : "not running");
+    }
+
     private void getLoggingLevels(PrintStream out)
     {
         // what if some one set a very long logger name? 50 space may not be enough...
@@ -1660,7 +1710,11 @@ public class NodeCmd
             switch (nc)
             {
                 case REPAIR  :
-                    boolean sequential = !cmd.hasOption(PARALLEL_REPAIR_OPT.left);
+                    RepairParallelism parallelismDegree = RepairParallelism.SEQUENTIAL;
+                    if (cmd.hasOption(PARALLEL_REPAIR_OPT.left))
+                        parallelismDegree = RepairParallelism.PARALLEL;
+                    else if (cmd.hasOption(DCPARALLEL_REPAIR_OPT.left))
+                        parallelismDegree = RepairParallelism.DATACENTER_AWARE;
                     boolean localDC = cmd.hasOption(LOCAL_DC_REPAIR_OPT.left);
                     boolean specificDC = cmd.hasOption(DC_REPAIR_OPT.left);
                     boolean specificHosts = cmd.hasOption(HOST_REPAIR_OPT.left);
@@ -1678,9 +1732,9 @@ public class NodeCmd
                     else if(specificHosts)
                         hosts  = Arrays.asList(cmd.getOptionValue(HOST_REPAIR_OPT.left).split(","));
                     if (cmd.hasOption(START_TOKEN_OPT.left) || cmd.hasOption(END_TOKEN_OPT.left))
-                        probe.forceRepairRangeAsync(System.out, keyspace, sequential, dataCenters, hosts, cmd.getOptionValue(START_TOKEN_OPT.left), cmd.getOptionValue(END_TOKEN_OPT.left), columnFamilies);
+                        probe.forceRepairRangeAsync(System.out, keyspace, parallelismDegree, dataCenters, hosts, cmd.getOptionValue(START_TOKEN_OPT.left), cmd.getOptionValue(END_TOKEN_OPT.left), columnFamilies);
                     else
-                        probe.forceRepairAsync(System.out, keyspace, sequential, dataCenters, hosts, primaryRange, columnFamilies);
+                        probe.forceRepairAsync(System.out, keyspace, parallelismDegree, dataCenters, hosts, primaryRange, columnFamilies);
                     break;
                 case FLUSH   :
                     try { probe.forceKeyspaceFlush(keyspace, columnFamilies); }

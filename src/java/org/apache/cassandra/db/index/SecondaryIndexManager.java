@@ -161,7 +161,7 @@ public class SecondaryIndexManager
                                   idxNames, StringUtils.join(sstables, ", ")));
 
         Set<String> names = Sets.newHashSet(idxNames);
-        for (SecondaryIndex index : baseCfs.indexManager.getIndexesNotBackedByCfs())
+        for (SecondaryIndex index : baseCfs.indexManager.getIndexes())
         {
             index.buildIndexes(sstables, names);
             flushIndexesBlocking();
@@ -497,7 +497,7 @@ public class SecondaryIndexManager
                 }
                 else
                 {
-                    ((PerColumnSecondaryIndex) index).delete(key.key, column);
+                    ((PerColumnSecondaryIndex) index).deleteForCleanup(key.key, column);
                 }
             }
         }
@@ -606,8 +606,10 @@ public class SecondaryIndexManager
 
     public boolean validate(Column column)
     {
-        SecondaryIndex index = getIndexForColumn(column.name());
-        return index == null || index.validate(column);
+        for (SecondaryIndex index : indexFor(column.name()))
+            if (!index.validate(column))
+                return false;
+        return true;
     }
 
     /**
@@ -662,7 +664,7 @@ public class SecondaryIndexManager
         {
             if (oldColumn.equals(column))
                 return;
-            
+
             for (SecondaryIndex index : indexFor(column.name()))
             {
                 if (index instanceof PerColumnSecondaryIndex)

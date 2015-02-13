@@ -26,6 +26,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Future;
 import java.util.concurrent.FutureTask;
 
+import com.google.common.base.Objects;
 import org.apache.commons.lang3.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -386,7 +387,7 @@ public abstract class SecondaryIndex
     @Override
     public String toString()
     {
-        return String.format("%s: columnDefs %s", getClass().getName(), columnDefs);
+        return Objects.toStringHelper(this).add("columnDefs", columnDefs).toString();
     }
 
     public Collection<Component> getIndexComponents()

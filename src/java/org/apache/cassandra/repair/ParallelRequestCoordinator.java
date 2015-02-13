@@ -15,14 +15,35 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.apache.cassandra.db;
+package org.apache.cassandra.repair;
 
-import org.apache.cassandra.thrift.InvalidRequestException;
+import java.util.HashSet;
+import java.util.Set;
 
-public class ColumnFamilyNotDefinedException extends InvalidRequestException
+public class ParallelRequestCoordinator<R> implements IRequestCoordinator<R>
 {
-    public ColumnFamilyNotDefinedException(String message)
+    private final Set<R> requests = new HashSet<>();
+    private final IRequestProcessor<R> processor;
+
+    public ParallelRequestCoordinator(IRequestProcessor<R> processor)
     {
-        super(message);
+        this.processor = processor;
+    }
+
+    @Override
+    public void add(R request) { requests.add(request); }
+
+    @Override
+    public void start()
+    {
+        for (R request : requests)
+            processor.process(request);
+    }
+
+    @Override
+    public int completed(R request)
+    {
+        requests.remove(request);
+        return requests.size();
     }
 }

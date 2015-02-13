@@ -267,8 +267,20 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
             }
         }
 
+        if (indexes.isEmpty())
+            return;
+
         for (SSTableReader sstable : sstables)
-            FBUtilities.waitOnFuture(CompactionManager.instance.submitIndexBuild(new IndexBuilder(sstable, indexes)));
+        {
+            try
+            {
+                FBUtilities.waitOnFuture(CompactionManager.instance.submitIndexBuild(new IndexBuilder(sstable, indexes)));
+            }
+            catch (Exception e)
+            {
+                logger.error("Failed index build task for " + sstable, e);
+            }
+        }
     }
 
     public void delete(DecoratedKey key)
@@ -278,7 +290,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
 
     public void removeIndex(ByteBuffer columnName)
     {
-        removeIndex(columnName, System.currentTimeMillis());
+        removeIndex(columnName, FBUtilities.timestampMicros());
     }
 
     public void removeIndex(ByteBuffer columnName, long truncateUntil)
@@ -296,7 +308,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
 
     public void invalidate()
     {
-        invalidate(true, System.currentTimeMillis());
+        invalidate(true, FBUtilities.timestampMicros());
     }
 
     public void invalidate(boolean invalidateMemtable, long truncateUntil)
@@ -669,7 +681,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
 
                 try
                 {
-                    joiner = unions.get(0);//new LazyMergeSortIterator<>(OperationType.AND, unions);
+                    joiner = new LazyMergeSortIterator<>(OperationType.AND, unions);
 
                     fetch(joiner, requestedRange, filter, expressionsImmutable, rows, maxRows);
                     if (rows.size() >= maxRows)
@@ -1096,22 +1108,31 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
                     continue;
 
                 for (SSTableIndex index : indexes)
-                    index.release();
+                {
+                    // reference count has already been decremented by marking as obsolete
+                    if (!index.isObsolete())
+                        index.release();
+                }
             }
         }
 
         public void dropData(long truncateUntil)
         {
+            SAView currentView = view.get();
+            if (currentView == null)
+                return;
+
             Set<SSTableReader> toRemove = new HashSet<>();
-            for (SSTableIndex index : view.get())
+            for (SSTableIndex index : currentView)
             {
                 if (index.sstable.getMaxTimestamp() > truncateUntil)
                     continue;
+
                 index.markObsolete();
                 toRemove.add(index.sstable);
             }
 
-            view.get().update(toRemove, Collections.<SSTableReader>emptyList());
+            update(toRemove, Collections.<SSTableReader>emptyList());
         }
     }
 
@@ -1132,7 +1153,9 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
         private SAView(SAView previous, ByteBuffer col, final Collection<SSTableReader> toRemove, Collection<SSTableReader> toAdd)
         {
             this.col = col;
-            this.validator = baseCfs.metadata.getColumnDefinitionFromColumnName(col).getValidator();
+            this.validator = previous == null
+                                ? baseCfs.metadata.getColumnDefinitionFromColumnName(col).getValidator()
+                                : previous.validator;
 
             String name = baseCfs.getComparator().getString(col);
 
@@ -1350,7 +1373,8 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
             column = name;
             sstable = referent;
 
-            assert sstable.acquireReference();
+            if (!sstable.acquireReference())
+                throw new IllegalStateException("Couldn't acquire reference to the sstable: " + sstable);
 
             AbstractType<?> validator = getValidator(column);
 
@@ -1418,6 +1442,11 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
             release();
         }
 
+        public boolean isObsolete()
+        {
+            return obsolete.get();
+        }
+
         @Override
         public String toString()
         {
@@ -1483,6 +1512,10 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
         {
             this.keys = new KeyIterator(sstable.descriptor);
             this.sstable = sstable;
+
+            if (!sstable.acquireReference())
+                throw new IllegalStateException("Couldn't acquire reference to the sstable: " + sstable);
+
             this.indexWriter = new PerSSTableIndexWriter(sstable.descriptor.asTemporary(true), Source.COMPACTION);
             this.indexNames = indexesToBuild;
             this.indexes = new ArrayList<ColumnDefinition>()
@@ -1503,24 +1536,30 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
 
         public void build()
         {
-            while (keys.hasNext())
+            try
             {
-                if (isStopRequested())
-                    throw new CompactionInterruptedException(getCompactionInfo());
-
-                DecoratedKey key = keys.next();
-
-                indexWriter.startRow(key, keys.getKeyPosition());
-
-                SSTableNamesIterator columns = new SSTableNamesIterator(sstable, key, indexNames);
-
-                while (columns.hasNext())
+                while (keys.hasNext())
                 {
-                    OnDiskAtom atom = columns.next();
+                    if (isStopRequested())
+                        throw new CompactionInterruptedException(getCompactionInfo());
 
-                    if (atom != null && atom instanceof Column)
-                        indexWriter.nextColumn((Column) atom);
+                    DecoratedKey key = keys.next();
+
+                    indexWriter.startRow(key, keys.getKeyPosition());
+
+                    SSTableNamesIterator columns = new SSTableNamesIterator(sstable, key, indexNames);
+
+                    while (columns.hasNext())
+                    {
+                        OnDiskAtom atom = columns.next();
+
+                        if (atom != null && atom instanceof Column)
+                            indexWriter.nextColumn((Column) atom);
+                    }
                 }
+            }
+            finally {
+                sstable.releaseReference();
             }
 
             indexWriter.complete();
@@ -1529,8 +1568,11 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
             {
                 String indexName = String.format(FILE_NAME_FORMAT, columnDef.getIndexName());
 
-                FileUtils.renameWithConfirm(indexWriter.descriptor.filenameFor(indexName),
-                                            sstable.descriptor.filenameFor(indexName));
+                File tmpIndex = new File(indexWriter.descriptor.filenameFor(indexName));
+                if (!tmpIndex.exists()) // no data was inserted into the index for given sstable
+                    continue;
+
+                FileUtils.renameWithConfirm(tmpIndex, new File(sstable.descriptor.filenameFor(indexName)));
             }
 
             addToIntervalTree(Collections.singletonList(sstable), indexes);

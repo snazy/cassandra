@@ -40,6 +40,8 @@ import org.apache.cassandra.db.commitlog.CommitLog;
 import org.apache.cassandra.db.commitlog.CommitLogDescriptor;
 import org.apache.cassandra.db.commitlog.ReplayPosition;
 import org.apache.cassandra.db.filter.NamesQueryFilter;
+import org.apache.cassandra.exceptions.ConfigurationException;
+import org.apache.cassandra.gms.Gossiper;
 import org.apache.cassandra.net.MessagingService;
 import org.apache.cassandra.service.StorageService;
 import org.apache.cassandra.utils.ByteBufferUtil;
@@ -220,7 +222,7 @@ public class CommitLogTest extends SchemaLoader
             CommitLog.instance.recover(new File[]{ logFile }); //CASSANDRA-1119 / CASSANDRA-1179 throw on failure*/
         }
     }
-    
+
     @Test
     public void testVersions()
     {
@@ -239,29 +241,22 @@ public class CommitLogTest extends SchemaLoader
 
     @Ignore("See https://issues.apache.org/jira/browse/CASSANDRA-7713 for details")
     @Test
-    public void testCommitFailurePolicy_stop()
+    public void testCommitFailurePolicy_stop() throws ConfigurationException
     {
-        File commitDir = new File(DatabaseDescriptor.getCommitLogLocation());
+        // Need storage service active so stop policy can shutdown gossip
+        StorageService.instance.initServer();
+        Assert.assertTrue(Gossiper.instance.isEnabled());
 
+        Config.CommitFailurePolicy oldPolicy = DatabaseDescriptor.getCommitFailurePolicy();
         try
         {
-
             DatabaseDescriptor.setCommitFailurePolicy(Config.CommitFailurePolicy.stop);
-            commitDir.setWritable(false);
-            RowMutation rm = new RowMutation("Keyspace1", bytes("k"));
-            rm.add("Standard1", bytes("c1"), ByteBuffer.allocate(100), 0);
-
-            // Adding it twice (won't change segment)
-            CommitLog.instance.add(rm);
-            Uninterruptibles.sleepUninterruptibly((int) DatabaseDescriptor.getCommitLogSyncBatchWindow(), TimeUnit.MILLISECONDS);
-            Assert.assertFalse(StorageService.instance.isRPCServerRunning());
-            Assert.assertFalse(StorageService.instance.isNativeTransportRunning());
-            Assert.assertFalse(StorageService.instance.isInitialized());
-
+            CommitLog.handleCommitError("Test stop error", new Throwable());
+            Assert.assertFalse(Gossiper.instance.isEnabled());
         }
         finally
         {
-            commitDir.setWritable(true);
+            DatabaseDescriptor.setCommitFailurePolicy(oldPolicy);
         }
     }
 

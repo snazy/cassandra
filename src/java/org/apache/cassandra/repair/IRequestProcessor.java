@@ -15,13 +15,9 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.apache.cassandra.auth;
+package org.apache.cassandra.repair;
 
-public interface AuthMBean
+public interface IRequestProcessor<R>
 {
-    public int getPermissionsValidity();
-
-    public void setPermissionsValidity(int timeoutInMs);
-
-    public void invalidatePermissionsCache();
+    void process(R request);
 }

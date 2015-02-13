@@ -39,6 +39,7 @@ import org.apache.cassandra.io.sstable.SSTableWriterListenable.Source;
 import org.apache.cassandra.io.util.*;
 import org.apache.cassandra.service.StorageService;
 import org.apache.cassandra.utils.ByteBufferUtil;
+import org.apache.cassandra.utils.FBUtilities;
 import org.apache.cassandra.utils.FilterFactory;
 import org.apache.cassandra.utils.IFilter;
 import org.apache.cassandra.utils.Pair;
@@ -239,6 +240,14 @@ public class SSTableWriter extends SSTable
 
     public void append(DecoratedKey decoratedKey, ColumnFamily cf)
     {
+        if (decoratedKey.key.remaining() > FBUtilities.MAX_UNSIGNED_SHORT)
+        {
+            logger.error("Key size {} exceeds maximum of {}, skipping row",
+                         decoratedKey.key.remaining(),
+                         FBUtilities.MAX_UNSIGNED_SHORT);
+            return;
+        }
+
         append(new PrecompactedRow(decoratedKey, cf));
     }
 
@@ -344,8 +353,8 @@ public class SSTableWriter extends SSTable
     public void abort()
     {
         assert descriptor.temporary;
-        FileUtils.closeQuietly(iwriter);
-        FileUtils.closeQuietly(dataFile);
+        iwriter.abort();
+        dataFile.abort();
 
         Set<Component> components = SSTable.componentsFor(descriptor);
         try
@@ -425,6 +434,7 @@ public class SSTableWriter extends SSTable
         }
         catch (IOException e)
         {
+            out.abort();
             throw new FSWriteError(e, out.getPath());
         }
         out.close();
@@ -538,6 +548,12 @@ public class SSTableWriter extends SSTable
             long position = indexFile.getFilePointer();
             indexFile.close(); // calls force
             FileUtils.truncate(indexFile.getPath(), position);
+        }
+
+        public void abort()
+        {
+            indexFile.abort();
+            bf.close();
         }
 
         public void mark()

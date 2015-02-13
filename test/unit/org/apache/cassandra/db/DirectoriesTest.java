@@ -22,6 +22,8 @@ import java.io.IOException;
 import java.util.*;
 import java.util.concurrent.*;
 
+import org.apache.commons.lang3.StringUtils;
+
 import org.junit.AfterClass;
 import org.junit.Assert;
 import org.junit.BeforeClass;
@@ -34,6 +36,13 @@ import org.apache.cassandra.db.compaction.LeveledManifest;
 import org.apache.cassandra.io.sstable.Component;
 import org.apache.cassandra.io.sstable.Descriptor;
 import org.apache.cassandra.io.util.FileUtils;
+import org.apache.cassandra.io.FSWriteError;
+
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertSame;
+import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.fail;
 
 public class DirectoriesTest
 {
@@ -184,15 +193,14 @@ public class DirectoriesTest
         try 
         {
             DatabaseDescriptor.setDiskFailurePolicy(DiskFailurePolicy.best_effort);
-            
-            for (DataDirectory dd : Directories.dataFileLocations)
+            // Fake a Directory creation failure
+            if (Directories.dataFileLocations.length > 0)
             {
-                dd.location.setExecutable(false);
-                dd.location.setWritable(false);
+                String[] path = new String[] {KS, "bad"};
+                File dir = new File(Directories.dataFileLocations[0].location, StringUtils.join(path, File.separator));
+                FileUtils.handleFSError(new FSWriteError(new IOException("Unable to create directory " + dir), dir));
             }
-            
-            Directories.create(KS, "bad");
-            
+
             for (DataDirectory dd : Directories.dataFileLocations)
             {
                 File file = new File(dd.location, new File(KS, "bad").getPath());
@@ -201,12 +209,6 @@ public class DirectoriesTest
         } 
         finally 
         {
-            for (DataDirectory dd : Directories.dataFileLocations)
-            {
-                dd.location.setExecutable(true);
-                dd.location.setWritable(true);
-            }
-            
             DatabaseDescriptor.setDiskFailurePolicy(origPolicy);
         }
     }
@@ -230,5 +232,129 @@ public class DirectoriesTest
                 Assert.assertTrue(fut.get().exists());
             }
         }
+    }
+
+    @Test
+    public void testDiskFreeSpace()
+    {
+        DataDirectory[] dataDirectories = new DataDirectory[]
+                                          {
+                                          new DataDirectory(new File("/nearlyFullDir1"))
+                                          {
+                                              public long getAvailableSpace()
+                                              {
+                                                  return 11L;
+                                              }
+                                          },
+                                          new DataDirectory(new File("/nearlyFullDir2"))
+                                          {
+                                              public long getAvailableSpace()
+                                              {
+                                                  return 10L;
+                                              }
+                                          },
+                                          new DataDirectory(new File("/uniformDir1"))
+                                          {
+                                              public long getAvailableSpace()
+                                              {
+                                                  return 1000L;
+                                              }
+                                          },
+                                          new DataDirectory(new File("/uniformDir2"))
+                                          {
+                                              public long getAvailableSpace()
+                                              {
+                                                  return 999L;
+                                              }
+                                          },
+                                          new DataDirectory(new File("/veryFullDir"))
+                                          {
+                                              public long getAvailableSpace()
+                                              {
+                                                  return 4L;
+                                              }
+                                          }
+                                          };
+
+        // directories should be sorted
+        // 1. by their free space ratio
+        // before weighted random is applied
+        List<Directories.DataDirectoryCandidate> candidates = getWriteableDirectories(dataDirectories, 0L);
+        assertSame(dataDirectories[2], candidates.get(0).dataDirectory); // available: 1000
+        assertSame(dataDirectories[3], candidates.get(1).dataDirectory); // available: 999
+        assertSame(dataDirectories[0], candidates.get(2).dataDirectory); // available: 11
+        assertSame(dataDirectories[1], candidates.get(3).dataDirectory); // available: 10
+
+        // check for writeSize == 5
+        Map<DataDirectory, DataDirectory> testMap = new IdentityHashMap<>();
+        for (int i=0; ; i++)
+        {
+            candidates = getWriteableDirectories(dataDirectories, 5L);
+            assertEquals(4, candidates.size());
+
+            DataDirectory dir = Directories.pickWriteableDirectory(candidates);
+            testMap.put(dir, dir);
+
+            assertFalse(testMap.size() > 4);
+            if (testMap.size() == 4)
+            {
+                // at least (rule of thumb) 100 iterations to see whether there are more (wrong) directories returned
+                if (i >= 100)
+                    break;
+            }
+
+            // random weighted writeable directory algorithm fails to return all possible directories after
+            // many tries
+            if (i >= 10000000)
+                fail();
+        }
+
+        // check for writeSize == 11
+        testMap.clear();
+        for (int i=0; ; i++)
+        {
+            candidates = getWriteableDirectories(dataDirectories, 11L);
+            assertEquals(3, candidates.size());
+            for (Directories.DataDirectoryCandidate candidate : candidates)
+                assertTrue(candidate.dataDirectory.getAvailableSpace() >= 11L);
+
+            DataDirectory dir = Directories.pickWriteableDirectory(candidates);
+            testMap.put(dir, dir);
+
+            assertFalse(testMap.size() > 3);
+            if (testMap.size() == 3)
+            {
+                // at least (rule of thumb) 100 iterations
+                if (i >= 100)
+                    break;
+            }
+
+            // random weighted writeable directory algorithm fails to return all possible directories after
+            // many tries
+            if (i >= 10000000)
+                fail();
+        }
+    }
+
+    private List<Directories.DataDirectoryCandidate> getWriteableDirectories(DataDirectory[] dataDirectories, long writeSize)
+    {
+        // copied from Directories.getWriteableLocation(long)
+        List<Directories.DataDirectoryCandidate> candidates = new ArrayList<>();
+
+        long totalAvailable = 0L;
+
+        for (DataDirectory dataDir : dataDirectories)
+            {
+                Directories.DataDirectoryCandidate candidate = new Directories.DataDirectoryCandidate(dataDir);
+                // exclude directory if its total writeSize does not fit to data directory
+                if (candidate.availableSpace < writeSize)
+                    continue;
+                candidates.add(candidate);
+                totalAvailable += candidate.availableSpace;
+            }
+
+        Directories.sortWriteableCandidates(candidates, totalAvailable);
+
+        return candidates;
     }
 }

@@ -62,6 +62,12 @@ public class OffHeapBitSet implements IBitSet
         return bytes.size() * 8;
     }
 
+    @Override
+    public long offHeapSize()
+    {
+        return bytes.size();
+    }
+
     public boolean get(long index)
     {
         long i = index >> 3;
@@ -139,7 +145,7 @@ public class OffHeapBitSet implements IBitSet
         return new OffHeapBitSet(memory);
     }
 
-    public void close() throws IOException
+    public void close()
     {
         bytes.free();
     }
