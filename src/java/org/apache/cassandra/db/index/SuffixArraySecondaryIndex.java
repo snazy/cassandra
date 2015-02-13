@@ -271,7 +271,16 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
             return;
 
         for (SSTableReader sstable : sstables)
-            FBUtilities.waitOnFuture(CompactionManager.instance.submitIndexBuild(new IndexBuilder(sstable, indexes)));
+        {
+            try
+            {
+                FBUtilities.waitOnFuture(CompactionManager.instance.submitIndexBuild(new IndexBuilder(sstable, indexes)));
+            }
+            catch (Exception e)
+            {
+                logger.error("Failed index build task for " + sstable, e);
+            }
+        }
     }
 
     public void delete(DecoratedKey key)
@@ -1364,7 +1373,8 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
             column = name;
             sstable = referent;
 
-            assert sstable.acquireReference();
+            if (!sstable.acquireReference())
+                throw new IllegalStateException("Couldn't acquire reference to the sstable: " + sstable);
 
             AbstractType<?> validator = getValidator(column);
 
@@ -1502,6 +1512,10 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
         {
             this.keys = new KeyIterator(sstable.descriptor);
             this.sstable = sstable;
+
+            if (!sstable.acquireReference())
+                throw new IllegalStateException("Couldn't acquire reference to the sstable: " + sstable);
+
             this.indexWriter = new PerSSTableIndexWriter(sstable.descriptor.asTemporary(true), Source.COMPACTION);
             this.indexNames = indexesToBuild;
             this.indexes = new ArrayList<ColumnDefinition>()
@@ -1522,24 +1536,30 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
 
         public void build()
         {
-            while (keys.hasNext())
+            try
             {
-                if (isStopRequested())
-                    throw new CompactionInterruptedException(getCompactionInfo());
-
-                DecoratedKey key = keys.next();
-
-                indexWriter.startRow(key, keys.getKeyPosition());
-
-                SSTableNamesIterator columns = new SSTableNamesIterator(sstable, key, indexNames);
-
-                while (columns.hasNext())
+                while (keys.hasNext())
                 {
-                    OnDiskAtom atom = columns.next();
+                    if (isStopRequested())
+                        throw new CompactionInterruptedException(getCompactionInfo());
 
-                    if (atom != null && atom instanceof Column)
-                        indexWriter.nextColumn((Column) atom);
+                    DecoratedKey key = keys.next();
+
+                    indexWriter.startRow(key, keys.getKeyPosition());
+
+                    SSTableNamesIterator columns = new SSTableNamesIterator(sstable, key, indexNames);
+
+                    while (columns.hasNext())
+                    {
+                        OnDiskAtom atom = columns.next();
+
+                        if (atom != null && atom instanceof Column)
+                            indexWriter.nextColumn((Column) atom);
+                    }
                 }
+            }
+            finally {
+                sstable.releaseReference();
             }
 
             indexWriter.complete();
