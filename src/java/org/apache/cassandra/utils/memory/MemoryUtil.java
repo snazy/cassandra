@@ -18,22 +18,18 @@
 package org.apache.cassandra.utils.memory;
 
 import java.lang.reflect.Field;
-import java.nio.Buffer;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 
 import com.sun.jna.Native;
 import sun.misc.Unsafe;
+import sun.nio.ch.DirectBuffer;
 
 public abstract class MemoryUtil
 {
     private static final long UNSAFE_COPY_THRESHOLD = 1024 * 1024L; // copied from java.nio.Bits
 
     private static final Unsafe unsafe;
-    private static final Class<?> DIRECT_BYTE_BUFFER_CLASS;
-    private static final long DIRECT_BYTE_BUFFER_ADDRESS_OFFSET;
-    private static final long DIRECT_BYTE_BUFFER_CAPACITY_OFFSET;
-    private static final long DIRECT_BYTE_BUFFER_LIMIT_OFFSET;
     private static final long BYTE_ARRAY_BASE_OFFSET;
 
     private static final boolean BIG_ENDIAN = ByteOrder.nativeOrder().equals(ByteOrder.BIG_ENDIAN);
@@ -52,11 +48,6 @@ public abstract class MemoryUtil
             Field field = sun.misc.Unsafe.class.getDeclaredField("theUnsafe");
             field.setAccessible(true);
             unsafe = (sun.misc.Unsafe) field.get(null);
-            Class<?> clazz = ByteBuffer.allocateDirect(0).getClass();
-            DIRECT_BYTE_BUFFER_ADDRESS_OFFSET = unsafe.objectFieldOffset(Buffer.class.getDeclaredField("address"));
-            DIRECT_BYTE_BUFFER_CAPACITY_OFFSET = unsafe.objectFieldOffset(Buffer.class.getDeclaredField("capacity"));
-            DIRECT_BYTE_BUFFER_LIMIT_OFFSET = unsafe.objectFieldOffset(Buffer.class.getDeclaredField("limit"));
-            DIRECT_BYTE_BUFFER_CLASS = clazz;
             BYTE_ARRAY_BASE_OFFSET = unsafe.arrayBaseOffset(byte[].class);
         }
         catch (Exception e)
@@ -123,21 +114,7 @@ public abstract class MemoryUtil
 
     public static ByteBuffer getByteBuffer(long address, int length)
     {
-        ByteBuffer instance;
-        try
-        {
-            instance = (ByteBuffer) unsafe.allocateInstance(DIRECT_BYTE_BUFFER_CLASS);
-        }
-        catch (InstantiationException e)
-        {
-            throw new AssertionError(e);
-        }
-
-        unsafe.putLong(instance, DIRECT_BYTE_BUFFER_ADDRESS_OFFSET, address);
-        unsafe.putInt(instance, DIRECT_BYTE_BUFFER_CAPACITY_OFFSET, length);
-        unsafe.putInt(instance, DIRECT_BYTE_BUFFER_LIMIT_OFFSET, length);
-        instance.order(ByteOrder.nativeOrder());
-        return instance;
+        return Native.getDirectByteBuffer(address, length).order(ByteOrder.nativeOrder());
     }
 
     public static long getLongByByte(long address)
@@ -251,7 +228,7 @@ public abstract class MemoryUtil
             return;
 
         if (buffer.isDirect())
-            setBytes(unsafe.getLong(buffer, DIRECT_BYTE_BUFFER_ADDRESS_OFFSET) + start, address, count);
+            setBytes(((DirectBuffer)buffer).address() + start, address, count);
         else
             setBytes(address, buffer.array(), buffer.arrayOffset() + start, count);
     }
