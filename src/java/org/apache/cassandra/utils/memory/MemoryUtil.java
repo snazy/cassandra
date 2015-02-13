@@ -22,6 +22,7 @@ import java.nio.Buffer;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 
+import com.sun.jna.Native;
 import sun.misc.Unsafe;
 
 public abstract class MemoryUtil
@@ -66,12 +67,12 @@ public abstract class MemoryUtil
 
     public static long allocate(long size)
     {
-        return unsafe.allocateMemory(size);
+        return Native.malloc(size);
     }
 
     public static void free(long peer)
     {
-        unsafe.freeMemory(peer);
+        Native.free(peer);
     }
 
     public static void setByte(long address, byte b)
