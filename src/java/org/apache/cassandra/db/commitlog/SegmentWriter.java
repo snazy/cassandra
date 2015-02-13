@@ -5,10 +5,9 @@ import java.io.File;
 import java.io.IOException;
 import java.io.RandomAccessFile;
 import java.nio.ByteBuffer;
-import java.nio.MappedByteBuffer;
-import java.nio.channels.FileChannel;
 import java.util.zip.Checksum;
 
+import com.google.common.annotations.VisibleForTesting;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -25,7 +24,7 @@ public abstract class SegmentWriter
     private static final Logger logger = LoggerFactory.getLogger(SegmentWriter.class);
 
     // The commit log entry overhead in bytes (int: length + long: head checksum + long: tail checksum)
-    static final int ENTRY_OVERHEAD_SIZE = 4 + 8 + 8;
+    public static final int ENTRY_OVERHEAD_SIZE = 4 + 8 + 8;
 
     protected final RandomAccessFile logFileAccessor;
     protected final long fileLength;
@@ -74,7 +73,8 @@ public abstract class SegmentWriter
 
     public abstract boolean hasCapacityFor(long size);
 
-    void write(RowMutation mutation, int mutationSize) throws IOException
+    @VisibleForTesting
+    public void write(RowMutation mutation, int mutationSize) throws IOException
     {
         checksum.reset();
 
@@ -103,4 +103,11 @@ public abstract class SegmentWriter
     public abstract int position();
 
     public abstract void close() throws IOException;
+
+    @VisibleForTesting
+    // only to be called from test classes!!!
+    public ByteBuffer getBuffer()
+    {
+        return buffer;
+    }
 }

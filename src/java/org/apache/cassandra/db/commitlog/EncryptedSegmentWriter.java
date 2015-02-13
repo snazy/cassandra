@@ -82,25 +82,21 @@ public class EncryptedSegmentWriter extends SegmentWriter
             if (estimatedSize > fileLength - logFileAccessor.getFilePointer())
                 return false;
 
-            if (estimatedSize > buffer.remaining())
+            if (estimatedSize > buffer.capacity())
+            {
+                flush(true);
+                ByteBuffer b = ByteBuffer.allocate((int)(estimatedSize * 1.04));
+                b.mark();
+                setBuffer(b);
+            }
+            else if (estimatedSize > buffer.remaining())
             {
                 flush(false);
-                // if we still don't have enough space in the buffer, reallocate
+
+                // it's possible that the buffer held onto a smaller chunk of data (in order to optimize encryption and flushes).
+                // but we need to get rid of it all to make room for the incoming mutation.
                 if (estimatedSize > buffer.remaining())
-                {
-                    // this might seem goofy to call flush() again before realloc'ing, but we need to make sure we flush everything
-                    // from the current buffer before it's thrown away. also, we're trying to optimize the flushes and maximize buffer use (before encrypting)
                     flush(true);
-
-                    // at this point, buffer should be completely flushed & empty, so make sure buffer is even large enough to handle the mutation
-                    if (estimatedSize > buffer.capacity())
-                    {
-                        ByteBuffer b = ByteBuffer.allocate((int)(estimatedSize * 1.04));
-                        b.mark();
-                        setBuffer(b);
-                    }
-
-                }
             }
             return true;
         }
@@ -145,7 +141,7 @@ public class EncryptedSegmentWriter extends SegmentWriter
             if (flushBuffer.length < estLen)
                 flushBuffer = new byte[estLen];
 
-            int cipherTextLen;
+            final int cipherTextLen;
             try
             {
                 cipherTextLen = cipher.doFinal(buffer.array(), startIdx, clearTextLen, flushBuffer, 0);
@@ -162,7 +158,7 @@ public class EncryptedSegmentWriter extends SegmentWriter
         long curPos = logFileAccessor.getFilePointer();
         if (fileLength - curPos >= CommitLog.END_OF_SEGMENT_MARKER_SIZE)
         {
-            logFileAccessor.write(CommitLog.END_OF_SEGMENT_MARKER);
+            logFileAccessor.writeInt(CommitLog.END_OF_SEGMENT_MARKER);
             logFileAccessor.seek(curPos);
         }
         buffer.clear();
@@ -178,6 +174,7 @@ public class EncryptedSegmentWriter extends SegmentWriter
 
     public void close() throws IOException
     {
+        sync();
         logFileAccessor.close();
     }
 

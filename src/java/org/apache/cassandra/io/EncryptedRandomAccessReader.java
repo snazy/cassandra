@@ -82,8 +82,18 @@ public class EncryptedRandomAccessReader extends RandomAccessReader
             blockLenBuffer.clear();
             int cnt = channel.read(blockLenBuffer);
             nextOffset += cnt;
+
+            // make sure we read an entire int's worth of data
+            if (cnt < blockLenBuffer.capacity())
+            {
+                buffer = END_OF_SEGMENT_MARKER;
+                validBufferBytes = END_OF_SEGMENT_MARKER.length;
+                bufferOffset = current;
+                return;
+            }
+
             blockLenBuffer.flip();
-            int cipherTextLen = blockLenBuffer.getInt();
+            final int cipherTextLen = blockLenBuffer.getInt();
 
             if (cipherTextLen < 0 || cipherTextLen > 1 << 24)
                 throw new IllegalStateException(String.format("read an invalid size (%d) for encrypted block length at offset %d",
@@ -114,7 +124,7 @@ public class EncryptedRandomAccessReader extends RandomAccessReader
         }
         catch (IOException | ShortBufferException  | BadPaddingException | IllegalBlockSizeException e)
         {
-            logger.error("problem reading encrypted file at bufferOffset {}", bufferOffset);
+            logger.error("problem reading encrypted file at bufferOffset {}, encrypted buf.len {}", bufferOffset, encrypted.capacity());
             throw new FSReadError(e, getPath());
         }
     }

@@ -286,7 +286,8 @@ public final class CFMetaData
                                                                  + "PRIMARY KEY (id)"
                                                                  + ") WITH COMMENT='show all compaction history' AND DEFAULT_TIME_TO_LIVE=604800");
 
-    private static String getTableEncryptionOptions()
+    @VisibleForTesting
+    public static String getTableEncryptionOptions()
     {
         TransparentDataEncryptionOptions tde = DatabaseDescriptor.getTransparentDataEncryptionOptions();
         if (!tde.enabled)

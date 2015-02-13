@@ -357,7 +357,7 @@ public class CommitLog implements CommitLogMBean
                 activateNextSegment();
                 // Now we can run the user defined command just before switching to the new commit log.
                 // (Do this here instead of in the recycle call so we can get a head start on the archive.)
-                archiver.maybeArchive(oldSegment.getPath(), oldSegment.getName());
+                archiver.maybeArchive(oldSegment);
             }
             try
             {

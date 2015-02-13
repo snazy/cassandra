@@ -113,6 +113,7 @@ public class SchemaLoader
         String ks_prsi = "PerRowSecondaryIndex";
         String ks_cql = "cql_keyspace";
         String ks_sai = "SASecondaryIndex";
+        String ks_enc = "KeyspaceForEncryption";
 
         Class<? extends AbstractReplicationStrategy> simple = SimpleStrategy.class;
 
@@ -351,6 +352,14 @@ public class SchemaLoader
                        simple,
                        opts_rf1,
                        saIndexedCFMD(ks_sai, "SAIndexed1")));
+
+
+        // CQLKeyspace for encrypted CFs
+        schema.add(KSMetaData.testMetadata(ks_enc,
+                                           simple,
+                                           opts_rf1,
+                                           standardCFMD(ks_enc, "enc_cf")
+                                           ));
 
 
         if (Boolean.parseBoolean(System.getProperty("cassandra.test.compression", "false")))
