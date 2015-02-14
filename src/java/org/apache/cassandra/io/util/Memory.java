@@ -17,19 +17,11 @@
  */
 package org.apache.cassandra.io.util;
 
-<<<<<<< HEAD
 import java.lang.reflect.Field;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 
-=======
-import java.nio.ByteBuffer;
-import java.nio.ByteOrder;
-
-import com.sun.jna.Native;
 import net.nicoulaj.compilecommand.annotations.Inline;
-import org.apache.cassandra.config.DatabaseDescriptor;
->>>>>>> origin/trunk
 import org.apache.cassandra.utils.FastByteOperations;
 import org.apache.cassandra.utils.memory.MemoryUtil;
 import sun.misc.Unsafe;
@@ -40,7 +32,6 @@ import sun.nio.ch.DirectBuffer;
  */
 public class Memory implements AutoCloseable
 {
-<<<<<<< HEAD
     private static final Unsafe unsafe;
     static
     {
@@ -55,10 +46,7 @@ public class Memory implements AutoCloseable
             throw new AssertionError(e);
         }
     }
-=======
-    private static final Unsafe unsafe = NativeAllocator.unsafe;
-    static final IAllocator allocator = DatabaseDescriptor.getoffHeapMemoryAllocator();
->>>>>>> origin/trunk
+
     private static final long BYTE_ARRAY_BASE_OFFSET = unsafe.arrayBaseOffset(byte[].class);
 
     private static final boolean bigEndian = ByteOrder.nativeOrder().equals(ByteOrder.BIG_ENDIAN);
