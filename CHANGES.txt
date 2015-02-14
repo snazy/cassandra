@@ -1,5 +1,5 @@
 3.0
- * Add role based access control (CASSANDRA-7653, 8650)
+ * Add role based access control (CASSANDRA-7653, 8650, 7216)
  * Avoid accessing partitioner through StorageProxy (CASSANDRA-8244, 8268)
  * Upgrade Metrics library and remove depricated metrics (CASSANDRA-5657)
  * Serializing Row cache alternative, fully off heap (CASSANDRA-7438)
@@ -58,6 +58,8 @@
 
 
 2.1.4
+ * Fix SSTableRewriter cleanup (CASSANDRA-8802)
+ * Introduce SafeMemory for CompressionMetadata.Writer (CASSANDRA-8758)
  * 'nodetool info' prints exception against older node (CASSANDRA-8796)
  * Ensure SSTableReader.last corresponds exactly with the file end (CASSANDRA-8750)
  * Make SSTableWriter.openEarly more robust and obvious (CASSANDRA-8747)
@@ -71,6 +73,7 @@
 Merged from 2.0:
  * Fix some multi-column relations with indexes on some clustering
    columns (CASSANDRA-8275)
+ * Fix memory leak in SSTableSimple*Writer and SSTableReader.validate() (CASSANDRA-8748)
  * Throw OOM if allocating memory fails to return a valid pointer (CASSANDRA-8726)
  * Fix SSTableSimpleUnsortedWriter ConcurrentModificationException (CASSANDRA-8619)
 
