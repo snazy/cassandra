@@ -160,7 +160,7 @@ case "`uname -s`" in
             dirs=`ldconfig -v 2>/dev/null | grep -v ^$'\t' | sed 's/^\([^:]*\):.*$/\1/'`
         else
             # e.g. for Debian
-            dirs=`cat /etc/ld.so.conf /etc/ld.so.conf.d/*.conf | grep '^/'`
+            dirs="/lib64 /lib /usr/lib64 /usr/lib `cat /etc/ld.so.conf /etc/ld.so.conf.d/*.conf | grep '^/'`"
         fi
         lib=$(find_library libjemalloc .so $dirs)
         if [ -z $lib ] ; then
