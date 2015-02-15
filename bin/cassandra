@@ -171,7 +171,6 @@ case "`uname -s`" in
         fi
         if [ ! -z $lib ] ; then
             export LD_PRELOAD=$lib
-            # TODO remove OHC allocator for OHC > 0.3.2, when Native.malloc is the default
             JVM_OPTS="$JVM_OPTS -Dorg.caffinitas.ohc.allocator=unsafe"
         fi
     ;;
@@ -181,7 +180,6 @@ case "`uname -s`" in
         fi
         if [ ! -z $lib ] ; then
             export DYLD_INSERT_LIBRARIES=$lib
-            # TODO remove OHC allocator for OHC > 0.3.2, when Native.malloc is the default
             JVM_OPTS="$JVM_OPTS -Dorg.caffinitas.ohc.allocator=unsafe"
         fi
     ;;

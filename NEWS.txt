@@ -36,6 +36,7 @@ New features
    - SSTable file name is changed. Now you don't have Keyspace/CF name
      in file name. Also, secondary index has its own directory under parent's
      directory.
+   - Row-cache is now fully off-heap.
 
 
 Upgrading
