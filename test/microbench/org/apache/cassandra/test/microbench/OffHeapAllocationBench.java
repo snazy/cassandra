@@ -34,6 +34,7 @@ import org.openjdk.jmh.annotations.Fork;
 import org.openjdk.jmh.annotations.Measurement;
 import org.openjdk.jmh.annotations.Mode;
 import org.openjdk.jmh.annotations.OutputTimeUnit;
+import org.openjdk.jmh.annotations.Param;
 import org.openjdk.jmh.annotations.Scope;
 import org.openjdk.jmh.annotations.State;
 import org.openjdk.jmh.annotations.Threads;
@@ -157,166 +158,25 @@ public class OffHeapAllocationBench
     private final Allocator jnaAllocator = new JNAAllocator();
     private final Allocator jemallocJnaAllocator = new JemallocJNAAllocator();
 
+    @Param({"1", "8", "16", "32", "48", "64", "256", "1024", "4096"})
+    private int allocSize;
+
     @Benchmark
-    public void unsafeAllocate1KB()
+    public void unsafeAllocate()
     {
-        allocate(1, unsafeAllocator);
+        allocate(allocSize, unsafeAllocator);
     }
 
     @Benchmark
-    public void unsafeAllocate8KB()
+    public void jnaAllocate()
     {
-        allocate(8, unsafeAllocator);
+        allocate(allocSize, jnaAllocator);
     }
 
     @Benchmark
-    public void unsafeAllocate16KB()
+    public void jemallocJnaAllocate()
     {
-        allocate(16, unsafeAllocator);
-    }
-
-    @Benchmark
-    public void unsafeAllocate32KB()
-    {
-        allocate(32, unsafeAllocator);
-    }
-
-    @Benchmark
-    public void unsafeAllocate48KB()
-    {
-        allocate(48, unsafeAllocator);
-    }
-
-    @Benchmark
-    public void unsafeAllocate64KB()
-    {
-        allocate(64, unsafeAllocator);
-    }
-
-    @Benchmark
-    public void unsafeAllocate256KB()
-    {
-        allocate(256, unsafeAllocator);
-    }
-
-    @Benchmark
-    public void unsafeAllocate1024KB()
-    {
-        allocate(1024, unsafeAllocator);
-    }
-
-    @Benchmark
-    public void unsafeAllocate4096KB()
-    {
-        allocate(4096, unsafeAllocator);
-    }
-
-    @Benchmark
-    public void jnaAllocate1KB()
-    {
-        allocate(1, jnaAllocator);
-    }
-
-    @Benchmark
-    public void jnaAllocate8KB()
-    {
-        allocate(8, jnaAllocator);
-    }
-
-    @Benchmark
-    public void jnaAllocate16KB()
-    {
-        allocate(16, jnaAllocator);
-    }
-
-    @Benchmark
-    public void jnaAllocate32KB()
-    {
-        allocate(32, jnaAllocator);
-    }
-
-    @Benchmark
-    public void jnaAllocate48KB()
-    {
-        allocate(48, jnaAllocator);
-    }
-
-    @Benchmark
-    public void jnaAllocate64KB()
-    {
-        allocate(64, jnaAllocator);
-    }
-
-    @Benchmark
-    public void jnaAllocate256KB()
-    {
-        allocate(256, jnaAllocator);
-    }
-
-    @Benchmark
-    public void jnaAllocate1024KB()
-    {
-        allocate(1024, jnaAllocator);
-    }
-
-    @Benchmark
-    public void jnaAllocate4096KB()
-    {
-        allocate(4096, jnaAllocator);
-    }
-
-    @Benchmark
-    public void jemallocJnaAllocate1KB()
-    {
-        allocate(1, jemallocJnaAllocator);
-    }
-
-    @Benchmark
-    public void jemallocJnaAllocate8KB()
-    {
-        allocate(8, jemallocJnaAllocator);
-    }
-
-    @Benchmark
-    public void jemallocJnaAllocate16KB()
-    {
-        allocate(16, jemallocJnaAllocator);
-    }
-
-    @Benchmark
-    public void jemallocJnaAllocate32KB()
-    {
-        allocate(32, jemallocJnaAllocator);
-    }
-
-    @Benchmark
-    public void jemallocJnaAllocate48KB()
-    {
-        allocate(48, jemallocJnaAllocator);
-    }
-
-    @Benchmark
-    public void jemallocJnaAllocate64KB()
-    {
-        allocate(64, jemallocJnaAllocator);
-    }
-
-    @Benchmark
-    public void jemallocJnaAllocate256KB()
-    {
-        allocate(256, jemallocJnaAllocator);
-    }
-
-    @Benchmark
-    public void jemallocJnaAllocate1024KB()
-    {
-        allocate(1024, jemallocJnaAllocator);
-    }
-
-    @Benchmark
-    public void jemallocJnaAllocate4096KB()
-    {
-        allocate(4096, jemallocJnaAllocator);
+        allocate(allocSize, jemallocJnaAllocator);
     }
 
     private static void allocate(int kBytes, Allocator allocator)
