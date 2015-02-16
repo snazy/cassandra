@@ -6,6 +6,9 @@ import java.util.*;
 
 import org.apache.cassandra.SchemaLoader;
 import org.apache.cassandra.config.ColumnDefinition;
+import org.apache.cassandra.cql3.QueryProcessor;
+import org.apache.cassandra.cql3.statements.ParsedStatement;
+import org.apache.cassandra.cql3.statements.SelectStatement;
 import org.apache.cassandra.db.*;
 import org.apache.cassandra.db.columniterator.IdentityQueryFilter;
 import org.apache.cassandra.db.filter.ExtendedFilter;
@@ -33,8 +36,8 @@ import org.junit.Test;
 
 public class SuffixArraySecondaryIndexTest extends SchemaLoader
 {
-    private static final String KS_NAME = "SASecondaryIndex";
-    private static final String CF_NAME = "SAIndexed1";
+    private static final String KS_NAME = "sasecondaryindex";
+    private static final String CF_NAME = "saindexed1";
 
     @BeforeClass
     public static void loadSchema() throws IOException, ConfigurationException
@@ -835,13 +838,13 @@ public class SuffixArraySecondaryIndexTest extends SchemaLoader
         final ByteBuffer firstName = UTF8Type.instance.decompose("first_name");
         final ByteBuffer age = UTF8Type.instance.decompose("age");
 
-        RowMutation rm1 = new RowMutation("SASecondaryIndex", AsciiType.instance.decompose("key1"));
-        rm1.add("SAIndexed1", firstName, AsciiType.instance.decompose("pavel"), System.currentTimeMillis());
-        rm1.add("SAIndexed1", age, Int32Type.instance.decompose(26), System.currentTimeMillis());
-        rm1.add("SAIndexed1", UTF8Type.instance.decompose("/data/1"), Int32Type.instance.decompose(1), System.currentTimeMillis());
-        rm1.add("SAIndexed1", UTF8Type.instance.decompose("/data/2"), Int32Type.instance.decompose(2), System.currentTimeMillis());
-        rm1.add("SAIndexed1", UTF8Type.instance.decompose("/data/3"), Int32Type.instance.decompose(3), System.currentTimeMillis());
-        rm1.add("SAIndexed1", UTF8Type.instance.decompose("/data/4"), Int32Type.instance.decompose(4), System.currentTimeMillis());
+        RowMutation rm1 = new RowMutation(KS_NAME, AsciiType.instance.decompose("key1"));
+        rm1.add(CF_NAME, firstName, AsciiType.instance.decompose("pavel"), System.currentTimeMillis());
+        rm1.add(CF_NAME, age, Int32Type.instance.decompose(26), System.currentTimeMillis());
+        rm1.add(CF_NAME, UTF8Type.instance.decompose("/data/1"), Int32Type.instance.decompose(1), System.currentTimeMillis());
+        rm1.add(CF_NAME, UTF8Type.instance.decompose("/data/2"), Int32Type.instance.decompose(2), System.currentTimeMillis());
+        rm1.add(CF_NAME, UTF8Type.instance.decompose("/data/3"), Int32Type.instance.decompose(3), System.currentTimeMillis());
+        rm1.add(CF_NAME, UTF8Type.instance.decompose("/data/4"), Int32Type.instance.decompose(4), System.currentTimeMillis());
 
         rm1.apply();
 
@@ -878,6 +881,91 @@ public class SuffixArraySecondaryIndexTest extends SchemaLoader
         Assert.assertEquals(rows.toString(), "key1", Iterables.get(rows, 0));
     }
 
+    @Test
+    public void testORandParenthesisExpressions() throws Exception
+    {
+        testORandParenthesisExpressions(false);
+        cleanupData();
+        testORandParenthesisExpressions(true);
+    }
+
+    private void testORandParenthesisExpressions(boolean forceFlush) throws Exception
+    {
+        final ColumnFamilyStore store = Keyspace.open(KS_NAME).getColumnFamilyStore(CF_NAME);
+
+        newMutation("key1", "pavel",   "y", 14, System.currentTimeMillis()).apply();
+        newMutation("key2", "pavel",   "y", 26, System.currentTimeMillis()).apply();
+        newMutation("key3", "pavel",   "y", 27, System.currentTimeMillis()).apply();
+
+        if (forceFlush)
+            store.forceBlockingFlush();
+
+        newMutation("key4", "jason",   "b", 27, System.currentTimeMillis()).apply();
+        newMutation("key5", "aleksey", "y", 28, System.currentTimeMillis()).apply();
+
+        if (forceFlush)
+            store.forceBlockingFlush();
+
+        IndexExpression[] expressions = getExpressions("SELECT * FROM %s.%s WHERE age = 14 OR age = 27 ALLOW FILTERING;");
+        Set<String> rows = getIndexed(store, 10, expressions);
+        Assert.assertTrue(rows.toString(), Arrays.equals(new String[] { "key1", "key3", "key4" }, rows.toArray(new String[rows.size()])));
+
+        expressions = getExpressions("SELECT * FROM %s.%s WHERE last_name = 'y' AND first_name = 'p' OR age = 28 ALLOW FILTERING;");
+        rows = getIndexed(store, 10, expressions);
+        Assert.assertTrue(rows.toString(), Arrays.equals(new String[] { "key1", "key2", "key3", "key5" }, rows.toArray(new String[rows.size()])));
+
+        expressions = getExpressions("SELECT * FROM %s.%s WHERE last_name = 'b' OR (last_name = 'y' AND age >= 14 AND age < 28) ALLOW FILTERING;");
+        rows = getIndexed(store, 10, expressions);
+        Assert.assertTrue(rows.toString(), Arrays.equals(new String[] { "key1", "key2", "key3", "key4" }, rows.toArray(new String[rows.size()])));
+
+        expressions = getExpressions("SELECT * FROM %s.%s WHERE first_name = 'j' OR age = 26 OR age = 28 ALLOW FILTERING;");
+        rows = getIndexed(store, 10, expressions);
+        Assert.assertTrue(rows.toString(), Arrays.equals(new String[] { "key2", "key4", "key5" }, rows.toArray(new String[rows.size()])));
+
+        expressions = getExpressions("SELECT * FROM %s.%s WHERE first_name = 'j' OR (age > 26 AND age <= 28) ALLOW FILTERING;");
+        rows = getIndexed(store, 10, expressions);
+        Assert.assertTrue(rows.toString(), Arrays.equals(new String[] { "key3", "key4", "key5" }, rows.toArray(new String[rows.size()])));
+
+        expressions = getExpressions("SELECT * FROM %s.%s WHERE first_name = 'j' OR age = 26 ALLOW FILTERING;");
+        rows = getIndexed(store, 10, expressions);
+        Assert.assertTrue(rows.toString(), Arrays.equals(new String[] { "key2", "key4" }, rows.toArray(new String[rows.size()])));
+
+        expressions = getExpressions("SELECT * FROM %s.%s WHERE first_name = 'j' OR (first_name = 'p' AND age = 26) ALLOW FILTERING;");
+        rows = getIndexed(store, 10, expressions);
+        Assert.assertTrue(rows.toString(), Arrays.equals(new String[] { "key2", "key4" }, rows.toArray(new String[rows.size()])));
+
+        expressions = getExpressions("SELECT * FROM %s.%s WHERE first_name = 'j' OR (age > 13 AND age <= 26 AND first_name = 'p') ALLOW FILTERING;");
+        rows = getIndexed(store, 10, expressions);
+        Assert.assertTrue(rows.toString(), Arrays.equals(new String[] { "key1", "key2", "key4" }, rows.toArray(new String[rows.size()])));
+
+        // see if merging works cross SSTables works properly with OR expressions
+        newMutation("key2", "oksana", "y", 26, System.currentTimeMillis()).apply();
+
+        if (forceFlush)
+            store.forceBlockingFlush();
+
+        expressions = getExpressions("SELECT * FROM %s.%s WHERE first_name = 'j' OR ((age > 13 AND age <= 26) AND first_name = 'p') ALLOW FILTERING;");
+        rows = getIndexed(store, 10, expressions);
+        Assert.assertTrue(rows.toString(), Arrays.equals(new String[] { "key1", "key4" }, rows.toArray(new String[rows.size()])));
+
+        expressions = getExpressions("SELECT * FROM %s.%s WHERE first_name = 'j' OR (age > 13 AND age <= 26) AND first_name = 'p' ALLOW FILTERING;");
+        rows = getIndexed(store, 10, expressions);
+        Assert.assertTrue(rows.toString(), Arrays.equals(new String[] { "key1" }, rows.toArray(new String[rows.size()])));
+
+        expressions = getExpressions("SELECT * FROM %s.%s WHERE first_name = 'j' OR (age > 13 AND (age <= 26 AND first_name = 'p')) ALLOW FILTERING;");
+        rows = getIndexed(store, 10, expressions);
+        Assert.assertTrue(rows.toString(), Arrays.equals(new String[] { "key1", "key4" }, rows.toArray(new String[rows.size()])));
+    }
+
+    private static IndexExpression[] getExpressions(String cqlQuery) throws Exception
+    {
+        ParsedStatement parsedStatement = QueryProcessor.parseStatement(String.format(cqlQuery, KS_NAME, CF_NAME));
+        SelectStatement selectStatement = (SelectStatement) parsedStatement.prepare().statement;
+
+        List<IndexExpression> expressions = selectStatement.getIndexExpressions(Collections.<ByteBuffer>emptyList());
+        return expressions.toArray(new IndexExpression[expressions.size()]);
+    }
+
     private static ColumnFamilyStore loadData(Map<String, Pair<String, Integer>> data, boolean forceFlush)
     {
         return loadData(data, System.currentTimeMillis(), forceFlush);
@@ -886,7 +974,7 @@ public class SuffixArraySecondaryIndexTest extends SchemaLoader
     private static ColumnFamilyStore loadData(Map<String, Pair<String, Integer>> data, long timestamp, boolean forceFlush)
     {
         for (Map.Entry<String, Pair<String, Integer>> e : data.entrySet())
-            newMutation(e.getKey(), e.getValue().left, e.getValue().right, timestamp).apply();
+            newMutation(e.getKey(), e.getValue().left, null, e.getValue().right, timestamp).apply();
 
         ColumnFamilyStore store = Keyspace.open(KS_NAME).getColumnFamilyStore(CF_NAME);
 
@@ -960,13 +1048,15 @@ public class SuffixArraySecondaryIndexTest extends SchemaLoader
                                          System.currentTimeMillis()));
     }
 
-    private static RowMutation newMutation(String key, String firstName, int age, long timestamp)
+    private static RowMutation newMutation(String key, String firstName, String lastName, int age, long timestamp)
     {
-        RowMutation rm = new RowMutation("SASecondaryIndex", AsciiType.instance.decompose(key));
+        RowMutation rm = new RowMutation(KS_NAME, AsciiType.instance.decompose(key));
         if (firstName != null)
-            rm.add("SAIndexed1", ByteBufferUtil.bytes("first_name"), UTF8Type.instance.decompose(firstName), timestamp);
+            rm.add(CF_NAME, ByteBufferUtil.bytes("first_name"), UTF8Type.instance.decompose(firstName), timestamp);
+        if (lastName != null)
+            rm.add(CF_NAME, ByteBufferUtil.bytes("last_name"), UTF8Type.instance.decompose(lastName), timestamp);
         if (age >= 0)
-            rm.add("SAIndexed1", ByteBufferUtil.bytes("age"), Int32Type.instance.decompose(age), timestamp);
+            rm.add(CF_NAME, ByteBufferUtil.bytes("age"), Int32Type.instance.decompose(age), timestamp);
 
         return rm;
     }

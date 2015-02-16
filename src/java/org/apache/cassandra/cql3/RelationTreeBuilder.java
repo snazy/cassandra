@@ -68,6 +68,7 @@ public class RelationTreeBuilder
             }
             else
             {
+
                 logical.setLeftRelation(current.getRightRelation());
                 current.setRightRelation(logical);
                 relationStack.push(logical);
@@ -97,7 +98,10 @@ public class RelationTreeBuilder
         else
         {
             Relation current = relationStack.peek();
-            current.setLeftRelation(groupOp);
+            if (current.getLeftRelation() == null)
+                current.setLeftRelation(groupOp);
+            else
+                current.setRightRelation(groupOp);
         }
 
         relationStack.push(groupOp);

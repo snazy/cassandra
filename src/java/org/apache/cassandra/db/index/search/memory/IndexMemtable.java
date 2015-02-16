@@ -12,11 +12,10 @@ import org.apache.cassandra.config.ColumnDefinition;
 import org.apache.cassandra.db.Column;
 import org.apache.cassandra.db.ColumnFamily;
 import org.apache.cassandra.db.index.SuffixArraySecondaryIndex;
+import org.apache.cassandra.db.index.search.Expression;
 import org.apache.cassandra.db.index.search.container.TokenTree;
 import org.apache.cassandra.db.index.utils.SkippableIterator;
-import org.apache.cassandra.db.index.SuffixArraySecondaryIndex.Expression;
 
-import org.apache.cassandra.utils.Pair;
 import org.cliffc.high_scale_lib.NonBlockingHashMap;
 import org.github.jamm.MemoryMeter;
 
@@ -83,9 +82,9 @@ public class IndexMemtable
         }
     }
 
-    public SkippableIterator<Long, TokenTree.Token> search(Pair<ByteBuffer, Expression> expression)
+    public SkippableIterator<Long, TokenTree.Token> search(Expression.Column expression)
     {
-        InMemoryIndex index = indexes.get(expression.left);
-        return index == null ? null : index.search(expression.right);
+        InMemoryIndex index = indexes.get(expression.name);
+        return index == null ? null : index.search(expression);
     }
 }

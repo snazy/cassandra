@@ -8,13 +8,13 @@ import com.google.common.collect.PeekingIterator;
 import org.apache.cassandra.config.ColumnDefinition;
 import org.apache.cassandra.db.DecoratedKey;
 import org.apache.cassandra.db.index.SuffixArraySecondaryIndex;
+import org.apache.cassandra.db.index.search.Expression;
 import org.apache.cassandra.db.index.search.OnDiskSABuilder;
 import org.apache.cassandra.db.index.search.container.TokenTree;
 import org.apache.cassandra.db.index.search.tokenization.AbstractTokenizer;
 import org.apache.cassandra.db.index.utils.CombinedValue;
 import org.apache.cassandra.db.index.utils.LazyMergeSortIterator;
 import org.apache.cassandra.db.index.utils.SkippableIterator;
-import org.apache.cassandra.db.index.SuffixArraySecondaryIndex.Expression;
 import org.apache.cassandra.db.marshal.AbstractType;
 import org.apache.cassandra.service.StorageService;
 
@@ -87,7 +87,7 @@ public class InMemoryIndex
         return deepSize;
     }
 
-    public SkippableIterator<Long, TokenTree.Token> search(Expression expression)
+    public SkippableIterator<Long, TokenTree.Token> search(Expression.Column expression)
     {
         List<SkippableIterator<Long, TokenTree.Token>> union = new ArrayList<>();
         for (PatriciaTrie<ByteBuffer, SortedSet<DecoratedKey>> index : perThreadIndex.values())
