@@ -23,7 +23,7 @@ public class IndexMemtable
 {
     private final MemoryMeter meter;
 
-    private final ConcurrentMap<ByteBuffer, InMemoryIndex> indexes;
+    private final ConcurrentMap<ByteBuffer, ColumnIndex> indexes;
     private final SuffixArraySecondaryIndex backend;
 
     public IndexMemtable(final SuffixArraySecondaryIndex backend)
@@ -45,7 +45,7 @@ public class IndexMemtable
     public long estimateSize()
     {
         long deepSize = 0;
-        for (InMemoryIndex index : indexes.values())
+        for (ColumnIndex index : indexes.values())
             deepSize += index.estimateSize(meter);
 
         return deepSize;
@@ -69,22 +69,22 @@ public class IndexMemtable
             if (column == null)
                 continue;
 
-            InMemoryIndex index = indexes.get(column.name());
+            ColumnIndex index = indexes.get(column.name());
             if (index == null)
             {
-                InMemoryIndex newIndex = new InMemoryIndex(indexedColumn, backend.getMode(column.name()));
+                ColumnIndex newIndex = ColumnIndex.forColumn(indexedColumn, backend.getMode(column.name()));
                 index = indexes.putIfAbsent(column.name(), newIndex);
                 if (index == null)
                     index = newIndex;
             }
 
-            index.index(column.value(), key);
+            index.add(column.value(), key);
         }
     }
 
     public SkippableIterator<Long, TokenTree.Token> search(Expression.Column expression)
     {
-        InMemoryIndex index = indexes.get(expression.name);
+        ColumnIndex index = indexes.get(expression.name);
         return index == null ? null : index.search(expression);
     }
 }

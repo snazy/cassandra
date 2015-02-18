@@ -3,6 +3,10 @@ package org.apache.cassandra.db.index;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.*;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import org.apache.cassandra.SchemaLoader;
 import org.apache.cassandra.config.ColumnDefinition;
@@ -27,6 +31,7 @@ import org.apache.cassandra.utils.*;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.Iterators;
 import com.google.common.collect.Lists;
+import com.google.common.util.concurrent.Uninterruptibles;
 
 import junit.framework.Assert;
 
@@ -955,6 +960,66 @@ public class SuffixArraySecondaryIndexTest extends SchemaLoader
         expressions = getExpressions("SELECT * FROM %s.%s WHERE first_name = 'j' OR (age > 13 AND (age <= 26 AND first_name = 'p')) ALLOW FILTERING;");
         rows = getIndexed(store, 10, expressions);
         Assert.assertTrue(rows.toString(), Arrays.equals(new String[] { "key1", "key4" }, rows.toArray(new String[rows.size()])));
+    }
+
+    @Test
+    public void testConcurrentMemtableReadsAndWrites() throws Exception
+    {
+        final ColumnFamilyStore store = Keyspace.open(KS_NAME).getColumnFamilyStore(CF_NAME);
+
+        ExecutorService scheduler = Executors.newFixedThreadPool(Runtime.getRuntime().availableProcessors());
+
+        final int writeCount = 10000;
+        final AtomicInteger updates = new AtomicInteger(0);
+
+        for (int i = 0; i < writeCount; i++)
+        {
+            final String key = "key" + i;
+            final String firstName = "first_name#" + i;
+            final String lastName = "last_name#" + i;
+
+            scheduler.submit(new Runnable()
+            {
+                @Override
+                public void run()
+                {
+                    try
+                    {
+                        newMutation(key, firstName, lastName, 26, System.currentTimeMillis()).apply();
+                        Uninterruptibles.sleepUninterruptibly(5, TimeUnit.MILLISECONDS); // back up a bit to do more reads
+                    }
+                    finally
+                    {
+                        updates.incrementAndGet();
+                    }
+                }
+            });
+        }
+
+        final ByteBuffer firstName = UTF8Type.instance.decompose("first_name");
+        final ByteBuffer age = UTF8Type.instance.decompose("age");
+
+        int previousCount = 0;
+
+        do
+        {
+            // this loop figures out if number of search results monotonically increasing
+            // to make sure that concurrent updates don't interfere with reads, uses first_name and age
+            // indexes to test correctness of both Tie and SkipList ColumnIndex implementations.
+
+            Set<DecoratedKey> rows = getPaged(store, 10, new IndexExpression(firstName, IndexOperator.EQ, UTF8Type.instance.decompose("a")),
+                                                         new IndexExpression(age, IndexOperator.EQ, Int32Type.instance.decompose(26)));
+
+            Assert.assertTrue(previousCount <= rows.size());
+            previousCount = rows.size();
+        }
+        while (updates.get() < writeCount);
+
+        // to make sure that after all of the right are done we can read all "count" worth of rows
+        Set<DecoratedKey> rows = getPaged(store, 10, new IndexExpression(firstName, IndexOperator.EQ, UTF8Type.instance.decompose("a")),
+                                                     new IndexExpression(age, IndexOperator.EQ, Int32Type.instance.decompose(26)));
+
+        Assert.assertEquals(writeCount, rows.size());
     }
 
     private static IndexExpression[] getExpressions(String cqlQuery) throws Exception
