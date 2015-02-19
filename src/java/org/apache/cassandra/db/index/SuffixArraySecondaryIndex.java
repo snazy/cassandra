@@ -45,6 +45,7 @@ import com.google.common.base.Predicate;
 import com.google.common.collect.*;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.Uninterruptibles;
+import org.cliffc.high_scale_lib.NonBlockingHashMap;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -94,10 +95,10 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
     }
 
     private final BiMap<ByteBuffer, Component> columnDefComponents;
+    private final ConcurrentMap<ByteBuffer, Pair<ColumnDefinition, Mode>> indexedColumns;
 
     private final ConcurrentMap<ByteBuffer, SADataTracker> intervalTrees;
 
-    private final Map<ByteBuffer, Mode> indexingModes = new HashMap<>();
     private final ConcurrentMap<Descriptor, CopyOnWriteArrayList<SSTableIndex>> currentIndexes;
 
     private final AtomicReference<IndexMemtable> globalMemtable = new AtomicReference<>(new IndexMemtable(this));
@@ -110,6 +111,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
         columnDefComponents = HashBiMap.create();
         intervalTrees = new ConcurrentHashMap<>();
         currentIndexes = new ConcurrentHashMap<>();
+        indexedColumns = new NonBlockingHashMap<>();
     }
 
     public void init()
@@ -131,7 +133,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
         super.addColumnDef(columnDef);
 
         String mode = columnDef.getIndexOptions().get("mode");
-        indexingModes.put(columnDef.name, mode == null ? Mode.ORIGINAL : Mode.mode(mode));
+        indexedColumns.put(columnDef.name, Pair.create(columnDef, mode == null ? Mode.ORIGINAL : Mode.mode(mode)));
 
         addComponent(Collections.singleton(columnDef));
     }
@@ -164,6 +166,11 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
             if (!intervalTrees.containsKey(def.name))
                 intervalTrees.put(def.name, new SADataTracker(def.name, baseCfs.getDataTracker().getSSTables()));
         }
+    }
+
+    public Pair<ColumnDefinition, Mode> getIndexDefinition(ByteBuffer columnName)
+    {
+        return indexedColumns.get(columnName);
     }
 
     private void addToIntervalTree(Collection<SSTableReader> readers, Collection<ColumnDefinition> defs)
@@ -491,10 +498,11 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
 
             public void blockingFlush()
             {
-                if (keysPerTerm.size() == 0)
+                Mode mode = getMode(column.name);
+                if (mode == null || keysPerTerm.size() == 0)
                     return;
 
-                OnDiskSABuilder builder = new OnDiskSABuilder(column.getValidator(), indexingModes.get(column.name));
+                OnDiskSABuilder builder = new OnDiskSABuilder(column.getValidator(), mode);
 
                 for (Map.Entry<ByteBuffer, TokenTreeBuilder> e : keysPerTerm.entrySet())
                     builder.add(e.getKey(), e.getValue());
@@ -1437,7 +1445,8 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
 
     public Mode getMode(ByteBuffer columnName)
     {
-        return indexingModes.get(columnName);
+        Pair<ColumnDefinition, Mode> definition = indexedColumns.get(columnName);
+        return definition == null ? null : definition.right;
     }
 
     public static AbstractTokenizer getTokenizer(AbstractType<?> validator)

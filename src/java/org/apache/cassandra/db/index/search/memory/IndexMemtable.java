@@ -3,7 +3,6 @@ package org.apache.cassandra.db.index.search.memory;
 import java.nio.ByteBuffer;
 import java.util.Collections;
 import java.util.IdentityHashMap;
-import java.util.Iterator;
 import java.util.Set;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ConcurrentMap;
@@ -13,9 +12,11 @@ import org.apache.cassandra.db.Column;
 import org.apache.cassandra.db.ColumnFamily;
 import org.apache.cassandra.db.index.SuffixArraySecondaryIndex;
 import org.apache.cassandra.db.index.search.Expression;
+import org.apache.cassandra.db.index.search.OnDiskSABuilder.Mode;
 import org.apache.cassandra.db.index.search.container.TokenTree;
 import org.apache.cassandra.db.index.utils.SkippableIterator;
 
+import org.apache.cassandra.utils.Pair;
 import org.cliffc.high_scale_lib.NonBlockingHashMap;
 import org.github.jamm.MemoryMeter;
 
@@ -53,26 +54,16 @@ public class IndexMemtable
 
     public void index(ByteBuffer key, ColumnFamily cf)
     {
-        for (ColumnDefinition indexedColumn : backend.getColumnDefs())
+        for (Column column : cf)
         {
-            Iterator<Column> itr = cf.iterator();
-            Column column = null;
-            while (itr.hasNext())
-            {
-                Column col = itr.next();
-                if (col.name().equals(indexedColumn.name))
-                {
-                    column = col;
-                    break;
-                }
-            }
-            if (column == null)
+            Pair<ColumnDefinition, Mode> columnDefinition = backend.getIndexDefinition(column.name());
+            if (columnDefinition == null)
                 continue;
 
             ColumnIndex index = indexes.get(column.name());
             if (index == null)
             {
-                ColumnIndex newIndex = ColumnIndex.forColumn(indexedColumn, backend.getMode(column.name()));
+                ColumnIndex newIndex = ColumnIndex.forColumn(columnDefinition.left, columnDefinition.right);
                 index = indexes.putIfAbsent(column.name(), newIndex);
                 if (index == null)
                     index = newIndex;
