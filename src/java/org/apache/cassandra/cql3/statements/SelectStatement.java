@@ -1943,12 +1943,34 @@ public class SelectStatement implements CQLStatement, MeasurableForPreparedCache
         private void checkTokenFunctionArgumentsOrder(CFDefinition cfDef) throws InvalidRequestException
         {
             Iterator<Name> iter = Iterators.cycle(cfDef.partitionKeys());
+
             for (Relation relation : whereClause)
             {
-                SingleColumnRelation singleColumnRelation = (SingleColumnRelation) relation;
-                if (singleColumnRelation.onToken && !cfDef.get(singleColumnRelation.getEntity().prepare(cfDef.cfm)).equals(iter.next()))
-                    throw new InvalidRequestException(String.format("The token function arguments must be in the partition key order: %s",
-                                                                    Joiner.on(',').join(cfDef.partitionKeys())));
+                Relation current = relation;
+                Stack<Relation> relations = new Stack<>();
+
+                while (!relations.isEmpty() || current != null)
+                {
+                    if (current != null)
+                    {
+                        relations.push(current);
+                        current = current.getLeftRelation();
+                    }
+                    else
+                    {
+                        current = relations.pop();
+
+                        if (!current.isLogical())
+                        {
+                            SingleColumnRelation singleColumnRelation = (SingleColumnRelation) current;
+                            if (singleColumnRelation.onToken && !cfDef.get(singleColumnRelation.getEntity().prepare(cfDef.cfm)).equals(iter.next()))
+                                throw new InvalidRequestException(String.format("The token function arguments must be in the partition key order: %s",
+                                                                                Joiner.on(',').join(cfDef.partitionKeys())));
+                        }
+
+                        current = current.getRightRelation();
+                    }
+                }
             }
         }
 

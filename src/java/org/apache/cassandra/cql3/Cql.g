@@ -943,9 +943,7 @@ relation returns [List<Relation> relations]
     name=cident type=relationType t=term { accumulator.add(new SingleColumnRelation(name, type, t)); }
     | K_TOKEN l=tupleOfIdentifiers type=relationType t=term
         {
-            logger.info("l size is: " + l.size());
             for (ColumnIdentifier.Raw id : l) {
-                logger.info("** in loop need to add " + id.toString()+ " " + type.toString());
                 accumulator.add(new SingleColumnRelation(id, type, t, true));
             }
         }

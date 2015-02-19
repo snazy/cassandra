@@ -5,7 +5,11 @@ import org.apache.cassandra.SchemaLoader;
 import org.apache.cassandra.cql3.statements.ParsedStatement;
 import org.apache.cassandra.cql3.statements.SelectStatement;
 import org.apache.cassandra.db.ConsistencyLevel;
+import org.apache.cassandra.db.marshal.Int32Type;
+import org.apache.cassandra.db.marshal.UTF8Type;
 import org.apache.cassandra.thrift.IndexExpression;
+import org.apache.cassandra.thrift.IndexOperator;
+import org.apache.cassandra.thrift.LogicalIndexOperator;
 import org.apache.cassandra.utils.ByteBufferUtil;
 import org.junit.BeforeClass;
 import org.junit.Test;
@@ -68,8 +72,8 @@ public class SelectStatementTest
     @Test
     public void parseNestedORWithANDSelectStatementTest() throws Exception
     {
-        ParsedStatement parsedStatement = QueryProcessor.parseStatement("SELECT * FROM "+keyspace+".test WHERE " +
-                "foo = 'abcd' AND (bar = 'xyz' OR bar = 'qwerty');");
+        ParsedStatement parsedStatement = QueryProcessor.parseStatement(String.format(
+                "SELECT * FROM %s.test WHERE foo = 'abcd' AND (bar = 'xyz' OR bar = 'qwerty') ALLOW FILTERING;", keyspace));
         parsedStatement.prepare();
     }
 
@@ -84,17 +88,36 @@ public class SelectStatementTest
         SelectStatement selectStatement = (SelectStatement) parsedStatement.prepare().statement;
 
         List<IndexExpression> indexExpressions = selectStatement.getIndexExpressions(Collections.<ByteBuffer>emptyList());
-        Assert.assertTrue(indexExpressions.size() == 17);
+        Assert.assertEquals(17, indexExpressions.size());
 
-        // check that List<IndexExpression> created by collapsing
-        // relation tree matches correct Reverse Polish Notation order
-        int pos = 0;
-        List<String> polishNotationOrderedStmtTokens = toReversePolishNotation(whereClause);
-        for (String token : polishNotationOrderedStmtTokens)
-        {
-            String indexExpressionStr = indexExpressionToString(indexExpressions.get(pos++));
-            Assert.assertEquals(token, indexExpressionStr);
-        }
+        List<IndexExpression> expected = new ArrayList<IndexExpression>()
+        {{
+            add(new IndexExpression().setOp(IndexOperator.EQ).setColumn_name("country".getBytes()).setValue("US".getBytes()));
+            add(new IndexExpression().setOp(IndexOperator.EQ).setColumn_name("state".getBytes()).setValue("CA".getBytes()));
+            add(makeLogical(LogicalIndexOperator.AND));
+
+            add(new IndexExpression().setOp(IndexOperator.EQ).setColumn_name("bar".getBytes()).setValue("this_is_bars_val".getBytes()));
+            add(new IndexExpression().setOp(IndexOperator.EQ).setColumn_name("foo".getBytes()).setValue("this_is_foos_val".getBytes()));
+            add(makeLogical(LogicalIndexOperator.AND));
+
+            add(new IndexExpression().setOp(IndexOperator.EQ).setColumn_name("city".getBytes()).setValue("Cupertino".getBytes()));
+            add(new IndexExpression().setOp(IndexOperator.EQ).setColumn_name("street".getBytes()).setValue("Infinite_Loop".getBytes()));
+            add(makeLogical(LogicalIndexOperator.AND));
+
+            add(new IndexExpression().setOp(IndexOperator.EQ).setColumn_name("num1".getBytes()).setValue(Int32Type.instance.decompose(25)));
+            add(makeLogical(LogicalIndexOperator.AND));
+
+            add(new IndexExpression().setOp(IndexOperator.EQ).setColumn_name("last_name".getBytes()).setValue("Smith".getBytes()));
+            add(makeLogical(LogicalIndexOperator.OR));
+
+            add(new IndexExpression().setOp(IndexOperator.EQ).setColumn_name("first_name".getBytes()).setValue("Bob".getBytes()));
+            add(makeLogical(LogicalIndexOperator.AND));
+
+            add(makeLogical(LogicalIndexOperator.OR));
+            add(makeLogical(LogicalIndexOperator.OR));
+        }};
+
+        Assert.assertEquals(expected, indexExpressions);
     }
 
     @Test
@@ -102,88 +125,19 @@ public class SelectStatementTest
     {
         ParsedStatement parsedStatement = QueryProcessor.parseStatement("SELECT v1, v2, v3 FROM "+keyspace+".test2 " +
                 "WHERE k = 0 AND (v1, v2, v3) >= (1, 0, 1)");
-        SelectStatement selectStatement = (SelectStatement) parsedStatement.prepare().statement;
+        parsedStatement.prepare();
     }
 
-    private static String indexExpressionToString(IndexExpression indexExpression)
+    private static IndexExpression makeLogical(LogicalIndexOperator op)
     {
-        try
-        {
-            if (indexExpression.getLogicalOp() != null)
-                return indexExpression.getLogicalOp().name();
+        IndexExpression e = new IndexExpression();
 
-            StringBuilder sb = new StringBuilder();
-            String colName = ByteBufferUtil.string(indexExpression.column_name);
-            sb.append(colName);
-            sb.append("=");
+        e.setLogicalOp(op);
+        e.setOp(IndexOperator.EQ);
 
-            String value;
-            if (colName.equals("num1"))
-            {
-                value = Integer.toString(indexExpression.value.getInt());
-            }
-            else
-            {
-                value = ByteBufferUtil.string(indexExpression.value);
-            }
-            if (Character.isDigit(value.charAt(0)))
-            {
-                sb.append(value);
-            }
-            else
-            {
-                sb.append('\'');
-                sb.append(value);
-                sb.append('\'');
-            }
-            return sb.toString();
-        }
-        catch (Exception e)
-        {
-            return null;
-        }
-    }
+        e.setColumn_name(ByteBufferUtil.EMPTY_BYTE_BUFFER);
+        e.setValue(ByteBufferUtil.EMPTY_BYTE_BUFFER);
 
-    private static List<String> toReversePolishNotation(String input)
-    {
-        Stack<String> stack = new Stack<>();
-        List<String> out = new ArrayList<>();
-
-        for (String inVal : input.split(" "))
-        {
-            switch (inVal)
-            {
-                case "AND":
-                case "OR":
-                    while (!stack.empty() && stack.peek().equals("AND"))
-                        out.add(stack.pop());
-                case "(":
-                    stack.push(inVal);
-                    break;
-                case ")":
-                    while (!stack.empty())
-                    {
-                        if (stack.peek().equals("("))
-                        {
-                            stack.pop();
-                            break;
-                        }
-                        else
-                        {
-                            out.add(stack.pop());
-                        }
-                    }
-                    break;
-                default:
-                    out.add(inVal);
-                    break;
-            }
-        }
-
-        if (!stack.empty())
-            while (!stack.isEmpty())
-                out.add(stack.pop());
-
-        return out;
+        return e;
     }
 }
