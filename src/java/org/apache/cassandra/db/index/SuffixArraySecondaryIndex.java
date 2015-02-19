@@ -886,7 +886,8 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
                     }
                 }
 
-                switch (conditions.size())
+                int conditionCount = conditions.size();
+                switch (conditionCount)
                 {
                     case 0:
                         throw new AssertionError();
@@ -896,7 +897,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
 
                     default: // backward compatibility case, everything is linked with AND
                         boolean result = false;
-                        for (int i = 0; i < conditions.size(); i++)
+                        for (int i = 0; i < conditionCount; i++)
                             result = (i == 0) ? conditions.pop() : result & conditions.pop();
 
                         return result;
