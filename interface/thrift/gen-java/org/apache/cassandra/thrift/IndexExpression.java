@@ -60,6 +60,7 @@ public class IndexExpression implements org.apache.thrift.TBase<IndexExpression,
   private static final org.apache.thrift.protocol.TField COLUMN_NAME_FIELD_DESC = new org.apache.thrift.protocol.TField("column_name", org.apache.thrift.protocol.TType.STRING, (short)1);
   private static final org.apache.thrift.protocol.TField OP_FIELD_DESC = new org.apache.thrift.protocol.TField("op", org.apache.thrift.protocol.TType.I32, (short)2);
   private static final org.apache.thrift.protocol.TField VALUE_FIELD_DESC = new org.apache.thrift.protocol.TField("value", org.apache.thrift.protocol.TType.STRING, (short)3);
+  private static final org.apache.thrift.protocol.TField LOGICAL_OP_FIELD_DESC = new org.apache.thrift.protocol.TField("logicalOp", org.apache.thrift.protocol.TType.I32, (short)4);
 
   private static final Map<Class<? extends IScheme>, SchemeFactory> schemes = new HashMap<Class<? extends IScheme>, SchemeFactory>();
   static {
@@ -74,6 +75,11 @@ public class IndexExpression implements org.apache.thrift.TBase<IndexExpression,
    */
   public IndexOperator op; // required
   public ByteBuffer value; // required
+  /**
+   * 
+   * @see LogicalIndexOperator
+   */
+  public LogicalIndexOperator logicalOp; // optional
 
   /** The set of fields this struct contains, along with convenience methods for finding and manipulating them. */
   public enum _Fields implements org.apache.thrift.TFieldIdEnum {
@@ -83,7 +89,12 @@ public class IndexExpression implements org.apache.thrift.TBase<IndexExpression,
      * @see IndexOperator
      */
     OP((short)2, "op"),
-    VALUE((short)3, "value");
+    VALUE((short)3, "value"),
+    /**
+     * 
+     * @see LogicalIndexOperator
+     */
+    LOGICAL_OP((short)4, "logicalOp");
 
     private static final Map<String, _Fields> byName = new HashMap<String, _Fields>();
 
@@ -104,6 +115,8 @@ public class IndexExpression implements org.apache.thrift.TBase<IndexExpression,
           return OP;
         case 3: // VALUE
           return VALUE;
+        case 4: // LOGICAL_OP
+          return LOGICAL_OP;
         default:
           return null;
       }
@@ -144,6 +157,7 @@ public class IndexExpression implements org.apache.thrift.TBase<IndexExpression,
   }
 
   // isset id assignments
+  private _Fields optionals[] = {_Fields.LOGICAL_OP};
   public static final Map<_Fields, org.apache.thrift.meta_data.FieldMetaData> metaDataMap;
   static {
     Map<_Fields, org.apache.thrift.meta_data.FieldMetaData> tmpMap = new EnumMap<_Fields, org.apache.thrift.meta_data.FieldMetaData>(_Fields.class);
@@ -153,6 +167,8 @@ public class IndexExpression implements org.apache.thrift.TBase<IndexExpression,
         new org.apache.thrift.meta_data.EnumMetaData(org.apache.thrift.protocol.TType.ENUM, IndexOperator.class)));
     tmpMap.put(_Fields.VALUE, new org.apache.thrift.meta_data.FieldMetaData("value", org.apache.thrift.TFieldRequirementType.REQUIRED, 
         new org.apache.thrift.meta_data.FieldValueMetaData(org.apache.thrift.protocol.TType.STRING        , true)));
+    tmpMap.put(_Fields.LOGICAL_OP, new org.apache.thrift.meta_data.FieldMetaData("logicalOp", org.apache.thrift.TFieldRequirementType.OPTIONAL, 
+        new org.apache.thrift.meta_data.EnumMetaData(org.apache.thrift.protocol.TType.ENUM, LogicalIndexOperator.class)));
     metaDataMap = Collections.unmodifiableMap(tmpMap);
     org.apache.thrift.meta_data.FieldMetaData.addStructMetaDataMap(IndexExpression.class, metaDataMap);
   }
@@ -186,6 +202,9 @@ public class IndexExpression implements org.apache.thrift.TBase<IndexExpression,
       this.value = org.apache.thrift.TBaseHelper.copyBinary(other.value);
 ;
     }
+    if (other.isSetLogicalOp()) {
+      this.logicalOp = other.logicalOp;
+    }
   }
 
   public IndexExpression deepCopy() {
@@ -197,6 +216,7 @@ public class IndexExpression implements org.apache.thrift.TBase<IndexExpression,
     this.column_name = null;
     this.op = null;
     this.value = null;
+    this.logicalOp = null;
   }
 
   public byte[] getColumn_name() {
@@ -299,6 +319,38 @@ public class IndexExpression implements org.apache.thrift.TBase<IndexExpression,
     }
   }
 
+  /**
+   * 
+   * @see LogicalIndexOperator
+   */
+  public LogicalIndexOperator getLogicalOp() {
+    return this.logicalOp;
+  }
+
+  /**
+   * 
+   * @see LogicalIndexOperator
+   */
+  public IndexExpression setLogicalOp(LogicalIndexOperator logicalOp) {
+    this.logicalOp = logicalOp;
+    return this;
+  }
+
+  public void unsetLogicalOp() {
+    this.logicalOp = null;
+  }
+
+  /** Returns true if field logicalOp is set (has been assigned a value) and false otherwise */
+  public boolean isSetLogicalOp() {
+    return this.logicalOp != null;
+  }
+
+  public void setLogicalOpIsSet(boolean value) {
+    if (!value) {
+      this.logicalOp = null;
+    }
+  }
+
   public void setFieldValue(_Fields field, Object value) {
     switch (field) {
     case COLUMN_NAME:
@@ -325,6 +377,14 @@ public class IndexExpression implements org.apache.thrift.TBase<IndexExpression,
       }
       break;
 
+    case LOGICAL_OP:
+      if (value == null) {
+        unsetLogicalOp();
+      } else {
+        setLogicalOp((LogicalIndexOperator)value);
+      }
+      break;
+
     }
   }
 
@@ -338,6 +398,9 @@ public class IndexExpression implements org.apache.thrift.TBase<IndexExpression,
 
     case VALUE:
       return getValue();
+
+    case LOGICAL_OP:
+      return getLogicalOp();
 
     }
     throw new IllegalStateException();
@@ -356,6 +419,8 @@ public class IndexExpression implements org.apache.thrift.TBase<IndexExpression,
       return isSetOp();
     case VALUE:
       return isSetValue();
+    case LOGICAL_OP:
+      return isSetLogicalOp();
     }
     throw new IllegalStateException();
   }
@@ -400,6 +465,15 @@ public class IndexExpression implements org.apache.thrift.TBase<IndexExpression,
         return false;
     }
 
+    boolean this_present_logicalOp = true && this.isSetLogicalOp();
+    boolean that_present_logicalOp = true && that.isSetLogicalOp();
+    if (this_present_logicalOp || that_present_logicalOp) {
+      if (!(this_present_logicalOp && that_present_logicalOp))
+        return false;
+      if (!this.logicalOp.equals(that.logicalOp))
+        return false;
+    }
+
     return true;
   }
 
@@ -421,6 +495,11 @@ public class IndexExpression implements org.apache.thrift.TBase<IndexExpression,
     builder.append(present_value);
     if (present_value)
       builder.append(value);
+
+    boolean present_logicalOp = true && (isSetLogicalOp());
+    builder.append(present_logicalOp);
+    if (present_logicalOp)
+      builder.append(logicalOp.getValue());
 
     return builder.toHashCode();
   }
@@ -459,6 +538,16 @@ public class IndexExpression implements org.apache.thrift.TBase<IndexExpression,
     }
     if (isSetValue()) {
       lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.value, other.value);
+      if (lastComparison != 0) {
+        return lastComparison;
+      }
+    }
+    lastComparison = Boolean.valueOf(isSetLogicalOp()).compareTo(other.isSetLogicalOp());
+    if (lastComparison != 0) {
+      return lastComparison;
+    }
+    if (isSetLogicalOp()) {
+      lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.logicalOp, other.logicalOp);
       if (lastComparison != 0) {
         return lastComparison;
       }
@@ -506,6 +595,16 @@ public class IndexExpression implements org.apache.thrift.TBase<IndexExpression,
       org.apache.thrift.TBaseHelper.toString(this.value, sb);
     }
     first = false;
+    if (isSetLogicalOp()) {
+      if (!first) sb.append(", ");
+      sb.append("logicalOp:");
+      if (this.logicalOp == null) {
+        sb.append("null");
+      } else {
+        sb.append(this.logicalOp);
+      }
+      first = false;
+    }
     sb.append(")");
     return sb.toString();
   }
@@ -582,6 +681,14 @@ public class IndexExpression implements org.apache.thrift.TBase<IndexExpression,
               org.apache.thrift.protocol.TProtocolUtil.skip(iprot, schemeField.type);
             }
             break;
+          case 4: // LOGICAL_OP
+            if (schemeField.type == org.apache.thrift.protocol.TType.I32) {
+              struct.logicalOp = LogicalIndexOperator.findByValue(iprot.readI32());
+              struct.setLogicalOpIsSet(true);
+            } else { 
+              org.apache.thrift.protocol.TProtocolUtil.skip(iprot, schemeField.type);
+            }
+            break;
           default:
             org.apache.thrift.protocol.TProtocolUtil.skip(iprot, schemeField.type);
         }
@@ -612,6 +719,13 @@ public class IndexExpression implements org.apache.thrift.TBase<IndexExpression,
         oprot.writeBinary(struct.value);
         oprot.writeFieldEnd();
       }
+      if (struct.logicalOp != null) {
+        if (struct.isSetLogicalOp()) {
+          oprot.writeFieldBegin(LOGICAL_OP_FIELD_DESC);
+          oprot.writeI32(struct.logicalOp.getValue());
+          oprot.writeFieldEnd();
+        }
+      }
       oprot.writeFieldStop();
       oprot.writeStructEnd();
     }
@@ -632,6 +746,14 @@ public class IndexExpression implements org.apache.thrift.TBase<IndexExpression,
       oprot.writeBinary(struct.column_name);
       oprot.writeI32(struct.op.getValue());
       oprot.writeBinary(struct.value);
+      BitSet optionals = new BitSet();
+      if (struct.isSetLogicalOp()) {
+        optionals.set(0);
+      }
+      oprot.writeBitSet(optionals, 1);
+      if (struct.isSetLogicalOp()) {
+        oprot.writeI32(struct.logicalOp.getValue());
+      }
     }
 
     @Override
@@ -643,6 +765,11 @@ public class IndexExpression implements org.apache.thrift.TBase<IndexExpression,
       struct.setOpIsSet(true);
       struct.value = iprot.readBinary();
       struct.setValueIsSet(true);
+      BitSet incoming = iprot.readBitSet(1);
+      if (incoming.get(0)) {
+        struct.logicalOp = LogicalIndexOperator.findByValue(iprot.readI32());
+        struct.setLogicalOpIsSet(true);
+      }
     }
   }
 

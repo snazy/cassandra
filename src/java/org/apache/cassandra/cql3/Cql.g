@@ -40,6 +40,7 @@ options {
     import org.apache.cassandra.auth.DataResource;
     import org.apache.cassandra.auth.IResource;
     import org.apache.cassandra.cql3.*;
+    import org.apache.cassandra.cql3.Relation.LogicalOperator;
     import org.apache.cassandra.cql3.statements.*;
     import org.apache.cassandra.cql3.functions.FunctionCall;
     import org.apache.cassandra.db.marshal.CollectionType;
@@ -47,9 +48,12 @@ options {
     import org.apache.cassandra.exceptions.InvalidRequestException;
     import org.apache.cassandra.exceptions.SyntaxException;
     import org.apache.cassandra.utils.Pair;
+    import org.slf4j.Logger;
+    import org.slf4j.LoggerFactory;
 }
 
 @members {
+    private static final Logger logger = LoggerFactory.getLogger(CqlParser.class);
     private final List<String> recognitionErrors = new ArrayList<String>();
     private final List<ColumnIdentifier> bindVariables = new ArrayList<ColumnIdentifier>();
 
@@ -256,7 +260,7 @@ selectStatement returns [SelectStatement.RawStatement expr]
     : K_SELECT ( ( K_DISTINCT { isDistinct = true; } )? sclause=selectClause
                | (K_COUNT '(' sclause=selectCountClause ')' { isCount = true; } (K_AS c=ident { countAlias = c; })?) )
       K_FROM cf=columnFamilyName
-      ( K_WHERE wclause=whereClause )?
+      ( K_WHERE wclause=logicalAndOrWhereClause )?
       ( K_ORDER K_BY orderByClause[orderings] ( ',' orderByClause[orderings] )* )?
       ( K_LIMIT rows=intValue { limit = rows; } )?
       ( K_ALLOW K_FILTERING  { allowFiltering = true; } )?
@@ -299,9 +303,34 @@ selectCountClause returns [List<RawSelector> expr]
     | i=INTEGER      { if (!i.getText().equals("1")) addRecognitionError("Only COUNT(1) is supported, got COUNT(" + i.getText() + ")"); $expr = Collections.<RawSelector>emptyList();}
     ;
 
-whereClause returns [List<Relation> clause]
-    @init{ $clause = new ArrayList<Relation>(); }
-    : relation[$clause] (K_AND relation[$clause])*
+andOnlyWhereClause returns [List<Relation> clause]
+    @init {
+        $clause = new ArrayList<>();
+    }
+    : relOuter=relation { $clause.addAll(relOuter); } (K_AND relInner=relation { $clause.addAll(relInner); })*
+    ;
+
+logicalAndOrWhereClause returns [List<Relation> clause]
+    @init {
+        RelationTreeBuilder builder = new RelationTreeBuilder();
+    }
+    : relOuter=relation { builder.add(relOuter); }
+    (
+        logicalOp=(K_AND | K_OR)
+            { builder.add(new LogicalRelation(LogicalOperator.valueOf(logicalOp.getText().toUpperCase()))); }
+
+        groupedRelation[builder]
+    )*
+    {
+        $clause = Collections.<Relation>singletonList(builder.build());
+    }
+    ;
+
+groupedRelation[RelationTreeBuilder builder]
+    : (K_LEFT_PARENTHESIS  { builder.incrementDepth(); })*
+        r=relation
+            { builder.add(r); }
+      (K_RIGHT_PARENTHESIS { builder.decrementDepth(); })*
     ;
 
 orderByClause[Map<ColumnIdentifier.Raw, Boolean> orderings]
@@ -364,7 +393,7 @@ updateStatement returns [UpdateStatement.ParsedUpdate expr]
     : K_UPDATE cf=columnFamilyName
       ( usingClause[attrs] )?
       K_SET columnOperation[operations] (',' columnOperation[operations])*
-      K_WHERE wclause=whereClause
+      K_WHERE wclause=andOnlyWhereClause
       ( K_IF conditions=updateConditions )?
       {
           return new UpdateStatement.ParsedUpdate(cf,
@@ -397,7 +426,7 @@ deleteStatement returns [DeleteStatement.Parsed expr]
     : K_DELETE ( dels=deleteSelection { columnDeletions = dels; } )?
       K_FROM cf=columnFamilyName
       ( usingClauseDelete[attrs] )?
-      K_WHERE wclause=whereClause
+      K_WHERE wclause=andOnlyWhereClause
       ( K_IF ( K_EXISTS { ifExists = true; } | conditions=updateConditions ))?
       {
           return new DeleteStatement.Parsed(cf,
@@ -905,38 +934,47 @@ relationType returns [Relation.Type op]
     | '>=' { $op = Relation.Type.GTE; }
     ;
 
-relation[List<Relation> clauses]
-    : name=cident type=relationType t=term { $clauses.add(new SingleColumnRelation(name, type, t)); }
+relation returns [List<Relation> relations]
+    @init {
+        List<Relation> accumulator = new ArrayList<>();
+    }
+    :
+    (
+    name=cident type=relationType t=term { accumulator.add(new SingleColumnRelation(name, type, t)); }
     | K_TOKEN l=tupleOfIdentifiers type=relationType t=term
         {
-            for (ColumnIdentifier.Raw id : l)
-                $clauses.add(new SingleColumnRelation(id, type, t, true));
+            for (ColumnIdentifier.Raw id : l) {
+                accumulator.add(new SingleColumnRelation(id, type, t, true));
+            }
         }
     | name=cident K_IN marker=inMarker
-        { $clauses.add(new SingleColumnRelation(name, Relation.Type.IN, marker)); }
+        { accumulator.add(new SingleColumnRelation(name, Relation.Type.IN, marker)); }
     | name=cident K_IN inValues=singleColumnInValues
-        { $clauses.add(SingleColumnRelation.createInRelation($name.id, inValues)); }
+        { accumulator.add(SingleColumnRelation.createInRelation($name.id, inValues)); }
     | ids=tupleOfIdentifiers
       ( K_IN
           ( '(' ')'
-              { $clauses.add(MultiColumnRelation.createInRelation(ids, new ArrayList<Tuples.Literal>())); }
+              { accumulator.add(MultiColumnRelation.createInRelation(ids, new ArrayList<Tuples.Literal>())); }
           | tupleInMarker=inMarkerForTuple /* (a, b, c) IN ? */
-              { $clauses.add(MultiColumnRelation.createSingleMarkerInRelation(ids, tupleInMarker)); }
+              { accumulator.add(MultiColumnRelation.createSingleMarkerInRelation(ids, tupleInMarker)); }
           | literals=tupleOfTupleLiterals /* (a, b, c) IN ((1, 2, 3), (4, 5, 6), ...) */
               {
-                  $clauses.add(MultiColumnRelation.createInRelation(ids, literals));
+                  accumulator.add(MultiColumnRelation.createInRelation(ids, literals));
               }
           | markers=tupleOfMarkersForTuples /* (a, b, c) IN (?, ?, ...) */
-              { $clauses.add(MultiColumnRelation.createInRelation(ids, markers)); }
+              { accumulator.add(MultiColumnRelation.createInRelation(ids, markers)); }
           )
       | type=relationType literal=tupleLiteral /* (a, b, c) > (1, 2, 3) or (a, b, c) > (?, ?, ?) */
           {
-              $clauses.add(MultiColumnRelation.createNonInRelation(ids, type, literal));
+              accumulator.add(MultiColumnRelation.createNonInRelation(ids, type, literal));
           }
       | type=relationType tupleMarker=markerForTuple /* (a, b, c) >= ? */
-          { $clauses.add(MultiColumnRelation.createNonInRelation(ids, type, tupleMarker)); }
+          { accumulator.add(MultiColumnRelation.createNonInRelation(ids, type, tupleMarker)); }
       )
-    | '(' relation[$clauses] ')'
+    )
+    {
+        $relations = accumulator;
+    }
     ;
 
 inMarker returns [AbstractMarker.INRaw marker]
@@ -1072,6 +1110,7 @@ K_FROM:        F R O M;
 K_AS:          A S;
 K_WHERE:       W H E R E;
 K_AND:         A N D;
+K_OR:          O R;
 K_KEY:         K E Y;
 K_INSERT:      I N S E R T;
 K_UPDATE:      U P D A T E;
@@ -1165,6 +1204,9 @@ K_INFINITY:    I N F I N I T Y;
 
 K_TRIGGER:     T R I G G E R;
 K_STATIC:      S T A T I C;
+
+K_LEFT_PARENTHESIS:  '(';
+K_RIGHT_PARENTHESIS: ')';
 
 // Case-insensitive alpha characters
 fragment A: ('a'|'A');

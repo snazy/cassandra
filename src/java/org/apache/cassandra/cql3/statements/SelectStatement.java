@@ -26,6 +26,7 @@ import com.google.common.base.Predicate;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.Iterators;
 
+import org.apache.cassandra.thrift.LogicalIndexOperator;
 import org.github.jamm.MemoryMeter;
 
 import org.apache.cassandra.auth.Permission;
@@ -86,6 +87,8 @@ public class SelectStatement implements CQLStatement, MeasurableForPreparedCache
     // The name of all restricted names not covered by the key or index filter
     private final Set<CFDefinition.Name> restrictedNames = new HashSet<CFDefinition.Name>();
     private Restriction.Slice sliceRestriction;
+
+    private Stack<Relation> flattenedWhereRelations;
 
     private boolean isReversed;
     private boolean onToken;
@@ -1026,9 +1029,26 @@ public class SelectStatement implements CQLStatement, MeasurableForPreparedCache
         if (!usesSecondaryIndexing || restrictedNames.isEmpty())
             return Collections.emptyList();
 
-        List<IndexExpression> expressions = new ArrayList<IndexExpression>();
-        for (CFDefinition.Name name : restrictedNames)
+        List<IndexExpression> expressions = new ArrayList<>();
+
+        while (flattenedWhereRelations != null && !flattenedWhereRelations.empty())
         {
+            Relation relation = flattenedWhereRelations.pop();
+
+            if (relation.hasChildren())
+            {
+                IndexExpression logicalOpIE = new IndexExpression(ByteBufferUtil.EMPTY_BYTE_BUFFER,
+                                                                  IndexOperator.EQ,
+                                                                  ByteBufferUtil.EMPTY_BYTE_BUFFER);
+                logicalOpIE.setLogicalOp(LogicalIndexOperator.valueOf(relation.logicalOperator().name()));
+                expressions.add(logicalOpIE);
+                continue;
+            }
+
+            SingleColumnRelation columnRelation = (SingleColumnRelation) relation;
+            CFMetaData cfm = ThriftValidation.validateColumnFamily(keyspace(), columnFamily());
+            CFDefinition.Name name = cfDef.get(columnRelation.getEntity().prepare(cfm));
+
             Restriction restriction;
             switch (name.kind)
             {
@@ -1040,7 +1060,9 @@ public class SelectStatement implements CQLStatement, MeasurableForPreparedCache
                     break;
                 case COLUMN_METADATA:
                 case STATIC:
-                    restriction = metadataRestrictions.get(name);
+                    //restriction = metadataRestrictions.get(name);
+                    restriction = RawStatement.updateSingleColumnRestriction(name,
+                            null, columnRelation, null);
                     break;
                 default:
                     // We don't allow restricting a VALUE_ALIAS for now in prepare.
@@ -1078,6 +1100,7 @@ public class SelectStatement implements CQLStatement, MeasurableForPreparedCache
                 expressions.add(new IndexExpression(name.name.key, IndexOperator.EQ, value));
             }
         }
+
         return expressions;
     }
 
@@ -1457,8 +1480,20 @@ public class SelectStatement implements CQLStatement, MeasurableForPreparedCache
             boolean hasQueriableClusteringColumnIndex = false;
             boolean hasSingleColumnRelations = false;
             boolean hasMultiColumnRelations = false;
-            for (Relation relation : whereClause)
+
+            Stack<Relation> localFlattenedWhereRelations = null;
+            if (whereClause.size() > 0)
             {
+                stmt.flattenedWhereRelations = flattenPreOrder(whereClause.get(0));
+                localFlattenedWhereRelations = (Stack<Relation>) stmt.flattenedWhereRelations.clone();
+            }
+
+            while (localFlattenedWhereRelations != null && !localFlattenedWhereRelations.empty()) {
+                Relation relation = localFlattenedWhereRelations.pop();
+
+                if (relation.hasChildren())
+                    continue;
+
                 if (relation.isMultiColumn())
                 {
                     MultiColumnRelation rel = (MultiColumnRelation) relation;
@@ -1531,6 +1566,30 @@ public class SelectStatement implements CQLStatement, MeasurableForPreparedCache
                 stmt.validateDistinctSelection();
 
             return new ParsedStatement.Prepared(stmt, boundNames);
+        }
+
+        private Stack<Relation> flattenPreOrder(Relation startingRoot)
+        {
+            Stack<Relation> flattened = new Stack<>();
+
+            Relation root = startingRoot;
+            while (root != null)
+            {
+                if (root.getLeftRelation() != null)
+                {
+                    Relation prev = root.getLeftRelation();
+                    while (prev.getRightRelation() != null)
+                        prev = prev.getRightRelation();
+
+                    prev.setRightRelation(root.getRightRelation());
+                    root.setRightRelation(root.getLeftRelation());
+                    root.setLeftRelation(null);
+                }
+                flattened.push(root);
+                root = root.getRightRelation();
+            }
+
+            return flattened;
         }
 
         /** Returns a pair of (hasQueriableIndex, hasQueriableClusteringColumnIndex) */
@@ -1700,7 +1759,9 @@ public class SelectStatement implements CQLStatement, MeasurableForPreparedCache
                 case COLUMN_METADATA:
                 case STATIC:
                     // We only all IN on the row key and last clustering key so far, never on non-PK columns, and this even if there's an index
-                    Restriction r = updateSingleColumnRestriction(name, stmt.metadataRestrictions.get(name), relation, names);
+                    // todo: need to restore query restrictions here..
+                    //Restriction r = updateSingleColumnRestriction(name, stmt.metadataRestrictions.get(name), relation, names);
+                    Restriction r = updateSingleColumnRestriction(name, null, relation, names);
                     if (r.isIN() && !((Restriction.IN)r).canHaveOnlyOneValue())
                         // Note: for backward compatibility reason, we conside a IN of 1 value the same as a EQ, so we let that slide.
                         throw new InvalidRequestException(String.format("IN predicates on non-primary-key columns (%s) is not yet supported", name));
@@ -1709,7 +1770,7 @@ public class SelectStatement implements CQLStatement, MeasurableForPreparedCache
             }
         }
 
-        Restriction updateSingleColumnRestriction(CFDefinition.Name name, Restriction existingRestriction, SingleColumnRelation newRel, VariableSpecifications boundNames) throws InvalidRequestException
+        public static Restriction updateSingleColumnRestriction(CFDefinition.Name name, Restriction existingRestriction, SingleColumnRelation newRel, VariableSpecifications boundNames) throws InvalidRequestException
         {
             ColumnSpecification receiver = name;
             if (newRel.onToken)
@@ -1882,12 +1943,34 @@ public class SelectStatement implements CQLStatement, MeasurableForPreparedCache
         private void checkTokenFunctionArgumentsOrder(CFDefinition cfDef) throws InvalidRequestException
         {
             Iterator<Name> iter = Iterators.cycle(cfDef.partitionKeys());
+
             for (Relation relation : whereClause)
             {
-                SingleColumnRelation singleColumnRelation = (SingleColumnRelation) relation;
-                if (singleColumnRelation.onToken && !cfDef.get(singleColumnRelation.getEntity().prepare(cfDef.cfm)).equals(iter.next()))
-                    throw new InvalidRequestException(String.format("The token function arguments must be in the partition key order: %s",
-                                                                    Joiner.on(',').join(cfDef.partitionKeys())));
+                Relation current = relation;
+                Stack<Relation> relations = new Stack<>();
+
+                while (!relations.isEmpty() || current != null)
+                {
+                    if (current != null)
+                    {
+                        relations.push(current);
+                        current = current.getLeftRelation();
+                    }
+                    else
+                    {
+                        current = relations.pop();
+
+                        if (!current.isLogical())
+                        {
+                            SingleColumnRelation singleColumnRelation = (SingleColumnRelation) current;
+                            if (singleColumnRelation.onToken && !cfDef.get(singleColumnRelation.getEntity().prepare(cfDef.cfm)).equals(iter.next()))
+                                throw new InvalidRequestException(String.format("The token function arguments must be in the partition key order: %s",
+                                                                                Joiner.on(',').join(cfDef.partitionKeys())));
+                        }
+
+                        current = current.getRightRelation();
+                    }
+                }
             }
         }
 

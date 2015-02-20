@@ -537,6 +537,9 @@ public class SecondaryIndexManager
         //Group columns by type
         for (IndexExpression ix : clause)
         {
+            if (ix.getLogicalOp() != null)
+                continue;
+
             SecondaryIndex index = getIndexForColumn(ix.column_name);
 
             if (index == null)
