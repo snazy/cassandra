@@ -112,8 +112,8 @@ public class SchemaLoader
         String ks_nocommit = "NoCommitlogSpace";
         String ks_prsi = "PerRowSecondaryIndex";
         String ks_cql = "cql_keyspace";
-        String ks_sai = "SASecondaryIndex";
         String ks_enc = "KeyspaceForEncryption";
+        String ks_sai = "sasecondaryindex";
 
         Class<? extends AbstractReplicationStrategy> simple = SimpleStrategy.class;
 
@@ -351,7 +351,7 @@ public class SchemaLoader
             schema.add(KSMetaData.testMetadata(ks_sai,
                        simple,
                        opts_rf1,
-                       saIndexedCFMD(ks_sai, "SAIndexed1")));
+                       saIndexedCFMD(ks_sai, "saindexed1")));
 
 
         // CQLKeyspace for encrypted CFs
@@ -389,15 +389,23 @@ public class SchemaLoader
 
     private static CFMetaData saIndexedCFMD(String ksName, String cfName)
     {
-        final Map<String, String> indexOptions = Collections.singletonMap(
-                SecondaryIndex.CUSTOM_INDEX_OPTION_NAME,
-                SuffixArraySecondaryIndex.class.getName());
-
         return new CFMetaData(ksName, cfName, ColumnFamilyType.Standard, UTF8Type.instance, null)
                 .keyValidator(AsciiType.instance)
                 .columnMetadata(new HashMap<ByteBuffer, ColumnDefinition>()
                 {{
                         ByteBuffer cName = UTF8Type.instance.decompose("first_name");
+                        put(cName, new ColumnDefinition(cName,
+                                UTF8Type.instance,
+                                IndexType.CUSTOM,
+                                new HashMap<String, String>()
+                                {{
+                                    put(SecondaryIndex.CUSTOM_INDEX_OPTION_NAME, SuffixArraySecondaryIndex.class.getName());
+                                    put("mode", OnDiskSABuilder.Mode.SUFFIX.toString());
+                                }},
+                                UTF8Type.instance.compose(cName),
+                                null, ColumnDefinition.Type.REGULAR));
+
+                        cName = UTF8Type.instance.decompose("last_name");
                         put(cName, new ColumnDefinition(cName,
                                 UTF8Type.instance,
                                 IndexType.CUSTOM,

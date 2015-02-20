@@ -211,7 +211,8 @@ public abstract class ExtendedFilter
                     SortedSet<ByteBuffer> columns = new TreeSet<ByteBuffer>(cfs.getComparator());
                     for (IndexExpression expr : clause)
                     {
-                        columns.add(expr.column_name);
+                        if (expr.column_name != null)
+                            columns.add(expr.column_name);
                     }
                     columns.addAll(((NamesQueryFilter) filter).columns);
                     return ((NamesQueryFilter) filter).withUpdatedColumns(columns);

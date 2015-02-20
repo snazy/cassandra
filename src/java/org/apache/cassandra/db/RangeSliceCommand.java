@@ -26,7 +26,6 @@ import java.util.List;
 
 import org.apache.cassandra.config.CFMetaData;
 import org.apache.cassandra.config.Schema;
-import org.apache.cassandra.db.Keyspace;
 import org.apache.cassandra.db.filter.ExtendedFilter;
 import org.apache.cassandra.db.filter.IDiskAtomFilter;
 import org.apache.cassandra.db.marshal.AbstractType;
@@ -38,6 +37,7 @@ import org.apache.cassandra.net.MessagingService;
 import org.apache.cassandra.service.pager.Pageable;
 import org.apache.cassandra.thrift.IndexExpression;
 import org.apache.cassandra.thrift.IndexOperator;
+import org.apache.cassandra.thrift.LogicalIndexOperator;
 import org.apache.cassandra.utils.ByteBufferUtil;
 
 public class RangeSliceCommand extends AbstractRangeCommand implements Pageable
@@ -197,6 +197,10 @@ class RangeSliceCommandSerializer implements IVersionedSerializer<RangeSliceComm
                 ByteBufferUtil.writeWithShortLength(expr.column_name, out);
                 out.writeInt(expr.op.getValue());
                 ByteBufferUtil.writeWithShortLength(expr.value, out);
+                if (expr.getLogicalOp() == null)
+                    out.writeInt(-1);
+                else
+                    out.writeInt(expr.getLogicalOp().getValue());
             }
         }
         AbstractBounds.serializer.serialize(sliceCommand.keyRange, out, version);
@@ -256,6 +260,7 @@ class RangeSliceCommandSerializer implements IVersionedSerializer<RangeSliceComm
             expr = new IndexExpression(ByteBufferUtil.readWithShortLength(in),
                                        IndexOperator.findByValue(in.readInt()),
                                        ByteBufferUtil.readWithShortLength(in));
+            expr.setLogicalOp(LogicalIndexOperator.findByValue(in.readInt()));
             rowFilter.add(expr);
         }
         AbstractBounds<RowPosition> range = AbstractBounds.serializer.deserialize(in, version).toRowBounds();
@@ -311,6 +316,8 @@ class RangeSliceCommandSerializer implements IVersionedSerializer<RangeSliceComm
                 size += TypeSizes.NATIVE.sizeofWithShortLength(expr.column_name);
                 size += TypeSizes.NATIVE.sizeof(expr.op.getValue());
                 size += TypeSizes.NATIVE.sizeofWithShortLength(expr.value);
+                if (expr.getLogicalOp() != null)
+                    size += TypeSizes.NATIVE.sizeof(expr.logicalOp.getValue());
             }
         }
         size += AbstractBounds.serializer.serializedSize(rsc.keyRange, version);

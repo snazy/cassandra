@@ -101,7 +101,7 @@ public class SingleColumnRelation extends Relation
             return String.format("%s IN %s", entity, inValues);
         else if (onToken)
             return String.format("token(%s) %s %s", entity, relationType, value);
-        else
-            return String.format("%s %s %s", entity, relationType, value);
+
+        return String.format("%s %s %s", entity, relationType, value);
     }
 }

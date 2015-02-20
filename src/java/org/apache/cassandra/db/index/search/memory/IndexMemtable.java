@@ -11,9 +11,10 @@ import org.apache.cassandra.config.ColumnDefinition;
 import org.apache.cassandra.db.Column;
 import org.apache.cassandra.db.ColumnFamily;
 import org.apache.cassandra.db.index.SuffixArraySecondaryIndex;
+import org.apache.cassandra.db.index.search.Expression;
+import org.apache.cassandra.db.index.search.OnDiskSABuilder.Mode;
 import org.apache.cassandra.db.index.search.container.TokenTree;
 import org.apache.cassandra.db.index.utils.SkippableIterator;
-import org.apache.cassandra.db.index.SuffixArraySecondaryIndex.Expression;
 
 import org.apache.cassandra.utils.Pair;
 import org.cliffc.high_scale_lib.NonBlockingHashMap;
@@ -23,7 +24,7 @@ public class IndexMemtable
 {
     private final MemoryMeter meter;
 
-    private final ConcurrentMap<ByteBuffer, InMemoryIndex> indexes;
+    private final ConcurrentMap<ByteBuffer, ColumnIndex> indexes;
     private final SuffixArraySecondaryIndex backend;
 
     public IndexMemtable(final SuffixArraySecondaryIndex backend)
@@ -45,7 +46,7 @@ public class IndexMemtable
     public long estimateSize()
     {
         long deepSize = 0;
-        for (InMemoryIndex index : indexes.values())
+        for (ColumnIndex index : indexes.values())
             deepSize += index.estimateSize(meter);
 
         return deepSize;
@@ -53,28 +54,28 @@ public class IndexMemtable
 
     public void index(ByteBuffer key, ColumnFamily cf)
     {
-        for (ColumnDefinition indexedColumn : backend.getColumnDefs())
+        for (Column column : cf)
         {
-            Column column = cf.getColumn(indexedColumn.name);
-            if (column == null)
+            Pair<ColumnDefinition, Mode> columnDefinition = backend.getIndexDefinition(column.name());
+            if (columnDefinition == null)
                 continue;
 
-            InMemoryIndex index = indexes.get(column.name());
+            ColumnIndex index = indexes.get(column.name());
             if (index == null)
             {
-                InMemoryIndex newIndex = new InMemoryIndex(indexedColumn, backend.getMode(column.name()));
+                ColumnIndex newIndex = ColumnIndex.forColumn(columnDefinition.left, columnDefinition.right);
                 index = indexes.putIfAbsent(column.name(), newIndex);
                 if (index == null)
                     index = newIndex;
             }
 
-            index.index(column.value(), key);
+            index.add(column.value(), key);
         }
     }
 
-    public SkippableIterator<Long, TokenTree.Token> search(Pair<ByteBuffer, Expression> expression)
+    public SkippableIterator<Long, TokenTree.Token> search(Expression.Column expression)
     {
-        InMemoryIndex index = indexes.get(expression.left);
-        return index == null ? null : index.search(expression.right);
+        ColumnIndex index = indexes.get(expression.name);
+        return index == null ? null : index.search(expression);
     }
 }
