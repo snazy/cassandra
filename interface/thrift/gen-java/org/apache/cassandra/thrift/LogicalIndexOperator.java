@@ -27,35 +27,40 @@ package org.apache.cassandra.thrift;
  */
 
 
-import org.apache.commons.lang3.builder.HashCodeBuilder;
-import org.apache.thrift.scheme.IScheme;
-import org.apache.thrift.scheme.SchemeFactory;
-import org.apache.thrift.scheme.StandardScheme;
 
-import org.apache.thrift.scheme.TupleScheme;
-import org.apache.thrift.protocol.TTupleProtocol;
-import org.apache.thrift.protocol.TProtocolException;
-import org.apache.thrift.EncodingUtils;
-import org.apache.thrift.TException;
-import org.apache.thrift.async.AsyncMethodCallback;
-import org.apache.thrift.server.AbstractNonblockingServer.*;
-import java.util.List;
-import java.util.ArrayList;
 import java.util.Map;
 import java.util.HashMap;
-import java.util.EnumMap;
-import java.util.Set;
-import java.util.HashSet;
-import java.util.EnumSet;
-import java.util.Collections;
-import java.util.BitSet;
-import java.nio.ByteBuffer;
-import java.util.Arrays;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import org.apache.thrift.TEnum;
 
-public class cassandraConstants {
+public enum LogicalIndexOperator implements org.apache.thrift.TEnum {
+  OR(0),
+  AND(1);
 
-  public static final String VERSION = "19.38.0";
+  private final int value;
 
+  private LogicalIndexOperator(int value) {
+    this.value = value;
+  }
+
+  /**
+   * Get the integer value of this enum value, as defined in the Thrift IDL.
+   */
+  public int getValue() {
+    return value;
+  }
+
+  /**
+   * Find a the enum type by its integer value, as defined in the Thrift IDL.
+   * @return null if the value is not found.
+   */
+  public static LogicalIndexOperator findByValue(int value) { 
+    switch (value) {
+      case 0:
+        return OR;
+      case 1:
+        return AND;
+      default:
+        return null;
+    }
+  }
 }

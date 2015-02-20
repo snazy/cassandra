@@ -55,7 +55,7 @@ namespace rb CassandraThrift
 # An effort should be made not to break forward-client-compatibility either
 # (e.g. one should avoid removing obsolete fields from the IDL), but no
 # guarantees in this respect are made by the Cassandra project.
-const string VERSION = "19.38.0"
+const string VERSION = "19.39.0"
 
 
 #
@@ -316,10 +316,16 @@ enum IndexOperator {
     LT
 }
 
+enum LogicalIndexOperator {
+    OR,
+    AND
+}
+
 struct IndexExpression {
     1: required binary column_name,
     2: required IndexOperator op,
     3: required binary value,
+    4: optional LogicalIndexOperator logicalOp,
 }
 
 /**

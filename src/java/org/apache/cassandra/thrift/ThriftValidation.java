@@ -581,6 +581,10 @@ public class ThriftValidation
         boolean isIndexed = false;
         for (IndexExpression expression : index_clause)
         {
+            // skip validation of logical op IndexExpression
+            if (expression.column_name.capacity() == 0)
+                continue;
+
             try
             {
                 nameValidator.validate(expression.column_name);
