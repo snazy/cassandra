@@ -78,10 +78,21 @@ public class KeySkippableIterator extends AbstractIterator<Token> implements Ski
 
         public void merge(CombinedValue<Long> other)
         {
-            DKToken token = (DKToken) other;
-            assert this.token == token.token;
+            if (!(other instanceof Token))
+                return;
 
-            keys.addAll(token.keys);
+            Token o = (Token) other;
+            assert o.get().equals(token);
+
+            if (o instanceof DKToken)
+            {
+                keys.addAll(((DKToken) o).keys);
+            }
+            else
+            {
+                for (DecoratedKey key : o)
+                    keys.add(key);
+            }
         }
 
         @Override
