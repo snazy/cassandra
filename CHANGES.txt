@@ -1,5 +1,5 @@
 3.0
- * Add role based access control (CASSANDRA-7653, 8650, 7216)
+ * Add role based access control (CASSANDRA-7653, 8650, 7216, 8760)
  * Avoid accessing partitioner through StorageProxy (CASSANDRA-8244, 8268)
  * Upgrade Metrics library and remove depricated metrics (CASSANDRA-5657)
  * Serializing Row cache alternative, fully off heap (CASSANDRA-7438)
@@ -55,9 +55,14 @@
  * Fix race condition during calculation of pending ranges (CASSANDRA-7390)
  * Fail on very large batch sizes (CASSANDRA-8011)
  * Improve concurrency of repair (CASSANDRA-6455, 8208)
+ * Select optimal CRC32 implementation at runtime (CASSANDRA-8614)
+ * Evaluate MurmurHash of Token once per query (CASSANDRA-7096)
 
 
 2.1.4
+ * Upgrade java-driver used for cassandra-stress (CASSANDRA-8842)
+ * Fix CommitLog.forceRecycleAllSegments() memory access error (CASSANDRA-8812)
+ * Improve assertions in Memory (CASSANDRA-8792)
  * Fix SSTableRewriter cleanup (CASSANDRA-8802)
  * Introduce SafeMemory for CompressionMetadata.Writer (CASSANDRA-8758)
  * 'nodetool info' prints exception against older node (CASSANDRA-8796)
@@ -71,6 +76,10 @@
  * cqlsh: Fix keys() and full() collection indexes in DESCRIBE output
    (CASSANDRA-8154)
 Merged from 2.0:
+ * Fix combining token() function with multi-column relations on
+   clustering columns (CASSANDRA-8797)
+ * Make CFS.markReferenced() resistant to bad refcounting (CASSANDRA-8829)
+ * Fix StreamTransferTask abort/complete bad refcounting (CASSANDRA-8815)
  * Fix AssertionError when querying a DESC clustering ordered
    table with ASC ordering and paging (CASSANDRA-8767)
  * AssertionError: "Memory was freed" when running cleanup (CASSANDRA-8716)
@@ -80,6 +89,9 @@ Merged from 2.0:
  * Fix memory leak in SSTableSimple*Writer and SSTableReader.validate() (CASSANDRA-8748)
  * Throw OOM if allocating memory fails to return a valid pointer (CASSANDRA-8726)
  * Fix SSTableSimpleUnsortedWriter ConcurrentModificationException (CASSANDRA-8619)
+ * 'nodetool info' prints exception against older node (CASSANDRA-8796)
+ * Ensure SSTableSimpleUnsortedWriter.close() terminates if
+   disk writer has crashed (CASSANDRA-8807)
 
 
 2.1.3

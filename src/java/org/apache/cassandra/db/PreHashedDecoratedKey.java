@@ -15,33 +15,28 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.apache.cassandra.utils;
+package org.apache.cassandra.db;
 
-import org.apache.cassandra.utils.concurrent.SharedCloseable;
+import java.nio.ByteBuffer;
 
-public interface IFilter extends SharedCloseable
+import org.apache.cassandra.dht.Token;
+
+public class PreHashedDecoratedKey extends BufferDecoratedKey
 {
-    public interface FilterKey
+    final long hash0;
+    final long hash1;
+
+    public PreHashedDecoratedKey(Token token, ByteBuffer key, long hash0, long hash1)
     {
-        /** Places the murmur3 hash of the key in the given long array of size at least two. */
-        void filterHash(long[] dest);
+        super(token, key);
+        this.hash0 = hash0;
+        this.hash1 = hash1;
     }
 
-    void add(FilterKey key);
-
-    boolean isPresent(FilterKey key);
-
-    void clear();
-
-    long serializedSize();
-
-    void close();
-
-    IFilter sharedCopy();
-
-    /**
-     * Returns the amount of memory in bytes used off heap.
-     * @return the amount of memory in bytes used off heap
-     */
-    long offHeapSize();
+    @Override
+    public void filterHash(long[] dest)
+    {
+        dest[0] = hash0;
+        dest[1] = hash1;
+    }
 }

@@ -17,31 +17,12 @@
  */
 package org.apache.cassandra.utils;
 
-import org.apache.cassandra.utils.concurrent.SharedCloseable;
+import java.nio.ByteBuffer;
+import java.util.zip.Checksum;
 
-public interface IFilter extends SharedCloseable
+public interface ICRC32 extends Checksum
 {
-    public interface FilterKey
-    {
-        /** Places the murmur3 hash of the key in the given long array of size at least two. */
-        void filterHash(long[] dest);
-    }
-
-    void add(FilterKey key);
-
-    boolean isPresent(FilterKey key);
-
-    void clear();
-
-    long serializedSize();
-
-    void close();
-
-    IFilter sharedCopy();
-
-    /**
-     * Returns the amount of memory in bytes used off heap.
-     * @return the amount of memory in bytes used off heap
-     */
-    long offHeapSize();
+    void update(ByteBuffer b, int offset, int length);
+    void updateInt(int v);
+    int getCrc();
 }
