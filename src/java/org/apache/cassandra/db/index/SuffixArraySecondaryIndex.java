@@ -34,6 +34,7 @@ import org.apache.cassandra.dht.*;
 import org.apache.cassandra.exceptions.ConfigurationException;
 import org.apache.cassandra.io.FSReadError;
 import org.apache.cassandra.io.sstable.*;
+import org.apache.cassandra.io.sstable.SSTableWriterListener.Source;
 import org.apache.cassandra.io.util.FileUtils;
 import org.apache.cassandra.notifications.*;
 import org.apache.cassandra.serializers.MarshalException;
@@ -61,7 +62,7 @@ import static org.apache.cassandra.db.index.search.OnDiskSABuilder.Mode;
  * ALos, makes the assumption this will be the only index running on the table as part of the query.
  * SIM tends to shoves all indexed columns into one PerRowSecondaryIndex
  */
-public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements SSTableWriterListenable
+public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex
 {
     private static final Logger logger = LoggerFactory.getLogger(SuffixArraySecondaryIndex.class);
 
@@ -352,7 +353,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
         return ImmutableList.<Component>builder().addAll(columnDefComponents.values()).build();
     }
 
-    public SSTableWriterListener getListener(Descriptor descriptor, Source source)
+    public SSTableWriterListener getWriterListener(Descriptor descriptor, Source source)
     {
         return new PerSSTableIndexWriter(descriptor, source);
     }
@@ -462,9 +463,14 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
             }
         }
 
-        public int compareTo(String o)
+        public int hashCode()
         {
-            return descriptor.generation;
+            return descriptor.hashCode();
+        }
+
+        public boolean equals(Object o)
+        {
+            return !(o == null || !(o instanceof PerSSTableIndexWriter)) && descriptor.equals(((PerSSTableIndexWriter) o).descriptor);
         }
 
         private class ColumnIndex
@@ -1413,7 +1419,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
             if (!sstable.acquireReference())
                 throw new IllegalStateException("Couldn't acquire reference to the sstable: " + sstable);
 
-            this.indexWriter = new PerSSTableIndexWriter(sstable.descriptor.asTemporary(true), Source.COMPACTION);
+            this.indexWriter = new PerSSTableIndexWriter(sstable.descriptor.asTemporary(true), SSTableWriterListener.Source.COMPACTION);
             this.indexNames = indexesToBuild;
             this.indexes = new ArrayList<ColumnDefinition>()
             {{

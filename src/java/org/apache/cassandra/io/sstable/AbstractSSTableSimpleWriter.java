@@ -60,7 +60,8 @@ public abstract class AbstractSSTableSimpleWriter implements Closeable
             0, // We don't care about the bloom filter
             metadata,
             DatabaseDescriptor.getPartitioner(),
-            SSTableMetadata.createCollector(metadata.comparator));
+            SSTableMetadata.createCollector(metadata.comparator),
+            Keyspace.open(metadata.ksName).getColumnFamilyStore(metadata.cfId).indexManager.getIndexes());
     }
 
     // find available generation and pick up filename from that

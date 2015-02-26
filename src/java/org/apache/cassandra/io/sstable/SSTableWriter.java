@@ -21,6 +21,7 @@ import java.io.*;
 import java.nio.ByteBuffer;
 import java.util.*;
 
+import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Sets;
 
 import org.slf4j.Logger;
@@ -35,7 +36,7 @@ import org.apache.cassandra.db.index.SecondaryIndex;
 import org.apache.cassandra.dht.IPartitioner;
 import org.apache.cassandra.io.FSWriteError;
 import org.apache.cassandra.io.compress.CompressedSequentialWriter;
-import org.apache.cassandra.io.sstable.SSTableWriterListenable.Source;
+import org.apache.cassandra.io.sstable.SSTableWriterListener.Source;
 import org.apache.cassandra.io.util.*;
 import org.apache.cassandra.service.StorageService;
 import org.apache.cassandra.utils.ByteBufferUtil;
@@ -61,16 +62,17 @@ public class SSTableWriter extends SSTable
 
     private final Set<SSTableWriterListener> listeners;
 
-    public SSTableWriter(String filename, long keyCount)
+    public SSTableWriter(String filename, long keyCount, Set<SecondaryIndex> indexes)
     {
         this(filename,
              keyCount,
              Schema.instance.getCFMetaData(Descriptor.fromFilename(filename)),
              StorageService.getPartitioner(),
-             SSTableMetadata.createCollector(Schema.instance.getCFMetaData(Descriptor.fromFilename(filename)).comparator));
+             SSTableMetadata.createCollector(Schema.instance.getCFMetaData(Descriptor.fromFilename(filename)).comparator),
+             indexes);
     }
 
-    private static Set<Component> components(CFMetaData metadata)
+    private static Set<Component> components(CFMetaData metadata, Set<SecondaryIndex> indexes)
     {
         Set<Component> components = new HashSet<Component>(Arrays.asList(Component.DATA,
                                                                          Component.PRIMARY_INDEX,
@@ -93,23 +95,8 @@ public class SSTableWriter extends SSTable
             components.add(Component.CRC);
         }
 
-        //TODO:JEB would be great to pass the listeners in here, rather than reaching out to an explicit component
-        if (!metadata.cfName.contains(".")) // hack to make sure current SSTW is not for a native, in-built secondary index
-        {
-            try
-            {
-                ColumnFamilyStore cfs = getColumnFamilyStore(metadata);
-                if (cfs == null)
-                    return components;
-
-                for (SecondaryIndex secondaryIndex : cfs.indexManager.getIndexes())
-                    components.addAll(secondaryIndex.getIndexComponents());
-            }
-            catch (Exception e)
-            {
-                logger.error("Failed to retrieve secondary index components.", e);
-            }
-        }
+        for (SecondaryIndex secondaryIndex : indexes)
+            components.addAll(secondaryIndex.getIndexComponents());
 
         return components;
     }
@@ -118,9 +105,10 @@ public class SSTableWriter extends SSTable
                          long keyCount,
                          CFMetaData metadata,
                          IPartitioner<?> partitioner,
-                         SSTableMetadata.Collector sstableMetadataCollector)
+                         SSTableMetadata.Collector sstableMetadataCollector,
+                         Set<SecondaryIndex> indexes)
     {
-        this(filename, keyCount, metadata, partitioner, sstableMetadataCollector, Source.COMPACTION);
+        this(filename, keyCount, metadata, partitioner, sstableMetadataCollector, SSTableWriterListener.Source.COMPACTION, indexes);
     }
 
     public SSTableWriter(String filename,
@@ -128,10 +116,11 @@ public class SSTableWriter extends SSTable
         CFMetaData metadata,
         IPartitioner<?> partitioner,
         SSTableMetadata.Collector sstableMetadataCollector,
-        Source source)
+        Source source,
+        Set<SecondaryIndex> indexes)
     {
         super(Descriptor.fromFilename(filename),
-              components(metadata),
+              components(metadata, indexes),
               metadata,
               partitioner);
         iwriter = new IndexWriter(keyCount);
@@ -153,26 +142,17 @@ public class SSTableWriter extends SSTable
         }
 
         this.sstableMetadataCollector = sstableMetadataCollector;
-
-        // TODO:JEB would be great to pass the listeners in here, rather than reaching out to an explicit component
-        // TODO:JEB esp, think about how this will work with offline components (scrub, etc)
-        if (!metadata.cfName.contains(".")) // hack to make sure current SSTW is not for a native, in-built secondary index
+        List<SSTableWriterListener> listeners = new ArrayList<>();
+        for (SecondaryIndex si : indexes)
         {
-            ColumnFamilyStore cfs = getColumnFamilyStore(metadata);
-            if (cfs == null)
+            SSTableWriterListener listener = si.getWriterListener(descriptor, source);
+            if (listener != null)
             {
-                listeners = Collections.emptySet();
-                return;
-            }
-
-            listeners = cfs.indexManager.getSSTableWriterListsners(descriptor, source);
-            for (SSTableWriterListener listener : listeners)
                 listener.begin();
+                listeners.add(listener);
+            }
         }
-        else
-        {
-            listeners = Collections.emptySet();
-        }
+        this.listeners = ImmutableSet.copyOf(listeners);
     }
 
     public void mark()

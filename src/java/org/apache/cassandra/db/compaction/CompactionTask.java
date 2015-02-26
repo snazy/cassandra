@@ -315,7 +315,8 @@ public class CompactionTask extends AbstractCompactionTask
                                  keysPerSSTable,
                                  cfs.metadata,
                                  cfs.partitioner,
-                                 SSTableMetadata.createCollector(toCompact, cfs.metadata.comparator, getLevel()));
+                                 SSTableMetadata.createCollector(toCompact, cfs.metadata.comparator, getLevel()),
+                                 cfs.indexManager.getIndexes());
     }
 
     protected int getLevel()

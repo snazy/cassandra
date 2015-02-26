@@ -328,11 +328,12 @@ public class SSTableImport
      */
     public int importJson(String jsonFile, String keyspace, String cf, String ssTablePath) throws IOException
     {
+        ColumnFamilyStore cfs = Keyspace.open(keyspace).getColumnFamilyStore(cf);
         ColumnFamily columnFamily = TreeMapBackedSortedColumns.factory.create(keyspace, cf);
         IPartitioner<?> partitioner = DatabaseDescriptor.getPartitioner();
 
-        int importedKeys = (isSorted) ? importSorted(jsonFile, columnFamily, ssTablePath, partitioner)
-                                      : importUnsorted(jsonFile, columnFamily, ssTablePath, partitioner);
+        int importedKeys = (isSorted) ? importSorted(jsonFile, columnFamily, ssTablePath, partitioner, cfs)
+                                      : importUnsorted(jsonFile, columnFamily, ssTablePath, partitioner, cfs);
 
         if (importedKeys != -1)
             System.out.printf("%d keys imported successfully.%n", importedKeys);
@@ -340,7 +341,7 @@ public class SSTableImport
         return importedKeys;
     }
 
-    private int importUnsorted(String jsonFile, ColumnFamily columnFamily, String ssTablePath, IPartitioner<?> partitioner) throws IOException
+    private int importUnsorted(String jsonFile, ColumnFamily columnFamily, String ssTablePath, IPartitioner<?> partitioner, ColumnFamilyStore cfs) throws IOException
     {
         int importedKeys = 0;
         long start = System.nanoTime();
@@ -350,7 +351,7 @@ public class SSTableImport
         Object[] data = parser.readValueAs(new TypeReference<Object[]>(){});
 
         keyCountToImport = (keyCountToImport == null) ? data.length : keyCountToImport;
-        SSTableWriter writer = new SSTableWriter(ssTablePath, keyCountToImport);
+        SSTableWriter writer = new SSTableWriter(ssTablePath, keyCountToImport, cfs.indexManager.getIndexes());
 
         System.out.printf("Importing %s keys...%n", keyCountToImport);
 
@@ -400,7 +401,7 @@ public class SSTableImport
     }
 
     private int importSorted(String jsonFile, ColumnFamily columnFamily, String ssTablePath,
-            IPartitioner<?> partitioner) throws IOException
+                             IPartitioner<?> partitioner, ColumnFamilyStore cfs) throws IOException
     {
         int importedKeys = 0; // already imported keys count
         long start = System.nanoTime();
@@ -426,7 +427,7 @@ public class SSTableImport
         System.out.printf("Importing %s keys...%n", keyCountToImport);
 
         parser = getParser(jsonFile); // renewing parser
-        SSTableWriter writer = new SSTableWriter(ssTablePath, keyCountToImport);
+        SSTableWriter writer = new SSTableWriter(ssTablePath, keyCountToImport, cfs.indexManager.getIndexes());
 
         int lineNumber = 1;
         DecoratedKey prevStoredKey = null;

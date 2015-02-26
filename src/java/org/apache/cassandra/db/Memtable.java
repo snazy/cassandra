@@ -24,6 +24,8 @@ import java.util.concurrent.atomic.AtomicLong;
 
 import com.google.common.base.Function;
 import com.google.common.base.Throwables;
+
+import org.apache.cassandra.io.sstable.SSTableWriterListener;
 import org.apache.cassandra.utils.*;
 import org.cliffc.high_scale_lib.NonBlockingHashSet;
 import org.slf4j.Logger;
@@ -39,7 +41,6 @@ import org.apache.cassandra.db.marshal.AbstractType;
 import org.apache.cassandra.io.sstable.SSTableMetadata;
 import org.apache.cassandra.io.sstable.SSTableReader;
 import org.apache.cassandra.io.sstable.SSTableWriter;
-import org.apache.cassandra.io.sstable.SSTableWriterListenable;
 import org.apache.cassandra.io.util.DiskAwareRunnable;
 import org.github.jamm.MemoryMeter;
 
@@ -423,7 +424,8 @@ public class Memtable
                                      cfs.metadata,
                                      cfs.partitioner,
                                      sstableMetadataCollector,
-                                     SSTableWriterListenable.Source.MEMTABLE);
+                                     SSTableWriterListener.Source.MEMTABLE,
+                                     cfs.indexManager.getIndexes());
         }
     }
 
