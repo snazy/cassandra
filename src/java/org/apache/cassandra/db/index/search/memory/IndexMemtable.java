@@ -15,13 +15,20 @@ import org.apache.cassandra.db.index.search.Expression;
 import org.apache.cassandra.db.index.search.OnDiskSABuilder.Mode;
 import org.apache.cassandra.db.index.search.container.TokenTree;
 import org.apache.cassandra.db.index.utils.SkippableIterator;
-
+import org.apache.cassandra.db.marshal.AbstractType;
+import org.apache.cassandra.serializers.MarshalException;
 import org.apache.cassandra.utils.Pair;
+
 import org.cliffc.high_scale_lib.NonBlockingHashMap;
 import org.github.jamm.MemoryMeter;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 public class IndexMemtable
 {
+    private static final Logger logger = LoggerFactory.getLogger(IndexMemtable.class);
+
     private final MemoryMeter meter;
 
     private final ConcurrentMap<ByteBuffer, ColumnIndex> indexes;
@@ -69,7 +76,11 @@ public class IndexMemtable
                     index = newIndex;
             }
 
-            index.add(column.value(), key);
+            final AbstractType<?> keyValidator = backend.getBaseCfs().metadata.getKeyValidator();
+            final AbstractType<?> comparator = backend.getBaseCfs().getComparator();
+
+            if (validate(key, keyValidator, comparator, columnDefinition.left, column.value()))
+                index.add(column.value(), key);
         }
     }
 
@@ -77,5 +88,22 @@ public class IndexMemtable
     {
         ColumnIndex index = indexes.get(expression.name);
         return index == null ? null : index.search(expression);
+    }
+
+    public boolean validate(ByteBuffer key, AbstractType<?> keyValidator, AbstractType<?> comparator, ColumnDefinition column, ByteBuffer term)
+    {
+        try
+        {
+            column.getValidator().validate(term);
+            return true;
+        }
+        catch (MarshalException e)
+        {
+            logger.error(String.format("Can't add column %s to index for key: %s", comparator.getString(column.name),
+                                                                                   keyValidator.getString(key)),
+                                                                                   e);
+        }
+
+        return false;
     }
 }
