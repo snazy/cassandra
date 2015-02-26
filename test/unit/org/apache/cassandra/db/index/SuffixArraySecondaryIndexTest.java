@@ -18,9 +18,7 @@ import org.apache.cassandra.db.columniterator.IdentityQueryFilter;
 import org.apache.cassandra.db.filter.ExtendedFilter;
 import org.apache.cassandra.db.filter.IDiskAtomFilter;
 import org.apache.cassandra.db.filter.NamesQueryFilter;
-import org.apache.cassandra.db.marshal.AsciiType;
-import org.apache.cassandra.db.marshal.Int32Type;
-import org.apache.cassandra.db.marshal.UTF8Type;
+import org.apache.cassandra.db.marshal.*;
 import org.apache.cassandra.dht.*;
 import org.apache.cassandra.exceptions.ConfigurationException;
 import org.apache.cassandra.service.StorageService;
@@ -1075,6 +1073,27 @@ public class SuffixArraySecondaryIndexTest extends SchemaLoader
         Assert.assertTrue(rows.toString(), Arrays.equals(new String[] { "key2", "key3" }, rows.toArray(new String[rows.size()])));
     }
 
+    @Test
+    public void testInsertingIncorrectValuesIntoAgeIndex()
+    {
+        ColumnFamilyStore store = Keyspace.open(KS_NAME).getColumnFamilyStore(CF_NAME);
+
+        final ByteBuffer firstName = UTF8Type.instance.decompose("first_name");
+        final ByteBuffer age = UTF8Type.instance.decompose("age");
+
+        RowMutation rm1 = new RowMutation(KS_NAME, AsciiType.instance.decompose("key1"));
+        rm1.add(CF_NAME, firstName, AsciiType.instance.decompose("pavel"), System.currentTimeMillis());
+        rm1.add(CF_NAME, age, LongType.instance.decompose(26L), System.currentTimeMillis());
+        rm1.apply();
+
+        store.forceBlockingFlush();
+
+        Set<String> rows = getIndexed(store, 10, new IndexExpression(firstName, IndexOperator.EQ, UTF8Type.instance.decompose("a")),
+                                                 new IndexExpression(age, IndexOperator.GTE, Int32Type.instance.decompose(26)));
+
+        // index is expected to have 0 results because age value was of wrong type
+        Assert.assertEquals(0, rows.size());
+    }
 
     private static IndexExpression[] getExpressions(String cqlQuery) throws Exception
     {

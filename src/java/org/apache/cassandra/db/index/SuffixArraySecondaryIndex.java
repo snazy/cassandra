@@ -36,6 +36,7 @@ import org.apache.cassandra.io.FSReadError;
 import org.apache.cassandra.io.sstable.*;
 import org.apache.cassandra.io.util.FileUtils;
 import org.apache.cassandra.notifications.*;
+import org.apache.cassandra.serializers.MarshalException;
 import org.apache.cassandra.service.StorageService;
 import org.apache.cassandra.thrift.IndexExpression;
 import org.apache.cassandra.utils.*;
@@ -479,6 +480,9 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
             {
                 final Long keyToken = ((LongToken) key.getToken()).token;
 
+                if (!validate(key.key, term))
+                    return;
+
                 tokenizer.reset(term);
                 while (tokenizer.hasNext())
                 {
@@ -511,6 +515,23 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
                 keysPerTerm.clear();
 
                 builder.finish(Pair.create(min, max), new File(outputFile));
+            }
+
+            public boolean validate(ByteBuffer key, ByteBuffer term)
+            {
+                try
+                {
+                    column.getValidator().validate(term);
+                    return true;
+                }
+                catch (MarshalException e)
+                {
+                    logger.error(String.format("Can't add column %s to index for key: %s", baseCfs.getComparator().getString(column.name),
+                                                                                           keyComparator.getString(key)),
+                                                                                           e);
+                }
+
+                return false;
             }
         }
     }
