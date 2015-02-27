@@ -410,8 +410,7 @@ public class SSTableWriter extends SSTable
         // main data, close will truncate if necessary
         dataFile.close();
 
-        for (SSTableWriterListener listener : listeners)
-            listener.complete();
+        complete();
 
         // write sstable statistics
         SSTableMetadata sstableMetadata = sstableMetadataCollector.finalizeMetadata(partitioner.getClass().getCanonicalName(),
@@ -423,6 +422,12 @@ public class SSTableWriter extends SSTable
 
         // remove the 'tmp' marker from all components
         return Pair.create(rename(descriptor, components), sstableMetadata);
+    }
+
+    public void complete()
+    {
+        for (SSTableWriterListener listener : listeners)
+            listener.complete();
     }
 
     private static void writeMetadata(Descriptor desc, SSTableMetadata sstableMetadata,  Set<Integer> ancestors)

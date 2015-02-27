@@ -1,4 +1,5 @@
 .gitignore
+.ant_targets
 
 # C*
 build/

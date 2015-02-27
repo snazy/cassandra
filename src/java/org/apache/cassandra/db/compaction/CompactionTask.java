@@ -192,6 +192,7 @@ public class CompactionTask extends AbstractCompactionTask
                     cachedKeyMap.put(writer.descriptor.asTemporary(false), cachedKeys);
                     writeSize = getExpectedWriteSize() / estimatedSSTables;
                     dataDirectory = getWriteDirectory(writeSize);
+                    writer.complete();
                     writer = createCompactionWriter(cfs.directories.getLocationForDisk(dataDirectory), keysPerSSTable);
                     writers.add(writer);
                     cachedKeys = new HashMap<>();

@@ -373,6 +373,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
 
         private DecoratedKey currentKey;
         private long currentKeyPosition;
+        private boolean isComplete;
 
         public PerSSTableIndexWriter(Descriptor descriptor, Source source)
         {
@@ -410,6 +411,8 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
 
         public void complete()
         {
+            if (isComplete)
+                return;
             currentKey = null;
 
             try
@@ -449,6 +452,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
             {
                 // drop this data ASAP
                 indexPerColumn.clear();
+                isComplete = true;
             }
         }
 
