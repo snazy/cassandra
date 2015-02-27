@@ -1,12 +1,9 @@
 package org.apache.cassandra.db.index;
 
 import java.io.File;
-import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.*;
 import java.util.concurrent.*;
-import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 import org.apache.cassandra.concurrent.JMXEnabledThreadPoolExecutor;
@@ -16,12 +13,12 @@ import org.apache.cassandra.db.*;
 import org.apache.cassandra.db.columniterator.SSTableNamesIterator;
 import org.apache.cassandra.db.compaction.*;
 import org.apache.cassandra.db.filter.ExtendedFilter;
-import org.apache.cassandra.db.filter.IDiskAtomFilter;
 import org.apache.cassandra.db.index.search.Expression;
-import org.apache.cassandra.db.index.search.OnDiskSA;
 import org.apache.cassandra.db.index.search.OnDiskSABuilder;
+import org.apache.cassandra.db.index.search.SSTableIndex;
 import org.apache.cassandra.db.index.search.container.TokenTreeBuilder;
 import org.apache.cassandra.db.index.search.memory.IndexMemtable;
+import org.apache.cassandra.db.index.search.plan.QueryPlan;
 import org.apache.cassandra.db.index.search.tokenization.AbstractTokenizer;
 import org.apache.cassandra.db.index.search.tokenization.NoOpTokenizer;
 import org.apache.cassandra.db.index.search.tokenization.StandardTokenizer;
@@ -31,7 +28,6 @@ import org.apache.cassandra.db.index.utils.TypeUtil;
 import org.apache.cassandra.db.marshal.*;
 import org.apache.cassandra.dht.*;
 import org.apache.cassandra.exceptions.ConfigurationException;
-import org.apache.cassandra.io.FSReadError;
 import org.apache.cassandra.io.sstable.*;
 import org.apache.cassandra.io.sstable.SSTableWriterListener.Source;
 import org.apache.cassandra.io.util.FileUtils;
@@ -72,11 +68,6 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex
         add(UTF8Type.instance);
         add(AsciiType.instance);
     }};
-
-    /**
-     * A sanity ceiling on the number of max rows we'll ever return for a query.
-     */
-    private static final int MAX_ROWS = 10000;
 
     private static final String FILE_NAME_FORMAT = "SI_%s.db";
     private static final ThreadPoolExecutor INDEX_FLUSHER_MEMTABLE;
@@ -376,12 +367,6 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex
         return new PerSSTableIndexWriter(descriptor, source);
     }
 
-    private AbstractType<?> getValidator(ByteBuffer columnName)
-    {
-        ColumnDefinition columnDef = getColumnDefinition(columnName);
-        return columnDef == null ? null : columnDef.getValidator();
-    }
-
     protected SAView getView(ByteBuffer columnName)
     {
         SADataTracker dataTracker = intervalTrees.get(columnName);
@@ -593,386 +578,23 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex
 
     protected class LocalSecondaryIndexSearcher extends SecondaryIndexSearcher
     {
-        private final Phaser phaser;
-
         protected LocalSecondaryIndexSearcher(SecondaryIndexManager indexManager, Set<ByteBuffer> columns)
         {
             super(indexManager, columns);
-            phaser = new Phaser();
         }
 
         public List<Row> search(ExtendedFilter filter)
         {
             try
             {
-                return performSearch(filter);
+                return filter != null && !filter.getClause().isEmpty()
+                        ? new QueryPlan(SuffixArraySecondaryIndex.this, filter).execute()
+                        : Collections.<Row>emptyList();
             }
             catch(Exception e)
             {
                 logger.info("error occurred while searching suffix array indexes; ignoring", e);
                 return Collections.emptyList();
-            }
-            finally
-            {
-                phaser.forceTermination();
-            }
-        }
-
-        protected List<Row> performSearch(ExtendedFilter filter) throws IOException
-        {
-            if (filter.getClause().isEmpty()) // not sure how this could happen in the real world, but ...
-                return Collections.emptyList();
-
-            AbstractBounds<RowPosition> requestedRange = filter.dataRange.keyRange();
-
-            final int maxRows = Math.min(MAX_ROWS, filter.maxRows() == Integer.MAX_VALUE ? filter.maxColumns() : filter.maxRows());
-            final Set<Row> rows = new TreeSet<>(new Comparator<Row>()
-            {
-                @Override
-                public int compare(Row a, Row b)
-                {
-                    return a.key.compareTo(b.key);
-                }
-            });
-
-            Stack<IndexExpression> group = new Stack<>();
-            Stack<SSTableIndexMergeIterator> combinedGroups = new Stack<>();
-
-            List<Expression> expressions = new ArrayList<>();
-
-            for (IndexExpression e : filter.getClause())
-            {
-                if (e.isSetLogicalOp())
-                {
-                    OperationType op = OperationType.valueOf(e.logicalOp.name());
-
-                    List<Expression.Column> arguments;
-                    switch (group.size())
-                    {
-                        case 0: // both arguments come from the combined groups stack
-                            SSTableIndexMergeIterator sideL = combinedGroups.pop();
-                            SSTableIndexMergeIterator sideR = combinedGroups.pop();
-
-                            combinedGroups.push(new SSTableIndexMergeIterator(op, sideL, sideR));
-                            break;
-
-                        case 1: // one of the arguments is from group other is from already combined groups stack
-                            arguments = analyzeGroup(op, group.pop());
-
-                            sideL = combinedGroups.pop();
-                            sideR = getMergeIterator(op, arguments, sideL.getContext());
-
-                            combinedGroups.push(new SSTableIndexMergeIterator(op, sideR, sideL));
-                            expressions.addAll(arguments);
-                            break;
-
-                        default: // all arguments come from group expressions
-                            arguments = analyzeGroup(op, group.pop(), group.pop());
-                            combinedGroups.push(getMergeIterator(op, arguments, Collections.<SSTableIndex>emptySet()));
-                            expressions.addAll(arguments);
-                            break;
-                    }
-
-                    expressions.add(new Expression.Logical(op));
-                }
-                else
-                {
-                    group.add(e);
-                }
-            }
-
-            // special case for backward compatibility and/or single expression statements,
-            // assumes that all expressions of the group are linked with AND.
-            if (group.size() > 0)
-            {
-                int count = 0;
-                IndexExpression[] global = new IndexExpression[group.size()];
-                while (!group.empty())
-                    global[count++] = group.pop();
-
-                List<Expression.Column> columns = analyzeGroup(OperationType.AND, global);
-                expressions.addAll(columns);
-
-                combinedGroups.push(getMergeIterator(OperationType.AND, columns, Collections.<SSTableIndex>emptySet()));
-            }
-
-            SSTableIndexMergeIterator joiner = combinedGroups.pop();
-
-            try
-            {
-                fetch(joiner, requestedRange, filter, expressions, rows, maxRows);
-                return Lists.newArrayList(rows);
-            }
-            finally
-            {
-                FileUtils.closeQuietly(joiner);
-            }
-        }
-
-        private Pair<Expression.Column, Set<SSTableIndex>> getPrimaryExpression(List<Expression.Column> expressions)
-        {
-            Expression.Column expression = null;
-            Set<SSTableIndex> primaryIndexes = null;
-
-            for (Expression.Column e : expressions)
-            {
-                SAView view = getView(e.name);
-
-                if (view == null)
-                    continue;
-
-                Set<SSTableIndex> indexes = view.match(e);
-                if (primaryIndexes == null || primaryIndexes.size() > indexes.size())
-                {
-                    primaryIndexes = indexes;
-                    expression = e;
-                }
-            }
-
-            return Pair.create(expression, primaryIndexes);
-        }
-
-        /**
-         * Get merge iterator for given set of the pre-analyzed expressions,
-         * context is only used when operation is set to AND to limit the number of
-         * SSTableIndex files read by queries of the same priority.
-         *
-         * @param op The operation to join expressions on.
-         * @param expressions The expression group to join.
-         * @param context Set of SSTableIndex files used by the neighbor AND operation.
-         *
-         * @return The joined iterator over data collected from given expressions.
-         */
-        private SSTableIndexMergeIterator getMergeIterator(OperationType op,
-                                                           List<Expression.Column> expressions,
-                                                           Set<SSTableIndex> context)
-        {
-            Expression.Column primaryExpression;
-            Set<SSTableIndex> primaryIndexes;
-
-            final IndexMemtable currentMemtable = globalMemtable.get();
-
-            // try to compute primary only for AND operation
-            if (op == OperationType.OR)
-            {
-                primaryExpression = null;
-                primaryIndexes = Collections.emptySet();
-            }
-            else
-            {
-                Pair<Expression.Column, Set<SSTableIndex>> primary = getPrimaryExpression(expressions);
-                primaryExpression = primary.left;
-                primaryIndexes = primary.right != null ? primary.right : Collections.<SSTableIndex>emptySet();
-
-                if (primaryIndexes.isEmpty())
-                    primaryIndexes = context;
-                else if (!context.isEmpty())
-                    primaryIndexes = Sets.intersection(primaryIndexes, context);
-            }
-
-            Set<SSTableIndex> allIndexes = new HashSet<>();
-
-            List<SkippableIterator<Long, Token>> unions = new ArrayList<>(expressions.size());
-            for (Expression.Column e : expressions)
-            {
-                if (primaryExpression != null && primaryExpression.equals(e))
-                {
-                    unions.add(new SuffixIterator(primaryExpression,
-                                                  currentMemtable.search(primaryExpression),
-                                                  primaryIndexes));
-                    continue;
-                }
-
-                Set<SSTableIndex> readers = new HashSet<>();
-                SAView view = getView(e.name);
-
-                if (view != null && primaryIndexes.size() > 0)
-                {
-                    for (SSTableIndex index : primaryIndexes)
-                        readers.addAll(view.match(index.minKey(), index.maxKey()));
-                }
-                else if (view != null)
-                {
-                    readers.addAll(view.match(e));
-                }
-
-                unions.add(new SuffixIterator(e, currentMemtable.search(e), readers));
-                allIndexes.addAll(readers);
-            }
-
-            return new SSTableIndexMergeIterator(op, unions, op == OperationType.AND ? primaryIndexes : allIndexes);
-        }
-
-        protected void fetch(SkippableIterator<Long, Token> joiner,
-                             AbstractBounds<RowPosition> range,
-                             ExtendedFilter filter,
-                             List<Expression> expressions,
-                             Set<Row> aggregator,
-                             int maxRows)
-        {
-
-            joiner.skipTo(((LongToken) range.left.getToken()).token);
-
-            intersection:
-            while (joiner.hasNext())
-            {
-                for (DecoratedKey key : joiner.next())
-                {
-                    if (!range.contains(key) || aggregator.size() >= maxRows)
-                        break intersection;
-
-                    Row row = getRow(key, filter, expressions);
-                    if (row != null)
-                        aggregator.add(row);
-                }
-            }
-        }
-
-        private Row getRow(DecoratedKey key, IDiskAtomFilter columnFilter, List<Expression> expressions)
-        {
-            ReadCommand cmd = ReadCommand.create(baseCfs.keyspace.getName(),
-                                                 key.key,
-                                                 baseCfs.getColumnFamilyName(),
-                                                 System.currentTimeMillis(),
-                                                 columnFilter);
-
-            return new RowReader(cmd, expressions).call();
-        }
-
-        private Row getRow(DecoratedKey key, ExtendedFilter filter, List<Expression> expressions)
-        {
-            return getRow(key, filter.columnFilter(key.key), expressions);
-        }
-
-        private class RowReader implements Callable<Row>
-        {
-            private final ReadCommand command;
-            private final List<Expression> expressions;
-
-            public RowReader(ReadCommand command, List<Expression> expressions)
-            {
-                this.command = command;
-                this.expressions = expressions;
-                phaser.register();
-            }
-
-            public Row call()
-            {
-                try
-                {
-                    Row row = command.getRow(Keyspace.open(command.ksName));
-                    return satisfiesPredicates(row) ? row : null;
-                }
-                finally
-                {
-                    phaser.arriveAndDeregister();
-                }
-            }
-
-            /**
-             * reapply the predicates to see if the row still satisfies the search predicates
-             * now that it's been loaded and merged from the LSM storage engine.
-             *
-             * Expression list has all of the predicates in the polish notation, we use this fact
-             * here and try to build a stack machine evaluation per returned indexed column, it works as follows:
-             *
-             * For each given row iterate through expressions in order and if it's column expression
-             * evaluate column value based on expression and returns a boolean,
-             * push it to the stack of results, when logical expression is encountered
-             * do a boolean logic operation & or | between previously evaluated results (binary operation),
-             * once all of the expressions have been evaluated stack will have a single element left
-             * which represents a decision for a whole row.
-             *
-             * Query: f:x OR (a > 5 AND b < 7)
-             * Expressions: [b < 7, a > 5, AND, f:x, OR]
-             * Row: key1(a:9, b:6, f:y)
-             *
-             * Evaluation:
-             *
-             * #1 expression b < 7
-             *    - get column b -> b:6
-             *    - validate value -> true
-             *    - push true
-             * #2 expression a > 5
-             *    - get column a -> a:9
-             *    - validate value -> true
-             *    - push true
-             * #3 expression AND
-             *    - pop -> true
-             *    - pop -> true
-             *    - apply AND true & true -> true
-             *    - push true
-             * #4 expression f:x
-             *    - get column f -> f:y
-             *    - validate value -> false
-             *    - push false
-             * #5 expression OR
-             *    - pop -> false
-             *    - pop -> true
-             *    - apply OR false | true -> true
-             *    - push true <--- this is the final result for the row
-             */
-            private boolean satisfiesPredicates(Row row)
-            {
-                if (row == null || row.cf == null || row.cf.isMarkedForDelete())
-                    return false;
-
-                final long now = System.currentTimeMillis();
-                final Stack<Boolean> conditions = new Stack<>();
-
-                for (Expression e : expressions)
-                {
-                    if (e.isLogical())
-                    {
-                        // expression merges the same column bounds from distinct IndexExpressions' (only for AND)
-                        // to a single Expression.Column e.g. age > X AND age < Y are going to be
-                        // Expression.Column{name: age, lower: X, upper: Y} so situation when logical operation
-                        // has a single argument in the queue is expected.
-                        if (conditions.size() == 1)
-                            continue;
-
-                        switch (e.toLogicalExpression().op)
-                        {
-                            case AND:
-                                conditions.push(conditions.pop() & conditions.pop());
-                                break;
-
-                            case OR:
-                                conditions.push(conditions.pop() | conditions.pop());
-                        }
-                    }
-                    else
-                    {
-                        Expression.Column expression = e.toColumnExpression();
-
-                        Column column = row.cf.getColumn(expression.name);
-                        if (column == null)
-                            throw new IllegalStateException("All indexed columns should be included into the column slice, missing: "
-                                                          + baseCfs.getComparator().getString(expression.name));
-
-                        if (!column.isLive(now))
-                            return false;
-
-                        conditions.push(expression.contains(column.value()));
-                    }
-                }
-
-                int conditionCount = conditions.size();
-                switch (conditionCount)
-                {
-                    case 0:
-                        throw new AssertionError();
-
-                    case 1:
-                        return conditions.pop();
-
-                    default: // backward compatibility case, everything is linked with AND
-                        boolean result = false;
-                        for (int i = 0; i < conditionCount; i++)
-                            result = (i == 0) ? conditions.pop() : result & conditions.pop();
-
-                        return result;
-                }
             }
         }
 
@@ -1093,11 +715,11 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex
             Set<SSTableReader> toRemove = new HashSet<>();
             for (SSTableIndex index : currentView)
             {
-                if (index.sstable.getMaxTimestamp() > truncateUntil)
+                if (index.getSSTable().getMaxTimestamp() > truncateUntil)
                     continue;
 
                 index.markObsolete();
-                toRemove.add(index.sstable);
+                toRemove.add(index.getSSTable());
             }
 
             update(toRemove, Collections.<SSTableReader>emptyList());
@@ -1131,7 +753,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex
             {
                 public boolean apply(Interval<ByteBuffer, SSTableIndex> interval)
                 {
-                    return !toRemove.contains(interval.data.sstable);
+                    return !toRemove.contains(interval.data.getSSTable());
                 }
             };
 
@@ -1292,149 +914,6 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex
         }
     }
 
-    private static class DecoratedKeyFetcher implements Function<Long, DecoratedKey>
-    {
-        private final SSTableReader sstable;
-
-        DecoratedKeyFetcher(SSTableReader reader)
-        {
-            sstable = reader;
-        }
-
-        @Override
-        public DecoratedKey apply(Long offset)
-        {
-            try
-            {
-                return sstable.keyAt(offset);
-            }
-            catch (IOException e)
-            {
-                throw new FSReadError(e, sstable.getFilename());
-            }
-        }
-
-        @Override
-        public int hashCode()
-        {
-            return sstable.descriptor.hashCode();
-        }
-
-        @Override
-        public boolean equals(Object other)
-        {
-            return other instanceof DecoratedKeyFetcher
-                    && sstable.descriptor.equals(((DecoratedKeyFetcher) other).sstable.descriptor);
-        }
-    }
-
-    private class SSTableIndex
-    {
-        private final ByteBuffer column;
-        private final SSTableReader sstable;
-        private final OnDiskSA index;
-        private final AtomicInteger references = new AtomicInteger(1);
-        private final AtomicBoolean obsolete = new AtomicBoolean(false);
-
-        public SSTableIndex(ByteBuffer name, File indexFile, SSTableReader referent)
-        {
-            column = name;
-            sstable = referent;
-
-            if (!sstable.acquireReference())
-                throw new IllegalStateException("Couldn't acquire reference to the sstable: " + sstable);
-
-            AbstractType<?> validator = getValidator(column);
-
-            assert validator != null;
-            assert indexFile.exists() : String.format("SSTable %s should have index %s.",
-                                                      sstable.getFilename(),
-                                                      baseCfs.getComparator().getString(column));
-
-            index = new OnDiskSA(indexFile, validator, new DecoratedKeyFetcher(sstable));
-        }
-
-        public ByteBuffer minSuffix()
-        {
-            return index.minSuffix();
-        }
-
-        public ByteBuffer maxSuffix()
-        {
-            return index.maxSuffix();
-        }
-
-        public ByteBuffer minKey()
-        {
-            return index.minKey();
-        }
-
-        public ByteBuffer maxKey()
-        {
-            return index.maxKey();
-        }
-
-        public SkippableIterator<Long, Token> search(ByteBuffer lower, boolean lowerInclusive,
-                                                     ByteBuffer upper, boolean upperInclusive)
-        {
-            return index.search(lower, lowerInclusive, upper, upperInclusive);
-        }
-
-        public boolean reference()
-        {
-            while (true)
-            {
-                int n = references.get();
-                if (n <= 0)
-                    return false;
-                if (references.compareAndSet(n, n + 1))
-                    return true;
-            }
-        }
-
-        public void release()
-        {
-            int n = references.decrementAndGet();
-            if (n == 0)
-            {
-                FileUtils.closeQuietly(index);
-                sstable.releaseReference();
-                if (obsolete.get())
-                    FileUtils.delete(index.getIndexPath());
-            }
-        }
-
-        public void markObsolete()
-        {
-            obsolete.getAndSet(true);
-            release();
-        }
-
-        public boolean isObsolete()
-        {
-            return obsolete.get();
-        }
-
-        @Override
-        public boolean equals(Object o)
-        {
-            // name is not checked on purpose that simplifies context handling between logical operations
-            return o instanceof SSTableIndex && sstable.descriptor.equals(((SSTableIndex) o).sstable.descriptor);
-        }
-
-        @Override
-        public int hashCode()
-        {
-            return sstable.hashCode();
-        }
-
-        @Override
-        public String toString()
-        {
-            return String.format("SSTableIndex(column: %s, SSTable: %s)", baseCfs.getComparator().getString(column), sstable.descriptor);
-        }
-    }
-
     private class IndexBuilder extends IndexBuildTask
     {
         private final KeyIterator keys;
@@ -1528,87 +1007,85 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex
         return column.right.isAnalyzed && TOKENIZABLE_TYPES.contains(column.left.getValidator()) ? new StandardTokenizer() : new NoOpTokenizer();
     }
 
-    private List<Expression.Column> analyzeGroup(OperationType op, IndexExpression... expressions)
+    private Pair<Expression.Column, Set<SSTableIndex>> getPrimaryExpression(List<Expression.Column> expressions)
     {
-        Multimap<ByteBuffer, Expression.Column> analyzed = HashMultimap.create();
+        Expression.Column expression = null;
+        Set<SSTableIndex> primaryIndexes = null;
 
-        for (final IndexExpression e : expressions)
+        for (Expression.Column e : expressions)
         {
-            if (e.isSetLogicalOp())
+            SAView view = getView(e.name);
+
+            if (view == null)
                 continue;
 
-            ByteBuffer name = ByteBuffer.wrap(e.getColumn_name());
-            Pair<ColumnDefinition, IndexMode> column = indexedColumns.get(name);
-
-            if (column == null)
+            Set<SSTableIndex> indexes = view.match(e);
+            if (primaryIndexes == null || primaryIndexes.size() > indexes.size())
             {
-                logger.error("Requested column: " + baseCfs.getComparator().getString(name) + ", wasn't found in the index.");
-                continue;
-            }
-
-            AbstractType<?> validator = column.left.getValidator();
-
-            Collection<Expression.Column> perColumn = analyzed.get(name);
-
-            switch (e.getOp())
-            {
-                // '=' can have multiple expressions e.g. text = "Hello World",
-                // becomes text = "Hello" AND text = "WORLD"
-                // because "space" is always interpreted as a split point.
-                case EQ:
-                    final AbstractTokenizer tokenizer = getTokenizer(column);
-                    tokenizer.init(column.left.getIndexOptions());
-                    tokenizer.reset(ByteBuffer.wrap(e.getValue()));
-                    while (tokenizer.hasNext())
-                    {
-                        perColumn.add(new Expression.Column(name, baseCfs.getComparator(), validator)
-                        {{
-                            add(e.op, tokenizer.next());
-                        }});
-                    }
-                    break;
-
-                // default means "range" operator, combines both bounds together into the single expression,
-                // iff operation of the group is AND, otherwise we are forced to create separate expressions
-                default:
-                    Expression.Column range;
-                    if (perColumn.size() == 0 || op != OperationType.AND)
-                        perColumn.add((range = new Expression.Column(name, baseCfs.getComparator(), validator)));
-                    else
-                        range = Iterators.getLast(perColumn.iterator());
-
-                    range.add(e.op, e.bufferForValue());
-                    break;
+                primaryIndexes = indexes;
+                expression = e;
             }
         }
 
-        List<Expression.Column> result = new ArrayList<>();
-        for (Map.Entry<ByteBuffer, Expression.Column> e : analyzed.entries())
-            result.add(e.getValue());
-
-        return result;
+        return Pair.create(expression, primaryIndexes);
     }
 
-    public class SSTableIndexMergeIterator extends LazyMergeSortIterator<Long, Token>
+    /**
+     * Get merge iterator for given set of the pre-analyzed expressions.
+     *
+     * @param op The operation to join expressions on.
+     * @param expressions The expression group to join.
+     *
+     * @return The joined iterator over data collected from given expressions.
+     */
+    public SkippableIterator<Long, Token> getMergeIterator(OperationType op, List<Expression.Column> expressions)
     {
-        private final Set<SSTableIndex> indexes;
+        Expression.Column primaryExpression;
+        Set<SSTableIndex> primaryIndexes;
 
-        public SSTableIndexMergeIterator(OperationType op, SSTableIndexMergeIterator sideL, SSTableIndexMergeIterator sideR)
+        final IndexMemtable currentMemtable = globalMemtable.get();
+
+        // try to compute primary only for AND operation
+        if (op == OperationType.OR)
         {
-            super(op, Arrays.<SkippableIterator<Long, Token>>asList(sideL, sideR));
-            indexes = Sets.union(sideL.getContext(), sideR.getContext());
+            primaryExpression = null;
+            primaryIndexes = Collections.emptySet();
+        }
+        else
+        {
+            Pair<Expression.Column, Set<SSTableIndex>> primary = getPrimaryExpression(expressions);
+            primaryExpression = primary.left;
+            primaryIndexes = primary.right != null ? primary.right : Collections.<SSTableIndex>emptySet();
         }
 
-        public SSTableIndexMergeIterator(OperationType op, List<SkippableIterator<Long, Token>> group, Set<SSTableIndex> context)
+        List<SkippableIterator<Long, Token>> unions = new ArrayList<>(expressions.size());
+        for (Expression.Column e : expressions)
         {
-            super(op, group);
-            indexes = context;
+            if (primaryExpression != null && primaryExpression.equals(e))
+            {
+                unions.add(new SuffixIterator(primaryExpression,
+                                              currentMemtable.search(primaryExpression),
+                                              primaryIndexes));
+                continue;
+            }
+
+            Set<SSTableIndex> readers = new HashSet<>();
+            SAView view = getView(e.name);
+
+            if (view != null && primaryIndexes.size() > 0)
+            {
+                for (SSTableIndex index : primaryIndexes)
+                    readers.addAll(view.match(index.minKey(), index.maxKey()));
+            }
+            else if (view != null)
+            {
+                readers.addAll(view.match(e));
+            }
+
+            unions.add(new SuffixIterator(e, currentMemtable.search(e), readers));
         }
 
-        public Set<SSTableIndex> getContext()
-        {
-            return indexes;
-        }
+        return new LazyMergeSortIterator<>(op, unions);
     }
 
     public static class IndexMode
@@ -1623,4 +1100,3 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex
         }
     }
 }
-

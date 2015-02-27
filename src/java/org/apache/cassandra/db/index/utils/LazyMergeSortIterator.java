@@ -15,7 +15,22 @@ public class LazyMergeSortIterator<K extends Comparable<K>, T extends CombinedVa
 {
     public static enum OperationType
     {
-        AND, OR
+        AND, OR;
+
+        public boolean apply(boolean a, boolean b)
+        {
+            switch (this)
+            {
+                case OR:
+                    return a | b;
+
+                case AND:
+                    return a & b;
+
+                default:
+                    throw new AssertionError();
+            }
+        }
     }
 
     private OperationType opType;
