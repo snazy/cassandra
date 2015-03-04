@@ -81,9 +81,9 @@ public class SetBytesAllocationBench
         public ByteBuffer direct;
 
         public Mem() {
-            address = Native.malloc(65536);
-            heap = ByteBuffer.allocate(65536);
-            direct = ByteBuffer.allocateDirect(65536);
+            address = Native.malloc(1024);
+            heap = ByteBuffer.allocate(1024);
+            direct = ByteBuffer.allocateDirect(1024);
         }
     }
 
