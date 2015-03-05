@@ -40,6 +40,8 @@ New features
    - Support for user-defined functions and user-defined aggregates have
      been added to CQL.
    - Row-cache is now fully off-heap.
+   - jemalloc is now automatically preloaded and used on Linux and OS-X if
+     installed.
 
 
 Upgrading
