@@ -30,6 +30,7 @@ import javax.management.openmbean.*;
 
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.*;
+import com.google.common.base.Throwables;
 import com.google.common.collect.*;
 import com.google.common.util.concurrent.*;
 
@@ -2494,7 +2495,7 @@ public class ColumnFamilyStore implements ColumnFamilyStoreMBean
             public Iterable<SSTableReader> call() throws Exception
             {
                 assert data.getCompacting().isEmpty() : data.getCompacting();
-                Iterable<SSTableReader> sstables = Lists.newArrayList(AbstractCompactionStrategy.filterSuspectSSTables(getSSTables()));
+                Collection<SSTableReader> sstables = Lists.newArrayList(AbstractCompactionStrategy.filterSuspectSSTables(getSSTables()));
                 if (Iterables.isEmpty(sstables))
                     return Collections.emptyList();
                 boolean success = data.markCompacting(sstables);

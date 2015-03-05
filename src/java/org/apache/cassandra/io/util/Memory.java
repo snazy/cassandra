@@ -23,6 +23,7 @@ import java.nio.ByteOrder;
 
 import net.nicoulaj.compilecommand.annotations.Inline;
 import org.apache.cassandra.utils.FastByteOperations;
+import org.apache.cassandra.utils.concurrent.Ref;
 import org.apache.cassandra.utils.memory.MemoryUtil;
 import sun.misc.Unsafe;
 import sun.nio.ch.DirectBuffer;
@@ -89,6 +90,9 @@ public class Memory implements AutoCloseable
     {
         if (bytes < 0)
             throw new IllegalArgumentException();
+
+        if (Ref.DEBUG_ENABLED)
+            return new SafeMemory(bytes);
 
         return new Memory(bytes);
     }
@@ -171,6 +175,33 @@ public class Memory implements AutoCloseable
         {
             unsafe.putByte(address + 3, (byte) (value >> 24));
             unsafe.putByte(address + 2, (byte) (value >> 16));
+            unsafe.putByte(address + 1, (byte) (value >> 8));
+            unsafe.putByte(address, (byte) (value));
+        }
+    }
+
+    public void setShort(long offset, short l)
+    {
+        checkBounds(offset, offset + 4);
+        if (unaligned)
+        {
+            unsafe.putShort(peer + offset, l);
+        }
+        else
+        {
+            putShortByByte(peer + offset, l);
+        }
+    }
+
+    private void putShortByByte(long address, short value)
+    {
+        if (bigEndian)
+        {
+            unsafe.putByte(address, (byte) (value >> 8));
+            unsafe.putByte(address + 1, (byte) (value));
+        }
+        else
+        {
             unsafe.putByte(address + 1, (byte) (value >> 8));
             unsafe.putByte(address, (byte) (value));
         }
@@ -353,20 +384,20 @@ public class Memory implements AutoCloseable
         return false;
     }
 
-    public ByteBuffer[] asByteBuffers()
+    public ByteBuffer[] asByteBuffers(long offset, long length)
     {
         if (size() == 0)
             return NO_BYTE_BUFFERS;
 
-        ByteBuffer[] result = new ByteBuffer[(int) (size() / Integer.MAX_VALUE) + 1];
-        long offset = 0;
+        ByteBuffer[] result = new ByteBuffer[(int) (length / Integer.MAX_VALUE) + 1];
         int size = (int) (size() / result.length);
         for (int i = 0 ; i < result.length - 1 ; i++)
         {
             result[i] = MemoryUtil.getByteBuffer(peer + offset, size);
             offset += size;
+            length -= size;
         }
-        result[result.length - 1] = MemoryUtil.getByteBuffer(peer + offset, (int) (size() - offset));
+        result[result.length - 1] = MemoryUtil.getByteBuffer(peer + offset, (int) length);
         return result;
     }
 
@@ -379,5 +410,4 @@ public class Memory implements AutoCloseable
     {
         return String.format("Memory@[%x..%x)", peer, peer + size);
     }
-
 }
