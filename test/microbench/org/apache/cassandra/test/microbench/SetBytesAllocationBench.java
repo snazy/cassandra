@@ -73,7 +73,7 @@ public class SetBytesAllocationBench
         }
     }
 
-    @State(Scope.Group)
+    @State(Scope.Thread)
     public static class Mem {
         public long address;
 
@@ -81,10 +81,15 @@ public class SetBytesAllocationBench
         public ByteBuffer direct;
 
         public Mem() {
-            address = Native.malloc(1024);
-            heap = ByteBuffer.allocate(1024);
-            direct = ByteBuffer.allocateDirect(1024);
+            address = Native.malloc(16);
+            heap = ByteBuffer.allocate(16);
+            direct = ByteBuffer.allocateDirect(16);
         }
+    }
+
+    @State(Scope.Thread)
+    public static class Toggle {
+        public boolean toggle;
     }
 
     @Benchmark
@@ -102,6 +107,13 @@ public class SetBytesAllocationBench
     }
 
     @Benchmark
+    @Group("branchMixed")
+    public void branchMixed(Mem state, Toggle toggle)
+    {
+        setBytesBranch(state.address, !(toggle.toggle = !toggle.toggle) ? state.heap : state.direct);
+    }
+
+    @Benchmark
     @Group("trunk")
     public void trunkDirect(Mem state)
     {
@@ -113,6 +125,13 @@ public class SetBytesAllocationBench
     public void trunkHeap(Mem state)
     {
         setBytesTrunk(state.address, state.heap);
+    }
+
+    @Benchmark
+    @Group("trunkMixed")
+    public void trunkMixed(Mem state, Toggle toggle)
+    {
+        setBytesTrunk(state.address, !(toggle.toggle = !toggle.toggle) ? state.heap : state.direct);
     }
 
     public static void setBytesTrunk(long address, ByteBuffer buffer)
