@@ -444,7 +444,7 @@ public class OnDiskSA implements Iterable<OnDiskSA.DataSuffix>, Closeable
     {
         public DataBlock(ByteBuffer data)
         {
-            super(data);
+            super(data, BlockType.DATA);
         }
 
         @Override
@@ -494,7 +494,7 @@ public class OnDiskSA implements Iterable<OnDiskSA.DataSuffix>, Closeable
     {
         public PointerBlock(ByteBuffer block)
         {
-            super(block);
+            super(block, BlockType.POINTER);
         }
 
         @Override
