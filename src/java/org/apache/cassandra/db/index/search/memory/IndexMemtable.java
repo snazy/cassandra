@@ -11,8 +11,8 @@ import org.apache.cassandra.config.ColumnDefinition;
 import org.apache.cassandra.db.Column;
 import org.apache.cassandra.db.ColumnFamily;
 import org.apache.cassandra.db.index.SuffixArraySecondaryIndex;
+import org.apache.cassandra.db.index.SuffixArraySecondaryIndex.IndexMode;
 import org.apache.cassandra.db.index.search.Expression;
-import org.apache.cassandra.db.index.search.OnDiskSABuilder.Mode;
 import org.apache.cassandra.db.index.search.container.TokenTree;
 import org.apache.cassandra.db.index.utils.SkippableIterator;
 import org.apache.cassandra.db.marshal.AbstractType;
@@ -63,7 +63,7 @@ public class IndexMemtable
     {
         for (Column column : cf)
         {
-            Pair<ColumnDefinition, Mode> columnDefinition = backend.getIndexDefinition(column.name());
+            Pair<ColumnDefinition, IndexMode> columnDefinition = backend.getIndexDefinition(column.name());
             if (columnDefinition == null)
                 continue;
 
