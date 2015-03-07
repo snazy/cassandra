@@ -9,7 +9,7 @@ import org.apache.cassandra.config.ColumnDefinition;
 import org.apache.cassandra.db.DecoratedKey;
 import org.apache.cassandra.db.index.SuffixArraySecondaryIndex;
 import org.apache.cassandra.db.index.SuffixArraySecondaryIndex.IndexMode;
-import org.apache.cassandra.db.index.search.Expression;
+import org.apache.cassandra.db.index.search.plan.Expression;
 import org.apache.cassandra.db.index.search.container.TokenTree.Token;
 import org.apache.cassandra.db.index.search.tokenization.AbstractTokenizer;
 import org.apache.cassandra.db.index.utils.LazyMergeSortIterator;
@@ -64,7 +64,7 @@ public class TrieColumnIndex extends ColumnIndex
     }
 
     @Override
-    public SkippableIterator<Long, Token> search(Expression.Column expression)
+    public SkippableIterator<Long, Token> search(Expression expression)
     {
         return index.search(expression);
     }
@@ -98,11 +98,11 @@ public class TrieColumnIndex extends ColumnIndex
             keys.add(key);
         }
 
-        public SkippableIterator<Long, Token> search(Expression.Column expression)
+        public SkippableIterator<Long, Token> search(Expression expression)
         {
             List<SkippableIterator<Long, Token>> union = new ArrayList<>();
 
-            assert expression.isEquality; // means that min == max
+            assert expression.getOp() == Expression.Op.EQ; // means that min == max
 
             ByteBuffer prefix = expression.lower == null ? null : expression.lower.value;
 

@@ -33,6 +33,24 @@ public abstract class SingleColumnRestriction implements Restriction
         return false;
     }
 
+    public static class NOT_EQ extends EQ
+    {
+        public NOT_EQ(Term value, boolean onToken)
+        {
+            super(value, onToken);
+        }
+
+        public boolean isEQ()
+        {
+            return false;
+        }
+
+        public boolean isNotEQ()
+        {
+            return true;
+        }
+    }
+
     public static class EQ extends SingleColumnRestriction implements Restriction.EQ
     {
         protected final Term value;
@@ -57,6 +75,11 @@ public abstract class SingleColumnRestriction implements Restriction
         public boolean isEQ()
         {
             return true;
+        }
+
+        public boolean isNotEQ()
+        {
+            return false;
         }
 
         public boolean isIN()
@@ -104,6 +127,11 @@ public abstract class SingleColumnRestriction implements Restriction
         }
 
         public boolean isEQ()
+        {
+            return false;
+        }
+
+        public boolean isNotEQ()
         {
             return false;
         }
@@ -162,6 +190,11 @@ public abstract class SingleColumnRestriction implements Restriction
             return true;
         }
 
+        public boolean isNotEQ()
+        {
+            return false;
+        }
+
         public boolean isOnToken()
         {
             return false;
@@ -193,6 +226,11 @@ public abstract class SingleColumnRestriction implements Restriction
         }
 
         public boolean isEQ()
+        {
+            return false;
+        }
+
+        public boolean isNotEQ()
         {
             return false;
         }

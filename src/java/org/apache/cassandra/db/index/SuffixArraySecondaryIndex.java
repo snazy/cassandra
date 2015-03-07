@@ -6,6 +6,7 @@ import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicReference;
 
+import com.google.common.annotations.VisibleForTesting;
 import org.apache.cassandra.concurrent.JMXEnabledThreadPoolExecutor;
 import org.apache.cassandra.concurrent.NamedThreadFactory;
 import org.apache.cassandra.config.ColumnDefinition;
@@ -13,7 +14,7 @@ import org.apache.cassandra.db.*;
 import org.apache.cassandra.db.columniterator.SSTableNamesIterator;
 import org.apache.cassandra.db.compaction.*;
 import org.apache.cassandra.db.filter.ExtendedFilter;
-import org.apache.cassandra.db.index.search.Expression;
+import org.apache.cassandra.db.index.search.plan.Expression;
 import org.apache.cassandra.db.index.search.OnDiskSABuilder;
 import org.apache.cassandra.db.index.search.SSTableIndex;
 import org.apache.cassandra.db.index.search.container.TokenTreeBuilder;
@@ -22,10 +23,10 @@ import org.apache.cassandra.db.index.search.plan.QueryPlan;
 import org.apache.cassandra.db.index.search.tokenization.AbstractTokenizer;
 import org.apache.cassandra.db.index.search.tokenization.NoOpTokenizer;
 import org.apache.cassandra.db.index.search.tokenization.StandardTokenizer;
-import org.apache.cassandra.db.index.utils.LazyMergeSortIterator;
-import org.apache.cassandra.db.index.utils.SkippableIterator;
 import org.apache.cassandra.db.index.utils.TypeUtil;
-import org.apache.cassandra.db.marshal.*;
+import org.apache.cassandra.db.marshal.AbstractType;
+import org.apache.cassandra.db.marshal.AsciiType;
+import org.apache.cassandra.db.marshal.UTF8Type;
 import org.apache.cassandra.dht.*;
 import org.apache.cassandra.exceptions.ConfigurationException;
 import org.apache.cassandra.io.sstable.*;
@@ -46,8 +47,6 @@ import org.cliffc.high_scale_lib.NonBlockingHashMap;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import static org.apache.cassandra.db.index.utils.LazyMergeSortIterator.OperationType;
-import static org.apache.cassandra.db.index.search.container.TokenTree.Token;
 import static org.apache.cassandra.db.index.search.OnDiskSABuilder.Mode;
 
 /**
@@ -122,7 +121,8 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex
         baseCfs.getDataTracker().subscribe(new DataTrackerConsumer());
     }
 
-    void addColumnDef(ColumnDefinition columnDef)
+    @VisibleForTesting
+    public void addColumnDef(ColumnDefinition columnDef)
     {
         super.addColumnDef(columnDef);
 
@@ -367,7 +367,12 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex
         return new PerSSTableIndexWriter(descriptor, source);
     }
 
-    protected SAView getView(ByteBuffer columnName)
+    public IndexMemtable getMemtable()
+    {
+        return globalMemtable.get();
+    }
+
+    public SAView getView(ByteBuffer columnName)
     {
         SADataTracker dataTracker = intervalTrees.get(columnName);
         return dataTracker != null ? dataTracker.view.get() : null;
@@ -611,58 +616,6 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex
         }
     }
 
-    private class SuffixIterator extends AbstractIterator<Token> implements SkippableIterator<Long, Token>
-    {
-        private final SkippableIterator<Long, Token> union;
-        private final List<SSTableIndex> referencedIndexes = new ArrayList<>();
-
-        public SuffixIterator(Expression.Column expression,
-                              SkippableIterator<Long, Token> memtableIterator,
-                              final Collection<SSTableIndex> perSSTableIndexes)
-        {
-            List<SkippableIterator<Long, Token>> keys = new ArrayList<>(perSSTableIndexes.size());
-
-            if (memtableIterator != null)
-                keys.add(memtableIterator);
-
-            for (final SSTableIndex index : perSSTableIndexes)
-            {
-                if (!index.reference())
-                    continue;
-
-                ByteBuffer lower = (expression.lower == null) ? null : expression.lower.value;
-                ByteBuffer upper = (expression.upper == null) ? null : expression.upper.value;
-
-                keys.add(index.search(lower, lower == null || expression.lower.inclusive,
-                                      upper, upper == null || expression.upper.inclusive));
-
-                referencedIndexes.add(index);
-            }
-
-            union = new LazyMergeSortIterator<>(OperationType.OR, keys);
-        }
-
-        @Override
-        protected Token computeNext()
-        {
-            return union.hasNext() ? union.next() : endOfData();
-        }
-
-        @Override
-        public void skipTo(Long next)
-        {
-            union.skipTo(next);
-        }
-
-        @Override
-        public void close()
-        {
-            FileUtils.closeQuietly(union);
-            for (SSTableIndex index : referencedIndexes)
-                index.release();
-        }
-    }
-
     /** a pared-down version of DataTracker and DT.View. need one for each index of each column family */
     private class SADataTracker
     {
@@ -726,7 +679,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex
         }
     }
 
-    private class SAView implements Iterable<SSTableIndex>
+    public class SAView implements Iterable<SSTableIndex>
     {
         private final ByteBuffer col;
         private final AbstractType<?> validator;
@@ -832,7 +785,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex
             maxSuffix = maxSuffix == null || validator.compare(maxSuffix, index.maxSuffix()) < 0 ? index.maxSuffix() : maxSuffix;
         }
 
-        public Set<SSTableIndex> match(Expression.Column expression)
+        public Set<SSTableIndex> match(Expression expression)
         {
             if (minSuffix == null) // no data in this view
                 return Collections.emptySet();
@@ -1005,87 +958,6 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex
     {
         assert column != null;
         return column.right.isAnalyzed && TOKENIZABLE_TYPES.contains(column.left.getValidator()) ? new StandardTokenizer() : new NoOpTokenizer();
-    }
-
-    private Pair<Expression.Column, Set<SSTableIndex>> getPrimaryExpression(List<Expression.Column> expressions)
-    {
-        Expression.Column expression = null;
-        Set<SSTableIndex> primaryIndexes = null;
-
-        for (Expression.Column e : expressions)
-        {
-            SAView view = getView(e.name);
-
-            if (view == null)
-                continue;
-
-            Set<SSTableIndex> indexes = view.match(e);
-            if (primaryIndexes == null || primaryIndexes.size() > indexes.size())
-            {
-                primaryIndexes = indexes;
-                expression = e;
-            }
-        }
-
-        return Pair.create(expression, primaryIndexes);
-    }
-
-    /**
-     * Get merge iterator for given set of the pre-analyzed expressions.
-     *
-     * @param op The operation to join expressions on.
-     * @param expressions The expression group to join.
-     *
-     * @return The joined iterator over data collected from given expressions.
-     */
-    public SkippableIterator<Long, Token> getMergeIterator(OperationType op, List<Expression.Column> expressions)
-    {
-        Expression.Column primaryExpression;
-        Set<SSTableIndex> primaryIndexes;
-
-        final IndexMemtable currentMemtable = globalMemtable.get();
-
-        // try to compute primary only for AND operation
-        if (op == OperationType.OR)
-        {
-            primaryExpression = null;
-            primaryIndexes = Collections.emptySet();
-        }
-        else
-        {
-            Pair<Expression.Column, Set<SSTableIndex>> primary = getPrimaryExpression(expressions);
-            primaryExpression = primary.left;
-            primaryIndexes = primary.right != null ? primary.right : Collections.<SSTableIndex>emptySet();
-        }
-
-        List<SkippableIterator<Long, Token>> unions = new ArrayList<>(expressions.size());
-        for (Expression.Column e : expressions)
-        {
-            if (primaryExpression != null && primaryExpression.equals(e))
-            {
-                unions.add(new SuffixIterator(primaryExpression,
-                                              currentMemtable.search(primaryExpression),
-                                              primaryIndexes));
-                continue;
-            }
-
-            Set<SSTableIndex> readers = new HashSet<>();
-            SAView view = getView(e.name);
-
-            if (view != null && primaryIndexes.size() > 0)
-            {
-                for (SSTableIndex index : primaryIndexes)
-                    readers.addAll(view.match(index.minKey(), index.maxKey()));
-            }
-            else if (view != null)
-            {
-                readers.addAll(view.match(e));
-            }
-
-            unions.add(new SuffixIterator(e, currentMemtable.search(e), readers));
-        }
-
-        return new LazyMergeSortIterator<>(op, unions);
     }
 
     public static class IndexMode

@@ -313,7 +313,8 @@ enum IndexOperator {
     GTE,
     GT,
     LTE,
-    LT
+    LT,
+    NOT_EQ
 }
 
 enum LogicalIndexOperator {

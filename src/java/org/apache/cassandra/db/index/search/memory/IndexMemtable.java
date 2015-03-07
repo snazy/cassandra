@@ -12,7 +12,7 @@ import org.apache.cassandra.db.Column;
 import org.apache.cassandra.db.ColumnFamily;
 import org.apache.cassandra.db.index.SuffixArraySecondaryIndex;
 import org.apache.cassandra.db.index.SuffixArraySecondaryIndex.IndexMode;
-import org.apache.cassandra.db.index.search.Expression;
+import org.apache.cassandra.db.index.search.plan.Expression;
 import org.apache.cassandra.db.index.search.container.TokenTree;
 import org.apache.cassandra.db.index.utils.SkippableIterator;
 import org.apache.cassandra.db.index.utils.TypeUtil;
@@ -100,7 +100,7 @@ public class IndexMemtable
         }
     }
 
-    public SkippableIterator<Long, TokenTree.Token> search(Expression.Column expression)
+    public SkippableIterator<Long, TokenTree.Token> search(Expression expression)
     {
         ColumnIndex index = indexes.get(expression.name);
         return index == null ? null : index.search(expression);

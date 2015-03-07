@@ -34,6 +34,7 @@ public interface Restriction
 
     public boolean isSlice();
     public boolean isEQ();
+    public boolean isNotEQ();
     public boolean isIN();
     public boolean isMultiColumn();
 

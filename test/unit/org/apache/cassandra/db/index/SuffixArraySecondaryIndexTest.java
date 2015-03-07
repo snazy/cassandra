@@ -118,7 +118,7 @@ public class SuffixArraySecondaryIndexTest extends SchemaLoader
         ColumnFamilyStore store = loadData(data, forceFlush);
 
         Set<String> rows= getIndexed(store, 10, new IndexExpression(UTF8Type.instance.decompose("first_name"), IndexOperator.EQ, UTF8Type.instance.decompose("doesntmatter")));
-        Assert.assertTrue(rows.toString(), Arrays.equals(new String[] { }, rows.toArray(new String[rows.size()])));
+        Assert.assertTrue(rows.toString(), Arrays.equals(new String[]{}, rows.toArray(new String[rows.size()])));
     }
 
     @Test
@@ -1070,7 +1070,7 @@ public class SuffixArraySecondaryIndexTest extends SchemaLoader
         rows = getIndexed(store, 100, new IndexExpression(firstName, IndexOperator.EQ, UTF8Type.instance.decompose("a")),
                                       new IndexExpression(age, IndexOperator.EQ, Int32Type.instance.decompose(27)));
 
-        Assert.assertTrue(rows.toString(), Arrays.equals(new String[] { "key2", "key3" }, rows.toArray(new String[rows.size()])));
+        Assert.assertTrue(rows.toString(), Arrays.equals(new String[]{"key2", "key3"}, rows.toArray(new String[rows.size()])));
     }
 
     @Test
@@ -1152,6 +1152,85 @@ public class SuffixArraySecondaryIndexTest extends SchemaLoader
         rows = getIndexed(store, 10, new IndexExpression(firstName, IndexOperator.EQ, UTF8Type.instance.decompose("a")),
                                      new IndexExpression(score, IndexOperator.GTE, DoubleType.instance.decompose(0.2d)));
         Assert.assertTrue(rows.toString(), Arrays.equals(new String[]{ "key2", "key3" }, rows.toArray(new String[rows.size()])));
+    }
+
+    @Test
+    public void testNotSupport() throws Exception
+    {
+        final ByteBuffer firstName = UTF8Type.instance.decompose("first_name");
+        final ByteBuffer age = UTF8Type.instance.decompose("age");
+
+        Map<String, Pair<String, Integer>> data1 = new HashMap<String, Pair<String, Integer>>()
+        {{
+                put("key1", Pair.create("Pavel", 14));
+                put("key2", Pair.create("Pavel", 26));
+                put("key3", Pair.create("Pavel", 27));
+                put("key4", Pair.create("Jason", 27));
+        }};
+
+        ColumnFamilyStore store = loadData(data1, true);
+
+        Map<String, Pair<String, Integer>> data2 = new HashMap<String, Pair<String, Integer>>()
+        {{
+                put("key1", Pair.create("Pavel", 14));
+                put("key2", Pair.create("Pavel", 27));
+                put("key4", Pair.create("Jason", 28));
+        }};
+
+        loadData(data2, true);
+
+        Map<String, Pair<String, Integer>> data3 = new HashMap<String, Pair<String, Integer>>()
+        {{
+                put("key1", Pair.create("Pavel", 15));
+                put("key4", Pair.create("Jason", 29));
+        }};
+
+        loadData(data3, false);
+
+        /* Thrift */
+
+        Set<String> rows = getIndexed(store, 10, new IndexExpression(firstName, IndexOperator.EQ, UTF8Type.instance.decompose("a")),
+                                                 new IndexExpression(age, IndexOperator.NOT_EQ, Int32Type.instance.decompose(27)));
+
+        Assert.assertTrue(rows.toString(), Arrays.equals(new String[] { "key1", "key4" }, rows.toArray(new String[rows.size()])));
+
+        rows = getIndexed(store, 10, new IndexExpression(firstName, IndexOperator.EQ, UTF8Type.instance.decompose("a")),
+                                     new IndexExpression(age, IndexOperator.GT, Int32Type.instance.decompose(10)),
+                                     new IndexExpression(age, IndexOperator.NOT_EQ, Int32Type.instance.decompose(27)));
+
+        Assert.assertTrue(rows.toString(), Arrays.equals(new String[] { "key1", "key4" }, rows.toArray(new String[rows.size()])));
+
+        rows = getIndexed(store, 10, new IndexExpression(firstName, IndexOperator.EQ, UTF8Type.instance.decompose("a")),
+                                     new IndexExpression(age, IndexOperator.GT, Int32Type.instance.decompose(10)),
+                                     new IndexExpression(age, IndexOperator.NOT_EQ, Int32Type.instance.decompose(27)),
+                                     new IndexExpression(age, IndexOperator.LT, Int32Type.instance.decompose(29)));
+
+        Assert.assertTrue(rows.toString(), Arrays.equals(new String[] { "key1" }, rows.toArray(new String[rows.size()])));
+
+        rows = getIndexed(store, 10, new IndexExpression(firstName, IndexOperator.EQ, UTF8Type.instance.decompose("a")),
+                                     new IndexExpression(age, IndexOperator.GT, Int32Type.instance.decompose(10)),
+                                     new IndexExpression(age, IndexOperator.NOT_EQ, Int32Type.instance.decompose(29)),
+                                     new IndexExpression(age, IndexOperator.LT, Int32Type.instance.decompose(30)));
+
+        Assert.assertTrue(rows.toString(), Arrays.equals(new String[] { "key1", "key2", "key3" }, rows.toArray(new String[rows.size()])));
+
+        /* CQL3 */
+
+        IndexExpression[] expressions = getExpressions("SELECT * FROM %s.%s WHERE first_name = 'a' AND age != 27 ALLOW FILTERING;");
+        rows = getIndexed(store, 10, expressions);
+        Assert.assertTrue(rows.toString(), Arrays.equals(new String[] { "key1", "key4" }, rows.toArray(new String[rows.size()])));
+
+        expressions = getExpressions("SELECT * FROM %s.%s WHERE first_name = 'a' AND age != 27 AND age > 10 ALLOW FILTERING;");
+        rows = getIndexed(store, 10, expressions);
+        Assert.assertTrue(rows.toString(), Arrays.equals(new String[] { "key1", "key4" }, rows.toArray(new String[rows.size()])));
+
+        expressions = getExpressions("SELECT * FROM %s.%s WHERE first_name = 'a' AND age > 10 AND age != 27 AND age < 29 ALLOW FILTERING;");
+        rows = getIndexed(store, 10, expressions);
+        Assert.assertTrue(rows.toString(), Arrays.equals(new String[] { "key1" }, rows.toArray(new String[rows.size()])));
+
+        expressions = getExpressions("SELECT * FROM %s.%s WHERE first_name = 'a' AND age > 10 AND age != 29 AND age < 30 ALLOW FILTERING;");
+        rows = getIndexed(store, 10, expressions);
+        Assert.assertTrue(rows.toString(), Arrays.equals(new String[] { "key1", "key2", "key3" }, rows.toArray(new String[rows.size()])));
     }
 
     private static IndexExpression[] getExpressions(String cqlQuery) throws Exception

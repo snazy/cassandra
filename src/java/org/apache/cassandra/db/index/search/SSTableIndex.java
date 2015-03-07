@@ -9,6 +9,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import org.apache.cassandra.config.ColumnDefinition;
 import org.apache.cassandra.db.DecoratedKey;
 import org.apache.cassandra.db.index.search.container.TokenTree;
+import org.apache.cassandra.db.index.search.plan.Expression;
 import org.apache.cassandra.db.index.utils.SkippableIterator;
 import org.apache.cassandra.db.marshal.AbstractType;
 import org.apache.cassandra.io.FSReadError;
@@ -63,10 +64,9 @@ public class SSTableIndex
         return index.maxKey();
     }
 
-    public SkippableIterator<Long, TokenTree.Token> search(ByteBuffer lower, boolean lowerInclusive,
-                                                           ByteBuffer upper, boolean upperInclusive)
+    public SkippableIterator<Long, TokenTree.Token> search(Expression expression)
     {
-        return index.search(lower, lowerInclusive, upper, upperInclusive);
+        return index.search(expression);
     }
 
     public SSTableReader getSSTable()

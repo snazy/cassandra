@@ -8,8 +8,11 @@ import org.apache.cassandra.db.Column;
 import org.apache.cassandra.db.Row;
 import org.apache.cassandra.db.index.SuffixArraySecondaryIndex;
 import org.apache.cassandra.db.index.SuffixArraySecondaryIndex.IndexMode;
-import org.apache.cassandra.db.index.search.Expression;
+import org.apache.cassandra.db.index.SuffixArraySecondaryIndex.SAView;
+import org.apache.cassandra.db.index.search.SSTableIndex;
+import org.apache.cassandra.db.index.search.SuffixIterator;
 import org.apache.cassandra.db.index.search.container.TokenTree.Token;
+import org.apache.cassandra.db.index.search.memory.IndexMemtable;
 import org.apache.cassandra.db.index.search.tokenization.AbstractTokenizer;
 import org.apache.cassandra.db.index.utils.LazyMergeSortIterator;
 import org.apache.cassandra.db.index.utils.LazyMergeSortIterator.OperationType;
@@ -18,6 +21,7 @@ import org.apache.cassandra.db.marshal.AbstractType;
 import org.apache.cassandra.thrift.IndexExpression;
 import org.apache.cassandra.utils.Pair;
 
+import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.HashMultimap;
 import com.google.common.collect.Iterators;
 import com.google.common.collect.Multimap;
@@ -33,7 +37,7 @@ public class Operation
     protected final AbstractType<?> comparator;
     protected final List<IndexExpression> expressions;
 
-    protected List<Expression.Column> analyzed;
+    protected List<Expression> analyzed;
 
     protected Operation left, right;
 
@@ -130,7 +134,7 @@ public class Operation
      *
      * The algorithm is as follows: for every given expression from analyzed
      * list get corresponding column from the Row:
-     *   - apply {@link org.apache.cassandra.db.index.search.Expression.Column#contains(ByteBuffer)}
+     *   - apply {@link Expression#contains(ByteBuffer)}
      *     method to figure out if it's satisfied;
      *   - apply logical operation between boolean accumulator and current boolean result;
      *   - if result == false and node's operation is AND return right away;
@@ -174,7 +178,7 @@ public class Operation
 
         for (int i = 0; i < analyzed.size(); i++)
         {
-            Expression.Column expression = analyzed.get(i);
+            Expression expression = analyzed.get(i);
 
             Column column = row.cf.getColumn(expression.name);
             if (column == null)
@@ -208,9 +212,9 @@ public class Operation
 
         if (!expressions.isEmpty())
         {
-            analyzed = analyzeGroup(backend, op, expressions);
+            analyzed = analyzeGroup(backend, comparator, op, expressions);
 
-            iterators.add(backend.getMergeIterator(op, analyzed));
+            iterators.add(getMergeIterator(backend, op, analyzed));
             if (right != null)
                 iterators.add(right.complete(backend));
         }
@@ -226,9 +230,10 @@ public class Operation
         return new LazyMergeSortIterator<>(op, iterators);
     }
 
-    private List<Expression.Column> analyzeGroup(SuffixArraySecondaryIndex backend, OperationType op, List<IndexExpression> expressions)
+    @VisibleForTesting
+    protected static List<Expression> analyzeGroup(SuffixArraySecondaryIndex backend, AbstractType<?> comparator, OperationType op, List<IndexExpression> expressions)
     {
-        Multimap<ByteBuffer, Expression.Column> analyzed = HashMultimap.create();
+        Multimap<ByteBuffer, Expression> analyzed = HashMultimap.create();
 
         for (final IndexExpression e : expressions)
         {
@@ -246,7 +251,7 @@ public class Operation
 
             AbstractType<?> validator = column.left.getValidator();
 
-            Collection<Expression.Column> perColumn = analyzed.get(name);
+            Collection<Expression> perColumn = analyzed.get(name);
 
             switch (e.getOp())
             {
@@ -254,37 +259,136 @@ public class Operation
                 // becomes text = "Hello" AND text = "WORLD"
                 // because "space" is always interpreted as a split point.
                 case EQ:
-                    final AbstractTokenizer tokenizer = SuffixArraySecondaryIndex.getTokenizer(column);
-
-                    tokenizer.init(column.left.getIndexOptions());
-                    tokenizer.reset(ByteBuffer.wrap(e.getValue()));
-                    while (tokenizer.hasNext())
+                    Iterator<ByteBuffer> tokens = tokenize(column, e);
+                    while (tokens.hasNext())
                     {
-                        perColumn.add(new Expression.Column(name, comparator, validator)
+                        final ByteBuffer token = tokens.next();
+
+                        perColumn.add(new Expression(name, comparator, validator)
                         {{
-                                add(e.op, tokenizer.next());
+                            add(e.op, token);
                         }});
                     }
                     break;
 
-                // default means "range" operator, combines both bounds together into the single expression,
-                // iff operation of the group is AND, otherwise we are forced to create separate expressions
+                // default means "range" or not-equals operator, combines both bounds together into the single expression,
+                // iff operation of the group is AND, otherwise we are forced to create separate expressions,
+                // not-equals is combined with the range iff operator is AND
                 default:
-                    Expression.Column range;
+                    Expression range;
                     if (perColumn.size() == 0 || op != OperationType.AND)
-                        perColumn.add((range = new Expression.Column(name, comparator, validator)));
+                        perColumn.add((range = new Expression(name, comparator, validator)));
                     else
                         range = Iterators.getLast(perColumn.iterator());
 
-                    range.add(e.op, e.bufferForValue());
+                    tokens = tokenize(column, e);
+                    while (tokens.hasNext())
+                        range.add(e.op, tokens.next());
+
                     break;
             }
         }
 
-        List<Expression.Column> result = new ArrayList<>();
-        for (Map.Entry<ByteBuffer, Expression.Column> e : analyzed.entries())
+        List<Expression> result = new ArrayList<>();
+        for (Map.Entry<ByteBuffer, Expression> e : analyzed.entries())
             result.add(e.getValue());
 
         return result;
+    }
+
+    private Pair<Expression, Set<SSTableIndex>> getPrimaryExpression(SuffixArraySecondaryIndex backend, List<Expression> expressions)
+    {
+        Expression expression = null;
+        Set<SSTableIndex> primaryIndexes = null;
+
+        for (Expression e : expressions)
+        {
+            SAView view = backend.getView(e.name);
+
+            if (view == null)
+                continue;
+
+            Set<SSTableIndex> indexes = view.match(e);
+            if (primaryIndexes == null || primaryIndexes.size() > indexes.size())
+            {
+                primaryIndexes = indexes;
+                expression = e;
+            }
+        }
+
+        return Pair.create(expression, primaryIndexes);
+    }
+
+    /**
+     * Get merge iterator for given set of the pre-analyzed expressions.
+     *
+     * @param op The operation to join expressions on.
+     * @param expressions The expression group to join.
+     *
+     * @return The joined iterator over data collected from given expressions.
+     */
+    private SkippableIterator<Long, Token> getMergeIterator(SuffixArraySecondaryIndex backend, OperationType op, List<Expression> expressions)
+    {
+        Expression primaryExpression;
+        Set<SSTableIndex> primaryIndexes;
+
+        final IndexMemtable currentMemtable = backend.getMemtable();
+
+        // try to compute primary only for AND operation
+        if (op == OperationType.OR)
+        {
+            primaryExpression = null;
+            primaryIndexes = Collections.emptySet();
+        }
+        else
+        {
+            Pair<Expression, Set<SSTableIndex>> primary = getPrimaryExpression(backend, expressions);
+            primaryExpression = primary.left;
+            primaryIndexes = primary.right != null ? primary.right : Collections.<SSTableIndex>emptySet();
+        }
+
+        List<SkippableIterator<Long, Token>> unions = new ArrayList<>(expressions.size());
+        for (Expression e : expressions)
+        {
+            // NO_EQ query should only act as FILTER BY for satisfiedBy(Row) method
+            // because otherwise it would always to though the whole index
+            if (e.getOp() == Expression.Op.NOT_EQ)
+                continue;
+
+            if (primaryExpression != null && primaryExpression.equals(e))
+            {
+                unions.add(new SuffixIterator(primaryExpression,
+                                              currentMemtable.search(primaryExpression),
+                                              primaryIndexes));
+                continue;
+            }
+
+            Set<SSTableIndex> readers = new HashSet<>();
+            SAView view = backend.getView(e.name);
+
+            if (view != null && primaryIndexes.size() > 0)
+            {
+                for (SSTableIndex index : primaryIndexes)
+                    readers.addAll(view.match(index.minKey(), index.maxKey()));
+            }
+            else if (view != null)
+            {
+                readers.addAll(view.match(e));
+            }
+
+            unions.add(new SuffixIterator(e, currentMemtable.search(e), readers));
+        }
+
+        return new LazyMergeSortIterator<>(op, unions);
+    }
+
+    private static Iterator<ByteBuffer> tokenize(Pair<ColumnDefinition, IndexMode> column, final IndexExpression e)
+    {
+        final AbstractTokenizer tokenizer = SuffixArraySecondaryIndex.getTokenizer(column);
+
+        tokenizer.init(column.left.getIndexOptions());
+        tokenizer.reset(ByteBuffer.wrap(e.getValue()));
+
+        return tokenizer;
     }
 }
