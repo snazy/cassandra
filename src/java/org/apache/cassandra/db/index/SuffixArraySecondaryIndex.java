@@ -586,7 +586,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
 
             AbstractBounds<RowPosition> requestedRange = filter.dataRange.keyRange();
 
-            final int maxRows = Math.min(MAX_ROWS, filter.maxRows());
+            final int maxRows = Math.min(MAX_ROWS, filter.maxRows() == Integer.MAX_VALUE ? filter.maxColumns() : filter.maxRows());
             final Set<Row> rows = new TreeSet<>(new Comparator<Row>()
             {
                 @Override
