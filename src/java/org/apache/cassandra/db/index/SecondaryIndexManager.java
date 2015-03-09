@@ -602,6 +602,18 @@ public class SecondaryIndexManager
         return true;
     }
 
+    /**
+     * to be called after a parent column family's sstables have been initially loaded and indexes created/setup,
+     * so that any index may have a chance to create any missing indexes for an sstable.
+     *
+     * @param initialSstables sstables found at process start
+     */
+    public void candidatesForIndexing(Collection<SSTableReader> initialSstables)
+    {
+        for (SecondaryIndex index : allIndexes)
+            index.candidatesForIndexing(initialSstables);
+    }
+
     public static interface Updater
     {
         /** called when constructing the index against pre-existing data */

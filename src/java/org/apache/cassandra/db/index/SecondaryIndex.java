@@ -408,4 +408,15 @@ public abstract class SecondaryIndex
         Future<?> future = CompactionManager.instance.submitIndexBuild(builder);
         FBUtilities.waitOnFuture(future);
     }
+
+    /**
+     * to be called after a parent column family's sstables have been initially loaded and indexes created/setup,
+     * so that any index may have a chance to create any missing indexes for an sstable.
+     *
+     * @param initialSstables sstables found at process start
+     */
+    public void candidatesForIndexing(Collection<SSTableReader> initialSstables)
+    {
+        //nop
+    }
 }
