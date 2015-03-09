@@ -21,11 +21,6 @@ import java.io.*;
 import java.nio.ByteBuffer;
 import java.util.*;
 
-import com.google.common.collect.ImmutableSet;
-import com.google.common.collect.Sets;
-
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.apache.cassandra.config.CFMetaData;
 import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.config.Schema;
@@ -46,6 +41,12 @@ import org.apache.cassandra.utils.IFilter;
 import org.apache.cassandra.utils.Pair;
 import org.apache.cassandra.utils.StreamingHistogram;
 
+import com.google.common.collect.ImmutableList;
+import com.google.common.collect.Sets;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 public class SSTableWriter extends SSTable
 {
     private static final Logger logger = LoggerFactory.getLogger(SSTableWriter.class);
@@ -60,7 +61,7 @@ public class SSTableWriter extends SSTable
     private FileMark dataMark;
     private final SSTableMetadata.Collector sstableMetadataCollector;
 
-    private final Set<SSTableWriterListener> listeners;
+    private final List<SSTableWriterListener> listeners;
 
     public SSTableWriter(String filename, long keyCount, Set<SecondaryIndex> indexes)
     {
@@ -152,7 +153,7 @@ public class SSTableWriter extends SSTable
                 listeners.add(listener);
             }
         }
-        this.listeners = ImmutableSet.copyOf(listeners);
+        this.listeners = ImmutableList.copyOf(listeners);
     }
 
     public void mark()
@@ -165,8 +166,6 @@ public class SSTableWriter extends SSTable
     {
         dataFile.resetAndTruncate(dataMark);
         iwriter.resetAndTruncate();
-
-        //TODO:JEB do something with listeners here...
     }
 
     /**
