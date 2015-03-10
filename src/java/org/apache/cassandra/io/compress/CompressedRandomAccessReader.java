@@ -23,6 +23,9 @@ import java.util.zip.Adler32;
 import java.util.zip.CRC32;
 import java.util.zip.Checksum;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import org.apache.cassandra.io.FSReadError;
 import org.apache.cassandra.io.sstable.CorruptSSTableException;
 import org.apache.cassandra.io.util.CompressedPoolingSegmentedFile;
@@ -36,6 +39,8 @@ import org.apache.cassandra.utils.FBUtilities;
  */
 public class CompressedRandomAccessReader extends RandomAccessReader
 {
+    private static final Logger logger = LoggerFactory.getLogger(CompressedRandomAccessReader.class);
+
     public static CompressedRandomAccessReader open(String path, CompressionMetadata metadata, CompressedPoolingSegmentedFile owner)
     {
         try
@@ -61,6 +66,7 @@ public class CompressedRandomAccessReader extends RandomAccessReader
     }
 
     private final CompressionMetadata metadata;
+    private final ICompressor compressor;
 
     // we read the raw compressed bytes into this buffer, then move the uncompressed ones into super.buffer.
     private ByteBuffer compressed;
@@ -76,7 +82,8 @@ public class CompressedRandomAccessReader extends RandomAccessReader
         super(new File(dataFilePath), metadata.chunkLength(), owner);
         this.metadata = metadata;
         checksum = metadata.hasPostCompressionAdlerChecksums ? new Adler32() : new CRC32();
-        compressed = ByteBuffer.wrap(new byte[metadata.compressor().initialCompressedBufferLength(metadata.chunkLength())]);
+        compressor = metadata.parameters.getCompressorInstance();
+        compressed = ByteBuffer.wrap(new byte[compressor.initialCompressedBufferLength(metadata.chunkLength())]);
     }
 
     @Override
@@ -115,9 +122,9 @@ public class CompressedRandomAccessReader extends RandomAccessReader
         compressed.flip();
         try
         {
-            validBufferBytes = metadata.compressor().uncompress(compressed.array(), 0, chunk.length, buffer, 0);
+            validBufferBytes = compressor.uncompress(compressed.array(), 0, chunk.length, buffer, 0);
         }
-        catch (IOException e)
+        catch (Exception e)
         {
             throw new CorruptBlockException(getPath(), chunk, e);
         }

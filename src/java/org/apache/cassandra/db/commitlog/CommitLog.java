@@ -21,7 +21,6 @@ import java.io.*;
 import java.lang.management.ManagementFactory;
 import java.util.*;
 import java.util.concurrent.Callable;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import javax.management.MBeanServer;
@@ -36,7 +35,6 @@ import org.slf4j.LoggerFactory;
 import org.apache.cassandra.config.Config;
 import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.db.*;
-import org.apache.cassandra.io.FSError;
 import org.apache.cassandra.io.FSWriteError;
 import org.apache.cassandra.metrics.CommitLogMetrics;
 import org.apache.cassandra.net.MessagingService;
@@ -347,24 +345,24 @@ public class CommitLog implements CommitLogMBean
 
         public void run()
         {
-            long totalSize = RowMutation.serializer.serializedSize(rowMutation, MessagingService.current_version) + CommitLogSegment.ENTRY_OVERHEAD_SIZE;
-            if (totalSize > DatabaseDescriptor.getCommitLogSegmentSize())
+            long mutationSize = RowMutation.serializer.serializedSize(rowMutation, MessagingService.current_version);
+            if (mutationSize + SegmentWriter.ENTRY_OVERHEAD_SIZE > DatabaseDescriptor.getCommitLogSegmentSize())
             {
-                logger.warn("Skipping commitlog append of extremely large mutation ({} bytes)", totalSize);
+                logger.warn("Skipping commitlog append of extremely large mutation ({} bytes)", mutationSize);
                 return;
             }
 
-            if (!activeSegment.hasCapacityFor(totalSize))
+            if (!activeSegment.hasCapacityFor(mutationSize))
             {
                 CommitLogSegment oldSegment = activeSegment;
                 activateNextSegment();
                 // Now we can run the user defined command just before switching to the new commit log.
                 // (Do this here instead of in the recycle call so we can get a head start on the archive.)
-                archiver.maybeArchive(oldSegment.getPath(), oldSegment.getName());
+                archiver.maybeArchive(oldSegment);
             }
             try
             {
-                activeSegment.write(rowMutation);
+                activeSegment.write(rowMutation, (int)mutationSize);
             }
             catch (IOException e)
             {

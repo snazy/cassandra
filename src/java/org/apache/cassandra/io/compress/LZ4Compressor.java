@@ -19,6 +19,7 @@ package org.apache.cassandra.io.compress;
 
 import java.io.IOException;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
@@ -100,5 +101,10 @@ public class LZ4Compressor implements ICompressor
     public Set<String> supportedOptions()
     {
         return new HashSet<String>(Arrays.asList(CompressionParameters.CRC_CHECK_CHANCE));
+    }
+
+    public Map<String, String> compressionParameters()
+    {
+        return Collections.EMPTY_MAP;
     }
 }

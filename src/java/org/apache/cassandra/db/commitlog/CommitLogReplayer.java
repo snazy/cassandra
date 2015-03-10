@@ -37,6 +37,7 @@ import org.apache.cassandra.concurrent.Stage;
 import org.apache.cassandra.concurrent.StageManager;
 import org.apache.cassandra.config.Schema;
 import org.apache.cassandra.db.*;
+import org.apache.cassandra.io.EncryptedRandomAccessReader;
 import org.apache.cassandra.io.util.FastByteArrayInputStream;
 import org.apache.cassandra.io.util.FileUtils;
 import org.apache.cassandra.io.util.RandomAccessReader;
@@ -183,14 +184,20 @@ public class CommitLogReplayer
                     file.getPath(),
                     desc.getVersion(),
                     desc.getMessagingVersion());
-        RandomAccessReader reader = RandomAccessReader.open(new File(file.getAbsolutePath()));
+        RandomAccessReader reader = desc.isEncrypted()
+                                    ? new EncryptedRandomAccessReader(new File(file.getAbsolutePath()))
+                                    : RandomAccessReader.open(new File(file.getAbsolutePath()));
         try
         {
             assert reader.length() <= Integer.MAX_VALUE;
             int replayPosition;
+
             if (globalPosition.segment < segment)
             {
-                replayPosition = 0;
+                if (reader instanceof EncryptedRandomAccessReader)
+                    replayPosition = ((EncryptedRandomAccessReader) reader).getInitialOffset();
+                else
+                    replayPosition = 0;
             }
             else if (globalPosition.segment == segment)
             {

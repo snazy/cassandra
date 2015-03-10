@@ -84,7 +84,7 @@ public class SSTableWriter extends SSTable
         if (metadata.getBloomFilterFpChance() < 1.0)
             components.add(Component.FILTER);
 
-        if (metadata.compressionParameters().sstableCompressor != null)
+        if (metadata.compressionParameters().sstableCompressionClass != null)
         {
             components.add(Component.COMPRESSION_INFO);
         }
@@ -317,7 +317,7 @@ public class SSTableWriter extends SSTable
         sstableMetadataCollector.updateMinTimestamp(minTimestampTracker.get());
         sstableMetadataCollector.updateMaxTimestamp(maxTimestampTracker.get());
         sstableMetadataCollector.updateMaxLocalDeletionTime(maxDeletionTimeTracker.get());
-       sstableMetadataCollector.addRowSize(dataFile.getFilePointer() - currentPositions.right);
+        sstableMetadataCollector.addRowSize(dataFile.getFilePointer() - currentPositions.right);
         sstableMetadataCollector.addColumnCount(columnIndexer.writtenAtomCount());
         sstableMetadataCollector.mergeTombstoneHistogram(tombstones);
         sstableMetadataCollector.updateMinColumnNames(minColumnNames);

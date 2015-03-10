@@ -127,9 +127,29 @@ public class CommitLogArchiver
         {
             protected void runMayThrow() throws IOException
             {
-                String command = archiveCommand.replace("%name", name);
-                command = command.replace("%path", path);
-                exec(command);
+                executeCommand(path, name);
+            }
+        }));
+    }
+
+    private void executeCommand(final String path, final String name) throws IOException
+    {
+        String command = archiveCommand.replace("%name", name);
+        command = command.replace("%path", path);
+        exec(command);
+    }
+
+    public void maybeArchive(final CommitLogSegment segment)
+    {
+        if (Strings.isNullOrEmpty(archiveCommand))
+            return;
+
+        archivePending.put(segment.getName(), executor.submit(new WrappedRunnable()
+        {
+            protected void runMayThrow() throws IOException
+            {
+                segment.sync();
+                executeCommand(segment.getPath(), segment.getName());
             }
         }));
     }
@@ -175,7 +195,8 @@ public class CommitLogArchiver
             }
             for (File fromFile : files)
             {
-                File toFile = new File(DatabaseDescriptor.getCommitLogLocation(), new CommitLogDescriptor(CommitLogSegment.getNextId()).fileName());
+                boolean encrypted = fromFile.getName().contains(CommitLogDescriptor.ENCRYPTED_TAG);
+                File toFile = new File(DatabaseDescriptor.getCommitLogLocation(), new CommitLogDescriptor(CommitLogSegment.getNextId(), encrypted).fileName());
                 String command = restoreCommand.replace("%from", fromFile.getPath());
                 command = command.replace("%to", toFile.getPath());
                 try

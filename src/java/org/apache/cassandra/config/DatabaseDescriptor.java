@@ -50,6 +50,7 @@ import org.apache.cassandra.locator.SeedProvider;
 import org.apache.cassandra.net.MessagingService;
 import org.apache.cassandra.scheduler.IRequestScheduler;
 import org.apache.cassandra.scheduler.NoScheduler;
+import org.apache.cassandra.security.CipherFactory;
 import org.apache.cassandra.service.CacheService;
 import org.apache.cassandra.utils.Allocator;
 import org.apache.cassandra.utils.FBUtilities;
@@ -91,6 +92,7 @@ public class DatabaseDescriptor
 
     private static String localDC;
     private static Comparator<InetAddress> localComparator;
+    private static CipherFactory cipherFactory;
 
     private static Class<? extends Allocator> memtableAllocator;
 
@@ -506,6 +508,18 @@ public class DatabaseDescriptor
         }
         if (seedProvider.getSeeds().size() == 0)
             throw new ConfigurationException("The seed provider lists no seeds.");
+
+        //always attempt to load the cipher factory, as we could be in the situation where a user has disabled encryption,
+        // but has existing commitlogs and sstables that are encrypted (and still need to be read)
+        try
+        {
+            cipherFactory = new CipherFactory(config.transparent_data_encryption_options);
+        }
+        catch (Exception e)
+        {
+            if (config.transparent_data_encryption_options.enabled)
+                throw new ConfigurationException("failed to load key provider for transparent data encryption", e);
+        }
     }
 
     private static IEndpointSnitch createEndpointSnitch(String snitchClassName) throws ConfigurationException
@@ -1267,6 +1281,11 @@ public class DatabaseDescriptor
         return conf.client_encryption_options;
     }
 
+    public static TransparentDataEncryptionOptions getTransparentDataEncryptionOptions()
+    {
+        return conf.transparent_data_encryption_options;
+    }
+
     public static int getHintedHandoffThrottleInKB()
     {
         return conf.hinted_handoff_throttle_in_kb;
@@ -1445,5 +1464,10 @@ public class DatabaseDescriptor
         }
         String arch = System.getProperty("os.arch");
         return arch.contains("64") || arch.contains("sparcv9");
+    }
+
+    public static CipherFactory getCipherFactory()
+    {
+        return cipherFactory;
     }
 }

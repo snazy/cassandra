@@ -54,6 +54,7 @@ import org.apache.cassandra.exceptions.InvalidRequestException;
 import org.apache.cassandra.exceptions.RequestValidationException;
 import org.apache.cassandra.exceptions.SyntaxException;
 import org.apache.cassandra.io.compress.CompressionParameters;
+import org.apache.cassandra.io.compress.EncryptingCompressor;
 import org.apache.cassandra.io.compress.LZ4Compressor;
 import org.apache.cassandra.io.sstable.Descriptor;
 import org.apache.cassandra.serializers.MarshalException;
@@ -172,6 +173,7 @@ public final class CFMetaData
                                                      + "PRIMARY KEY (target_id, hint_id, message_version)"
                                                      + ") WITH COMPACT STORAGE "
                                                      + "AND COMPACTION={'class' : 'SizeTieredCompactionStrategy', 'enabled' : false} "
+                                                     + getTableEncryptionOptions()
                                                      + "AND COMMENT='hints awaiting delivery'"
                                                      + "AND gc_grace_seconds=0");
 
@@ -237,6 +239,7 @@ public final class CFMetaData
                                                         + "data blob,"
                                                         + "version int,"
                                                         + ") WITH COMMENT='uncommited batches' AND gc_grace_seconds=0 "
+                                                        + getTableEncryptionOptions()
                                                         + "AND COMPACTION={'class' : 'SizeTieredCompactionStrategy', 'min_threshold' : 2}");
 
     public static final CFMetaData RangeXfersCf = compile("CREATE TABLE " + SystemKeyspace.RANGE_XFERS_CF + " ("
@@ -282,6 +285,17 @@ public final class CFMetaData
                                                                  + "rows_merged map<int, bigint>,"
                                                                  + "PRIMARY KEY (id)"
                                                                  + ") WITH COMMENT='show all compaction history' AND DEFAULT_TIME_TO_LIVE=604800");
+
+    @VisibleForTesting
+    public static String getTableEncryptionOptions()
+    {
+        TransparentDataEncryptionOptions tde = DatabaseDescriptor.getTransparentDataEncryptionOptions();
+        if (!tde.enabled)
+            return "";
+
+        String defaultEncryptorClass = EncryptingCompressor.class.getSimpleName();
+        return String.format("AND COMPRESSION={'sstable_compression':'%s','cipher_algorithm':'%s', 'key_alias':'%s'}", defaultEncryptorClass, tde.cipher, tde.key_alias);
+    }
 
     public enum Caching
     {

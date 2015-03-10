@@ -79,14 +79,14 @@
               value="http://repo2.maven.org/maven2/org/apache/maven/maven-ant-tasks" />
     <!-- details of how and which Maven repository we publish to -->
     <property name="maven.version" value="3.0.3" />
-    <condition property="maven-repository-url" value="https://repository.apache.org/service/local/staging/deploy/maven2">
+    <condition property="maven-repository-url" value="http://athenax01-c.apple.com:8081/artifactory/libs-release-local">
       <isset property="release"/>
     </condition>
-    <condition property="maven-repository-id" value="apache.releases.https">
+    <condition property="maven-repository-id" value="release">
       <isset property="release"/>
     </condition>
-    <property name="maven-repository-url" value="https://repository.apache.org/content/repositories/snapshots"/>
-    <property name="maven-repository-id" value="apache.snapshots.https"/>
+    <property name="maven-repository-url" value="http://athenax01-c.apple.com:8081/artifactory/libs-snapshot-local"/>
+    <property name="maven-repository-id" value="snapshot"/>
 
     <property name="test.timeout" value="60000" />
     <property name="test.long.timeout" value="600000" />
@@ -317,7 +317,7 @@
         <sequential>
           <artifact:mvn mavenVersion="${maven.version}" fork="true" failonerror="true">
             <jvmarg value="-Xmx512m"/>
-            <arg value="org.apache.maven.plugins:maven-gpg-plugin:1.4:sign-and-deploy-file" />
+            <arg value="org.apache.maven.plugins:maven-deploy-plugin:2.8.2:deploy-file" />
             <arg value="-DretryFailedDeploymentCount=5" />
             <arg value="-Durl=${maven-repository-url}" />
             <arg value="-DrepositoryId=${maven-repository-id}" />
@@ -325,7 +325,6 @@
             <arg value="-Dfile=@{file}" />
             <arg value="-Dclassifier=@{classifier}" />
             <arg value="-Dpackaging=@{packaging}" />
-            <arg value="-Papache-release" />
           </artifact:mvn>
         </sequential>
       </macrodef>
@@ -1404,7 +1403,6 @@
 
   <target name="publish"
           depends="mvn-install"
-          if="release"
           description="Publishes the artifacts to the Maven repository">
           
     <!-- the parent -->

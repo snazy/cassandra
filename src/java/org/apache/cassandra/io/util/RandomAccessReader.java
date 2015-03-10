@@ -294,10 +294,11 @@ public class RandomAccessReader extends RandomAccessFile implements FileDataInpu
         if (isEOF())
             return -1; // required by RandomAccessFile
 
-        if (current >= bufferOffset + buffer.length || validBufferBytes == -1)
+        if (current >= bufferOffset + buffer.length || current >= bufferOffset + validBufferBytes || validBufferBytes == -1)
             reBuffer();
 
-        assert current >= bufferOffset && current < bufferOffset + validBufferBytes;
+        assert current >= bufferOffset && current < bufferOffset + validBufferBytes :
+                String.format("current = %d, bufferOffset = %d, buffer.length = %d, validBufferBytes = %d", current, bufferOffset, buffer.length, validBufferBytes);
 
         return ((int) buffer[(int) (current++ - bufferOffset)]) & 0xff;
     }
@@ -322,7 +323,7 @@ public class RandomAccessReader extends RandomAccessFile implements FileDataInpu
         if (isEOF())
             return -1;
 
-        if (current >= bufferOffset + buffer.length || validBufferBytes == -1)
+        if (current >= bufferOffset + buffer.length || current >= bufferOffset + validBufferBytes || validBufferBytes == -1)
             reBuffer();
 
         assert current >= bufferOffset && current < bufferOffset + validBufferBytes
