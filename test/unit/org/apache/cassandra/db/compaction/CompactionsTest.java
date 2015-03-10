@@ -381,7 +381,8 @@ public class CompactionsTest extends SchemaLoader
                                                      0,
                                                      cfs.metadata,
                                                      StorageService.getPartitioner(),
-                                                     SSTableMetadata.createCollector(cfs.metadata.comparator));
+                                                     SSTableMetadata.createCollector(cfs.metadata.comparator),
+                                                     cfs.indexManager.getIndexes());
 
 
             writer.append(Util.dk("0"), cf);
@@ -393,7 +394,8 @@ public class CompactionsTest extends SchemaLoader
                                        0,
                                        cfs.metadata,
                                        StorageService.getPartitioner(),
-                                       SSTableMetadata.createCollector(cfs.metadata.comparator));
+                                       SSTableMetadata.createCollector(cfs.metadata.comparator),
+                                       cfs.indexManager.getIndexes());
 
             writer.append(Util.dk("0"), cf);
             writer.append(Util.dk("1"), cf);

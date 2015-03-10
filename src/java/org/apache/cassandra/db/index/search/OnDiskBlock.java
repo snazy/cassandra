@@ -9,6 +9,11 @@ import static org.apache.cassandra.db.index.search.OnDiskSABuilder.BLOCK_SIZE;
 
 public abstract class OnDiskBlock<T extends Suffix>
 {
+    public static enum BlockType
+    {
+        POINTER, DATA
+    }
+
     // this contains offsets of the suffixes and suffix data
     protected final ByteBuffer blockIndex;
     protected final int blockIndexSize;
@@ -16,9 +21,17 @@ public abstract class OnDiskBlock<T extends Suffix>
     protected final boolean hasCombinedIndex;
     protected final TokenTree combinedIndex;
 
-    public OnDiskBlock(ByteBuffer block)
+    public OnDiskBlock(ByteBuffer block, BlockType blockType)
     {
         blockIndex = block;
+
+        if (blockType == BlockType.POINTER)
+        {
+            hasCombinedIndex = false;
+            combinedIndex = null;
+            blockIndexSize = block.getInt() * 2;
+            return;
+        }
 
         int blockOffset = block.position();
         int combinedIndexOffset = block.getInt(blockOffset + BLOCK_SIZE);
@@ -27,7 +40,6 @@ public abstract class OnDiskBlock<T extends Suffix>
         int blockIndexOffset = blockOffset + BLOCK_SIZE + 4 + combinedIndexOffset;
 
         combinedIndex = hasCombinedIndex ? new TokenTree((ByteBuffer) blockIndex.duplicate().position(blockIndexOffset)) : null;
-
         blockIndexSize = block.getInt() * 2;
     }
 

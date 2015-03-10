@@ -3,23 +3,31 @@ package org.apache.cassandra.db.index.search;
 import java.nio.ByteBuffer;
 
 import org.apache.cassandra.db.index.utils.LazyMergeSortIterator.OperationType;
+import org.apache.cassandra.db.index.utils.TypeUtil;
 import org.apache.cassandra.db.marshal.AbstractType;
 import org.apache.cassandra.db.marshal.AsciiType;
 import org.apache.cassandra.db.marshal.UTF8Type;
 import org.apache.cassandra.thrift.IndexOperator;
 import org.apache.cassandra.utils.ByteBufferUtil;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 public abstract class Expression
 {
+    private static final Logger logger = LoggerFactory.getLogger(Expression.class);
+
     static enum Type
     {
         LOGICAL, COLUMN
     }
 
-    private final Type type;
+    protected final AbstractType<?> comparator;
+    protected final Type type;
 
-    private Expression(Type type)
+    private Expression(AbstractType<?> comparator, Type type)
     {
+        this.comparator = comparator;
         this.type = type;
     }
 
@@ -51,7 +59,7 @@ public abstract class Expression
 
         public Logical(OperationType op)
         {
-            super(Type.LOGICAL);
+            super(null, Type.LOGICAL);
 
             this.op = op;
         }
@@ -72,9 +80,9 @@ public abstract class Expression
         public Bound lower, upper;
         public boolean isEquality;
 
-        public Column(ByteBuffer name, AbstractType<?> validator)
+        public Column(ByteBuffer name, AbstractType<?> comparator, AbstractType<?> validator)
         {
-            super(Type.COLUMN);
+            super(comparator, Type.COLUMN);
 
             this.name = name;
             this.validator = validator;
@@ -112,6 +120,19 @@ public abstract class Expression
 
         public boolean contains(ByteBuffer value)
         {
+            if (!TypeUtil.isValid(value, validator))
+            {
+                int size = value.remaining();
+                if ((value = TypeUtil.tryUpcast(value, validator)) == null)
+                {
+                    logger.error("Can't cast value for {} to size accepted by {}, value size is {} bytes.",
+                                 comparator.getString(name),
+                                 validator,
+                                 size);
+                    return false;
+                }
+            }
+
             if (lower != null)
             {
                 // suffix check

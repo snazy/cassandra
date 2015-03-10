@@ -93,6 +93,7 @@ public class StreamReader
                 // TODO move this to BytesReadTracker
                 session.progress(desc, ProgressInfo.Direction.IN, in.getBytesRead(), totalSize);
             }
+            writer.complete();
             return writer;
         }
         catch (Throwable e)
@@ -113,7 +114,7 @@ public class StreamReader
             throw new IOException("Insufficient disk space to store " + totalSize + " bytes");
         desc = Descriptor.fromFilename(cfs.getTempSSTablePath(cfs.directories.getLocationForDisk(localDir)));
 
-        return new SSTableWriter(desc.filenameFor(Component.DATA), estimatedKeys);
+        return new SSTableWriter(desc.filenameFor(Component.DATA), estimatedKeys, cfs.indexManager.getIndexes());
     }
 
     protected void drain(InputStream dis, long bytesRead) throws IOException

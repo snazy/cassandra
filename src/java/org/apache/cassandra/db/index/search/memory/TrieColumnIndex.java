@@ -8,8 +8,8 @@ import java.util.concurrent.ConcurrentSkipListSet;
 import org.apache.cassandra.config.ColumnDefinition;
 import org.apache.cassandra.db.DecoratedKey;
 import org.apache.cassandra.db.index.SuffixArraySecondaryIndex;
+import org.apache.cassandra.db.index.SuffixArraySecondaryIndex.IndexMode;
 import org.apache.cassandra.db.index.search.Expression;
-import org.apache.cassandra.db.index.search.OnDiskSABuilder.Mode;
 import org.apache.cassandra.db.index.search.container.TokenTree.Token;
 import org.apache.cassandra.db.index.search.tokenization.AbstractTokenizer;
 import org.apache.cassandra.db.index.utils.LazyMergeSortIterator;
@@ -20,17 +20,18 @@ import com.googlecode.concurrenttrees.radix.ConcurrentRadixTree;
 import com.googlecode.concurrenttrees.radix.node.concrete.DefaultByteArrayNodeFactory;
 import com.googlecode.concurrenttrees.suffix.ConcurrentSuffixTree;
 
+import org.apache.cassandra.utils.Pair;
 import org.github.jamm.MemoryMeter;
 
 public class TrieColumnIndex extends ColumnIndex
 {
     private final ConcurrentTrie index;
 
-    public TrieColumnIndex(Mode mode, ColumnDefinition definition)
+    public TrieColumnIndex(IndexMode mode, ColumnDefinition definition)
     {
         super(mode, definition);
 
-        switch (mode)
+        switch (mode.mode)
         {
             case SUFFIX:
                 index = new ConcurrentSuffixTrie(definition);
@@ -50,7 +51,8 @@ public class TrieColumnIndex extends ColumnIndex
     {
         final DecoratedKey dk = StorageService.getPartitioner().decorateKey(key);
 
-        AbstractTokenizer tokenizer = SuffixArraySecondaryIndex.getTokenizer(definition.getValidator());
+        AbstractTokenizer tokenizer = SuffixArraySecondaryIndex.getTokenizer(Pair.create(definition, mode));
+
         tokenizer.init(definition.getIndexOptions());
         tokenizer.reset(value.duplicate());
 

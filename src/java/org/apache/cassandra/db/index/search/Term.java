@@ -21,7 +21,7 @@ public class Term
 
     public ByteBuffer getSuffix(int start)
     {
-        return (ByteBuffer) value.duplicate().position(start);
+        return (ByteBuffer) value.duplicate().position(value.position() + start);
     }
 
     @Override

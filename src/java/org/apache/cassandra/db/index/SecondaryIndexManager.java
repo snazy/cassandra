@@ -33,7 +33,6 @@ import java.util.concurrent.ConcurrentNavigableMap;
 import java.util.concurrent.ConcurrentSkipListMap;
 import java.util.concurrent.Future;
 
-import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Sets;
 import org.apache.commons.lang3.StringUtils;
 import org.slf4j.Logger;
@@ -48,11 +47,7 @@ import org.apache.cassandra.db.Row;
 import org.apache.cassandra.db.SystemKeyspace;
 import org.apache.cassandra.db.filter.ExtendedFilter;
 import org.apache.cassandra.exceptions.ConfigurationException;
-import org.apache.cassandra.io.sstable.Descriptor;
 import org.apache.cassandra.io.sstable.SSTableReader;
-import org.apache.cassandra.io.sstable.SSTableWriterListenable;
-import org.apache.cassandra.io.sstable.SSTableWriterListenable.Source;
-import org.apache.cassandra.io.sstable.SSTableWriterListener;
 import org.apache.cassandra.thrift.IndexExpression;
 import org.apache.cassandra.thrift.IndexType;
 
@@ -93,8 +88,6 @@ public class SecondaryIndexManager
      */
     private final Set<SecondaryIndex> allIndexes;
 
-    private final Set<SSTableWriterListenable> writerListenables;
-
     /**
      * The underlying column family containing the source data for these indexes
      */
@@ -105,7 +98,6 @@ public class SecondaryIndexManager
         indexesByColumn = new ConcurrentSkipListMap<>();
         rowLevelIndexMap = new ConcurrentHashMap<>();
         allIndexes = Collections.newSetFromMap(new ConcurrentHashMap<SecondaryIndex, Boolean>());
-        writerListenables = new HashSet<>();
 
         this.baseCfs = baseCfs;
     }
@@ -257,13 +249,11 @@ public class SecondaryIndexManager
             {
                 allIndexes.remove(index);
                 rowLevelIndexMap.remove(index.getClass());
-                writerListenables.remove(index);
             }
         }
         else
         {
             allIndexes.remove(index);
-            writerListenables.remove(index);
         }
 
         index.removeIndex(column);
@@ -328,9 +318,6 @@ public class SecondaryIndexManager
 
         // Add to all indexes set:
         allIndexes.add(index);
-
-        if (index instanceof SSTableWriterListenable)
-            writerListenables.add((SSTableWriterListenable)index);
 
         // if we're just linking in the index to indexedColumns on an
         // already-built index post-restart, we're done
@@ -616,15 +603,15 @@ public class SecondaryIndexManager
     }
 
     /**
-     * @return a immutable view of the current SSTableWriter listeners
-     * @param descriptor
+     * to be called after a parent column family's sstables have been initially loaded and indexes created/setup,
+     * so that any index may have a chance to create any missing indexes for an sstable.
+     *
+     * @param initialSstables sstables found at process start
      */
-    public Set<SSTableWriterListener> getSSTableWriterListsners(Descriptor descriptor, Source source)
+    public void candidatesForIndexing(Collection<SSTableReader> initialSstables)
     {
-        ImmutableSet.Builder<SSTableWriterListener> set = ImmutableSet.builder();
-        for (SSTableWriterListenable listenable : writerListenables)
-            set.add(listenable.getListener(descriptor, source));
-        return set.build();
+        for (SecondaryIndex index : allIndexes)
+            index.candidatesForIndexing(initialSstables);
     }
 
     public static interface Updater
