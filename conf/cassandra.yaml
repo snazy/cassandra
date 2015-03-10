@@ -711,7 +711,7 @@ preheat_kernel_page_cache: false
 # - indices (TODO)
 # - key/row cache (TODO)
 transparent_data_encryption_options:
-    enabled: true
+    enabled: false
     chunk_length_kb: 64
     cipher: AES/CBC/PKCS5Padding
     key_alias: aes/cbc/pkcs5padding:1
