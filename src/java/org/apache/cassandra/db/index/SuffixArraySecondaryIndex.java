@@ -27,16 +27,15 @@ import org.apache.cassandra.db.index.search.tokenization.NoOpTokenizer;
 import org.apache.cassandra.db.index.search.tokenization.StandardTokenizer;
 import org.apache.cassandra.db.index.utils.LazyMergeSortIterator;
 import org.apache.cassandra.db.index.utils.SkippableIterator;
-import org.apache.cassandra.db.marshal.AbstractType;
-import org.apache.cassandra.db.marshal.AsciiType;
-import org.apache.cassandra.db.marshal.UTF8Type;
+import org.apache.cassandra.db.index.utils.TypeUtil;
+import org.apache.cassandra.db.marshal.*;
 import org.apache.cassandra.dht.*;
 import org.apache.cassandra.exceptions.ConfigurationException;
 import org.apache.cassandra.io.FSReadError;
 import org.apache.cassandra.io.sstable.*;
+import org.apache.cassandra.io.sstable.SSTableWriterListener.Source;
 import org.apache.cassandra.io.util.FileUtils;
 import org.apache.cassandra.notifications.*;
-import org.apache.cassandra.serializers.MarshalException;
 import org.apache.cassandra.service.StorageService;
 import org.apache.cassandra.thrift.IndexExpression;
 import org.apache.cassandra.utils.*;
@@ -61,9 +60,12 @@ import static org.apache.cassandra.db.index.search.OnDiskSABuilder.Mode;
  * ALos, makes the assumption this will be the only index running on the table as part of the query.
  * SIM tends to shoves all indexed columns into one PerRowSecondaryIndex
  */
-public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements SSTableWriterListenable
+public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex
 {
     private static final Logger logger = LoggerFactory.getLogger(SuffixArraySecondaryIndex.class);
+
+    private static final String INDEX_MODE_OPTION = "mode";
+    private static final String INDEX_ANALYZED_OPTION = "analyzed";
 
     private static final Set<AbstractType<?>> TOKENIZABLE_TYPES = new HashSet<AbstractType<?>>()
     {{
@@ -96,7 +98,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
     }
 
     private final BiMap<ByteBuffer, Component> columnDefComponents;
-    private final ConcurrentMap<ByteBuffer, Pair<ColumnDefinition, Mode>> indexedColumns;
+    private final ConcurrentMap<ByteBuffer, Pair<ColumnDefinition, IndexMode>> indexedColumns;
 
     private final ConcurrentMap<ByteBuffer, SADataTracker> intervalTrees;
 
@@ -133,9 +135,12 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
     {
         super.addColumnDef(columnDef);
 
-        String mode = columnDef.getIndexOptions().get("mode");
-        indexedColumns.put(columnDef.name, Pair.create(columnDef, mode == null ? Mode.ORIGINAL : Mode.mode(mode)));
+        Map<String, String> indexOptions = columnDef.getIndexOptions();
 
+        Mode mode = indexOptions.get(INDEX_MODE_OPTION) == null ? Mode.ORIGINAL : Mode.mode(indexOptions.get(INDEX_MODE_OPTION));
+        boolean isAnalyzed = indexOptions.get(INDEX_ANALYZED_OPTION) == null ? false : Boolean.valueOf(indexOptions.get(INDEX_ANALYZED_OPTION));
+
+        indexedColumns.put(columnDef.name, Pair.create(columnDef, new IndexMode(mode, isAnalyzed)));
         addComponent(Collections.singleton(columnDef));
     }
 
@@ -169,7 +174,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
         }
     }
 
-    public Pair<ColumnDefinition, Mode> getIndexDefinition(ByteBuffer columnName)
+    public Pair<ColumnDefinition, IndexMode> getIndexDefinition(ByteBuffer columnName)
     {
         return indexedColumns.get(columnName);
     }
@@ -289,6 +294,26 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
         }
     }
 
+    public void candidatesForIndexing(Collection<SSTableReader> initialSstables)
+    {
+        for (SSTableReader sstable : initialSstables)
+        {
+            SortedSet<ByteBuffer> missingIndexes = new TreeSet<>();
+            for (ColumnDefinition def : getColumnDefs())
+            {
+                File indexFile = new File(sstable.descriptor.filenameFor(String.format(FILE_NAME_FORMAT, def.getIndexName())));
+                if (!indexFile.exists())
+                    missingIndexes.add(def.name);
+            }
+
+            if (!missingIndexes.isEmpty())
+            {
+                logger.info("submitting rebuild of missing indexes, count = {}, for sttable {}", missingIndexes.size(), sstable);
+                CompactionManager.instance.submitIndexBuild(new IndexBuilder(sstable, missingIndexes));
+            }
+        }
+    }
+
     public void delete(DecoratedKey key)
     {
         // called during 'nodetool cleanup' - can punt on impl'ing this
@@ -346,7 +371,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
         return ImmutableList.<Component>builder().addAll(columnDefComponents.values()).build();
     }
 
-    public SSTableWriterListener getListener(Descriptor descriptor, Source source)
+    public SSTableWriterListener getWriterListener(Descriptor descriptor, Source source)
     {
         return new PerSSTableIndexWriter(descriptor, source);
     }
@@ -373,6 +398,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
 
         private DecoratedKey currentKey;
         private long currentKeyPosition;
+        private boolean isComplete;
 
         public PerSSTableIndexWriter(Descriptor descriptor, Source source)
         {
@@ -410,6 +436,8 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
 
         public void complete()
         {
+            if (isComplete)
+                return;
             currentKey = null;
 
             try
@@ -449,12 +477,18 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
             {
                 // drop this data ASAP
                 indexPerColumn.clear();
+                isComplete = true;
             }
         }
 
-        public int compareTo(String o)
+        public int hashCode()
         {
-            return descriptor.generation;
+            return descriptor.hashCode();
+        }
+
+        public boolean equals(Object o)
+        {
+            return !(o == null || !(o instanceof PerSSTableIndexWriter)) && descriptor.equals(((PerSSTableIndexWriter) o).descriptor);
         }
 
         private class ColumnIndex
@@ -471,7 +505,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
             {
                 this.column = column;
                 this.outputFile = outputFile;
-                this.tokenizer = getTokenizer(column.getValidator());
+                this.tokenizer = getTokenizer(indexedColumns.get(column.name));
                 this.tokenizer.init(column.getIndexOptions());
                 this.keysPerTerm = new HashMap<>();
             }
@@ -480,19 +514,52 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
             {
                 final Long keyToken = ((LongToken) key.getToken()).token;
 
-                if (!validate(key.key, term))
+                if (term.remaining() == 0)
                     return;
+
+                if (term.remaining() >= Short.MAX_VALUE)
+                {
+                    logger.error("Rejecting value (size {}, maximum {} bytes) for column {} (analyzed {}) at {} SSTable.",
+                                 term.remaining(),
+                                 Short.MAX_VALUE,
+                                 baseCfs.getComparator().getString(column.name),
+                                 indexedColumns.get(column.name).right.isAnalyzed,
+                                 descriptor);
+                    return;
+                }
+
+                boolean isAdded = false;
 
                 tokenizer.reset(term);
                 while (tokenizer.hasNext())
                 {
                     ByteBuffer token = tokenizer.next();
+
+                    if (!TypeUtil.isValid(token, column.getValidator()))
+                    {
+                        int size = token.remaining();
+                        if ((token = TypeUtil.tryUpcast(token, column.getValidator())) == null)
+                        {
+                            logger.error("({}) Failed to add {} to index for key: {}, value size was {} bytes, validator is {}.",
+                                         outputFile,
+                                         baseCfs.getComparator().getString(column.name),
+                                         keyComparator.getString(key.key),
+                                         size,
+                                         column.getValidator());
+                            continue;
+                        }
+                    }
+
                     TokenTreeBuilder keys = keysPerTerm.get(token);
                     if (keys == null)
                         keysPerTerm.put(token, (keys = new TokenTreeBuilder()));
 
                     keys.add(Pair.create(keyToken, keyPosition));
+                    isAdded = true;
                 }
+
+                if (!isAdded)
+                    return; // non of the generated tokens were added to the index
 
                 /* calculate key range (based on actual key values) for current index */
 
@@ -515,23 +582,6 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
                 keysPerTerm.clear();
 
                 builder.finish(Pair.create(min, max), new File(outputFile));
-            }
-
-            public boolean validate(ByteBuffer key, ByteBuffer term)
-            {
-                try
-                {
-                    column.getValidator().validate(term);
-                    return true;
-                }
-                catch (MarshalException e)
-                {
-                    logger.error(String.format("Can't add column %s to index for key: %s", baseCfs.getComparator().getString(column.name),
-                                                                                           keyComparator.getString(key)),
-                                                                                           e);
-                }
-
-                return false;
             }
         }
     }
@@ -575,7 +625,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
 
             AbstractBounds<RowPosition> requestedRange = filter.dataRange.keyRange();
 
-            final int maxRows = Math.min(MAX_ROWS, filter.maxRows());
+            final int maxRows = Math.min(MAX_ROWS, filter.maxRows() == Integer.MAX_VALUE ? filter.maxColumns() : filter.maxRows());
             final Set<Row> rows = new TreeSet<>(new Comparator<Row>()
             {
                 @Override
@@ -1402,7 +1452,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
             if (!sstable.acquireReference())
                 throw new IllegalStateException("Couldn't acquire reference to the sstable: " + sstable);
 
-            this.indexWriter = new PerSSTableIndexWriter(sstable.descriptor.asTemporary(true), Source.COMPACTION);
+            this.indexWriter = new PerSSTableIndexWriter(sstable.descriptor.asTemporary(true), SSTableWriterListener.Source.COMPACTION);
             this.indexNames = indexesToBuild;
             this.indexes = new ArrayList<ColumnDefinition>()
             {{
@@ -1444,7 +1494,8 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
                     }
                 }
             }
-            finally {
+            finally
+            {
                 sstable.releaseReference();
             }
 
@@ -1467,13 +1518,14 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
 
     public Mode getMode(ByteBuffer columnName)
     {
-        Pair<ColumnDefinition, Mode> definition = indexedColumns.get(columnName);
-        return definition == null ? null : definition.right;
+        Pair<ColumnDefinition, IndexMode> definition = indexedColumns.get(columnName);
+        return definition == null ? null : definition.right.mode;
     }
 
-    public static AbstractTokenizer getTokenizer(AbstractType<?> validator)
+    public static AbstractTokenizer getTokenizer(Pair<ColumnDefinition, IndexMode> column)
     {
-        return TOKENIZABLE_TYPES.contains(validator) ? new StandardTokenizer() : new NoOpTokenizer();
+        assert column != null;
+        return column.right.isAnalyzed && TOKENIZABLE_TYPES.contains(column.left.getValidator()) ? new StandardTokenizer() : new NoOpTokenizer();
     }
 
     private List<Expression.Column> analyzeGroup(OperationType op, IndexExpression... expressions)
@@ -1486,8 +1538,15 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
                 continue;
 
             ByteBuffer name = ByteBuffer.wrap(e.getColumn_name());
-            ColumnDefinition columnDefinition = getColumnDefinition(name);
-            AbstractType<?> validator = columnDefinition.getValidator();
+            Pair<ColumnDefinition, IndexMode> column = indexedColumns.get(name);
+
+            if (column == null)
+            {
+                logger.error("Requested column: " + baseCfs.getComparator().getString(name) + ", wasn't found in the index.");
+                continue;
+            }
+
+            AbstractType<?> validator = column.left.getValidator();
 
             Collection<Expression.Column> perColumn = analyzed.get(name);
 
@@ -1497,13 +1556,12 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
                 // becomes text = "Hello" AND text = "WORLD"
                 // because "space" is always interpreted as a split point.
                 case EQ:
-                    final AbstractTokenizer tokenizer = getTokenizer(validator);
-
-                    tokenizer.init(columnDefinition.getIndexOptions());
+                    final AbstractTokenizer tokenizer = getTokenizer(column);
+                    tokenizer.init(column.left.getIndexOptions());
                     tokenizer.reset(ByteBuffer.wrap(e.getValue()));
                     while (tokenizer.hasNext())
                     {
-                        perColumn.add(new Expression.Column(name, validator)
+                        perColumn.add(new Expression.Column(name, baseCfs.getComparator(), validator)
                         {{
                             add(e.op, tokenizer.next());
                         }});
@@ -1515,7 +1573,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
                 default:
                     Expression.Column range;
                     if (perColumn.size() == 0 || op != OperationType.AND)
-                        perColumn.add((range = new Expression.Column(name, validator)));
+                        perColumn.add((range = new Expression.Column(name, baseCfs.getComparator(), validator)));
                     else
                         range = Iterators.getLast(perColumn.iterator());
 
@@ -1550,6 +1608,18 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex implements S
         public Set<SSTableIndex> getContext()
         {
             return indexes;
+        }
+    }
+
+    public static class IndexMode
+    {
+        public final Mode mode;
+        public final boolean isAnalyzed;
+
+        public IndexMode(Mode mode, boolean isAnalyzed)
+        {
+            this.mode = mode;
+            this.isAnalyzed = isAnalyzed;
         }
     }
 }

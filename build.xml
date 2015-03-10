@@ -398,6 +398,12 @@
           <dependency groupId="io.netty" artifactId="netty" version="3.6.6.Final" />
           <dependency groupId="com.datastax.cassandra" artifactId="cassandra-driver-core" version="2.0.5" />
           <dependency groupId="net.sf.supercsv" artifactId="super-csv" version="2.1.0" />
+
+          <dependency groupId="com.googlecode.concurrent-trees" artifactId="concurrent-trees" version="2.4.0" />
+          <dependency groupId="com.carrotsearch" artifactId="hppc" version="0.5.4" />
+          <dependency groupId="de.jflex" artifactId="jflex" version="1.6.0" />
+          <dependency groupId="net.mintern" artifactId="primitive" version="1.0" />
+          <dependency groupId="com.github.rholder" artifactId="snowball-stemmer" version="1.3.0.581.1" />
         </dependencyManagement>
         <developer id="alakshman" name="Avinash Lakshman"/>
         <developer id="antelder" name="Anthony Elder"/>
@@ -478,6 +484,12 @@
         <dependency groupId="com.addthis.metrics" artifactId="reporter-config"/>
         <dependency groupId="com.thinkaurelius.thrift" artifactId="thrift-server" version="0.3.7"/>
         <dependency groupId="net.sf.supercsv" artifactId="super-csv" version="2.1.0" />
+
+        <dependency groupId="com.googlecode.concurrent-trees" artifactId="concurrent-trees" version="2.4.0" />
+        <dependency groupId="com.carrotsearch" artifactId="hppc" version="0.5.4" />
+        <dependency groupId="de.jflex" artifactId="jflex" version="1.6.0" />
+        <dependency groupId="net.mintern" artifactId="primitive" version="1.0" />
+        <dependency groupId="com.github.rholder" artifactId="snowball-stemmer" version="1.3.0.581.1" />
 
         <dependency groupId="log4j" artifactId="log4j"/>
         <!-- cassandra has a hard dependency on log4j, so force slf4j's log4j provider at runtime -->

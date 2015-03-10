@@ -46,8 +46,10 @@ import org.apache.cassandra.db.marshal.LocalByPartionerType;
 import org.apache.cassandra.dht.LocalToken;
 import org.apache.cassandra.exceptions.ConfigurationException;
 import org.apache.cassandra.io.sstable.Component;
+import org.apache.cassandra.io.sstable.Descriptor;
 import org.apache.cassandra.io.sstable.ReducingKeyIterator;
 import org.apache.cassandra.io.sstable.SSTableReader;
+import org.apache.cassandra.io.sstable.SSTableWriterListener;
 import org.apache.cassandra.service.StorageService;
 import org.apache.cassandra.utils.FBUtilities;
 
@@ -395,10 +397,26 @@ public abstract class SecondaryIndex
         return Collections.EMPTY_LIST;
     }
 
+    public SSTableWriterListener getWriterListener(Descriptor descriptor, SSTableWriterListener.Source source)
+    {
+        return null;
+    }
+
     public void buildIndexes(Collection<SSTableReader> sstables, Set<String> idxNames)
     {
         SecondaryIndexBuilder builder = new SecondaryIndexBuilder(baseCfs, idxNames, new ReducingKeyIterator(sstables));
         Future<?> future = CompactionManager.instance.submitIndexBuild(builder);
         FBUtilities.waitOnFuture(future);
+    }
+
+    /**
+     * to be called after a parent column family's sstables have been initially loaded and indexes created/setup,
+     * so that any index may have a chance to create any missing indexes for an sstable.
+     *
+     * @param initialSstables sstables found at process start
+     */
+    public void candidatesForIndexing(Collection<SSTableReader> initialSstables)
+    {
+        //nop
     }
 }

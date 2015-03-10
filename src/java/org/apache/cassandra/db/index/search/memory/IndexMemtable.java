@@ -11,12 +11,12 @@ import org.apache.cassandra.config.ColumnDefinition;
 import org.apache.cassandra.db.Column;
 import org.apache.cassandra.db.ColumnFamily;
 import org.apache.cassandra.db.index.SuffixArraySecondaryIndex;
+import org.apache.cassandra.db.index.SuffixArraySecondaryIndex.IndexMode;
 import org.apache.cassandra.db.index.search.Expression;
-import org.apache.cassandra.db.index.search.OnDiskSABuilder.Mode;
 import org.apache.cassandra.db.index.search.container.TokenTree;
 import org.apache.cassandra.db.index.utils.SkippableIterator;
+import org.apache.cassandra.db.index.utils.TypeUtil;
 import org.apache.cassandra.db.marshal.AbstractType;
-import org.apache.cassandra.serializers.MarshalException;
 import org.apache.cassandra.utils.Pair;
 
 import org.cliffc.high_scale_lib.NonBlockingHashMap;
@@ -63,7 +63,7 @@ public class IndexMemtable
     {
         for (Column column : cf)
         {
-            Pair<ColumnDefinition, Mode> columnDefinition = backend.getIndexDefinition(column.name());
+            Pair<ColumnDefinition, IndexMode> columnDefinition = backend.getIndexDefinition(column.name());
             if (columnDefinition == null)
                 continue;
 
@@ -78,9 +78,25 @@ public class IndexMemtable
 
             final AbstractType<?> keyValidator = backend.getBaseCfs().metadata.getKeyValidator();
             final AbstractType<?> comparator = backend.getBaseCfs().getComparator();
+            final ColumnDefinition definition = columnDefinition.left;
 
-            if (validate(key, keyValidator, comparator, columnDefinition.left, column.value()))
-                index.add(column.value(), key);
+            ByteBuffer value = column.value();
+
+            if (!TypeUtil.isValid(value, definition.getValidator()))
+            {
+                int size = value.remaining();
+                if ((value = TypeUtil.tryUpcast(value, definition.getValidator())) == null)
+                {
+                    logger.error("Can't add column {} to index for key: {}, value size {} bytes, validator: {}.",
+                                 comparator.getString(definition.name),
+                                 keyValidator.getString(key),
+                                 size,
+                                 definition.getValidator());
+                    return;
+                }
+            }
+
+            index.add(value, key);
         }
     }
 
@@ -88,22 +104,5 @@ public class IndexMemtable
     {
         ColumnIndex index = indexes.get(expression.name);
         return index == null ? null : index.search(expression);
-    }
-
-    public boolean validate(ByteBuffer key, AbstractType<?> keyValidator, AbstractType<?> comparator, ColumnDefinition column, ByteBuffer term)
-    {
-        try
-        {
-            column.getValidator().validate(term);
-            return true;
-        }
-        catch (MarshalException e)
-        {
-            logger.error(String.format("Can't add column %s to index for key: %s", comparator.getString(column.name),
-                                                                                   keyValidator.getString(key)),
-                                                                                   e);
-        }
-
-        return false;
     }
 }

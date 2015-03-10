@@ -59,11 +59,15 @@ public class SSTableExportTest extends SchemaLoader
         return bytesToHex(ByteBufferUtil.bytes(str));
     }
     
+    private static final String KEYSPACE = "Keyspace1";
+    private static final String CF_STANDARD1 = "Standard1";
+    
     public SSTableWriter getDummyWriter() throws IOException
     {
-        File tempSS = tempSSTableFile("Keyspace1", "Standard1");
-        ColumnFamily cfamily = TreeMapBackedSortedColumns.factory.create("Keyspace1", "Standard1");
-        SSTableWriter writer = new SSTableWriter(tempSS.getPath(), 2);
+        File tempSS = tempSSTableFile(KEYSPACE, CF_STANDARD1);
+        ColumnFamily cfamily = TreeMapBackedSortedColumns.factory.create(KEYSPACE, CF_STANDARD1);
+        ColumnFamilyStore cfs = Keyspace.open(KEYSPACE).getColumnFamilyStore(CF_STANDARD1);
+        SSTableWriter writer = new SSTableWriter(tempSS.getPath(), 2, cfs.indexManager.getIndexes());
 
         // Add rowA
         cfamily.addColumn(ByteBufferUtil.bytes("colA"), ByteBufferUtil.bytes("valA"), System.currentTimeMillis());
@@ -87,9 +91,10 @@ public class SSTableExportTest extends SchemaLoader
     @Test
     public void testEnumeratekeys() throws IOException
     {
-        File tempSS = tempSSTableFile("Keyspace1", "Standard1");
-        ColumnFamily cfamily = TreeMapBackedSortedColumns.factory.create("Keyspace1", "Standard1");
-        SSTableWriter writer = new SSTableWriter(tempSS.getPath(), 2);
+        File tempSS = tempSSTableFile(KEYSPACE, "Standard1");
+        ColumnFamily cfamily = TreeMapBackedSortedColumns.factory.create(KEYSPACE, CF_STANDARD1);
+        ColumnFamilyStore cfs = Keyspace.open(KEYSPACE).getColumnFamilyStore(CF_STANDARD1);
+        SSTableWriter writer = new SSTableWriter(tempSS.getPath(), 2, cfs.indexManager.getIndexes());
 
         // Add rowA
         cfamily.addColumn(ByteBufferUtil.bytes("colA"), ByteBufferUtil.bytes("valA"), System.currentTimeMillis());
@@ -122,9 +127,10 @@ public class SSTableExportTest extends SchemaLoader
     @Test
     public void testExportSimpleCf() throws IOException, ParseException
     {
-        File tempSS = tempSSTableFile("Keyspace1", "Standard1");
-        ColumnFamily cfamily = TreeMapBackedSortedColumns.factory.create("Keyspace1", "Standard1");
-        SSTableWriter writer = new SSTableWriter(tempSS.getPath(), 2);
+        File tempSS = tempSSTableFile(KEYSPACE, "Standard1");
+        ColumnFamily cfamily = TreeMapBackedSortedColumns.factory.create(KEYSPACE, CF_STANDARD1);
+        ColumnFamilyStore cfs = Keyspace.open(KEYSPACE).getColumnFamilyStore(CF_STANDARD1);
+        SSTableWriter writer = new SSTableWriter(tempSS.getPath(), 2, cfs.indexManager.getIndexes());
 
         int nowInSec = (int)(System.currentTimeMillis() / 1000) + 42; //live for 42 seconds
         // Add rowA
@@ -177,9 +183,10 @@ public class SSTableExportTest extends SchemaLoader
     @Test
     public void testRoundTripStandardCf() throws IOException
     {
-        File tempSS = tempSSTableFile("Keyspace1", "Standard1");
-        ColumnFamily cfamily = TreeMapBackedSortedColumns.factory.create("Keyspace1", "Standard1");
-        SSTableWriter writer = new SSTableWriter(tempSS.getPath(), 2);
+        File tempSS = tempSSTableFile(KEYSPACE, "Standard1");
+        ColumnFamily cfamily = TreeMapBackedSortedColumns.factory.create(KEYSPACE, CF_STANDARD1);
+        ColumnFamilyStore cfs = Keyspace.open(KEYSPACE).getColumnFamilyStore(CF_STANDARD1);
+        SSTableWriter writer = new SSTableWriter(tempSS.getPath(), 2, cfs.indexManager.getIndexes());
 
         // Add rowA
         cfamily.addColumn(ByteBufferUtil.bytes("name"), ByteBufferUtil.bytes("val"), System.currentTimeMillis());
@@ -198,8 +205,8 @@ public class SSTableExportTest extends SchemaLoader
         SSTableExport.export(reader, new PrintStream(tempJson.getPath()), new String[]{asHex("rowExclude")});
 
         // Import JSON to another SSTable file
-        File tempSS2 = tempSSTableFile("Keyspace1", "Standard1");
-        new SSTableImport().importJson(tempJson.getPath(), "Keyspace1", "Standard1", tempSS2.getPath());
+        File tempSS2 = tempSSTableFile(KEYSPACE, "Standard1");
+        new SSTableImport().importJson(tempJson.getPath(), KEYSPACE, "Standard1", tempSS2.getPath());
 
         reader = SSTableReader.open(Descriptor.fromFilename(tempSS2.getPath()));
         SortedSet<ByteBuffer> names = FBUtilities.singleton(ByteBufferUtil.bytes("name"), cfamily.getComparator());
@@ -217,9 +224,10 @@ public class SSTableExportTest extends SchemaLoader
     @Test
     public void testExportCounterCf() throws IOException, ParseException
     {
-        File tempSS = tempSSTableFile("Keyspace1", "Counter1");
-        ColumnFamily cfamily = TreeMapBackedSortedColumns.factory.create("Keyspace1", "Counter1");
-        SSTableWriter writer = new SSTableWriter(tempSS.getPath(), 2);
+        File tempSS = tempSSTableFile(KEYSPACE, "Counter1");
+        ColumnFamily cfamily = TreeMapBackedSortedColumns.factory.create(KEYSPACE, "Counter1");
+        ColumnFamilyStore cfs = Keyspace.open(KEYSPACE).getColumnFamilyStore("Counter1");
+        SSTableWriter writer = new SSTableWriter(tempSS.getPath(), 2, cfs.indexManager.getIndexes());
 
         // Add rowA
         cfamily.addColumn(new CounterColumn(ByteBufferUtil.bytes("colA"), 42, System.currentTimeMillis()));
@@ -248,9 +256,10 @@ public class SSTableExportTest extends SchemaLoader
     @Test
     public void testEscapingDoubleQuotes() throws IOException, ParseException
     {
-        File tempSS = tempSSTableFile("Keyspace1", "ValuesWithQuotes");
-        ColumnFamily cfamily = TreeMapBackedSortedColumns.factory.create("Keyspace1", "ValuesWithQuotes");
-        SSTableWriter writer = new SSTableWriter(tempSS.getPath(), 2);
+        File tempSS = tempSSTableFile(KEYSPACE, "ValuesWithQuotes");
+        ColumnFamily cfamily = TreeMapBackedSortedColumns.factory.create(KEYSPACE, "ValuesWithQuotes");
+        ColumnFamilyStore cfs = Keyspace.open(KEYSPACE).getColumnFamilyStore("ValuesWithQuotes");
+        SSTableWriter writer = new SSTableWriter(tempSS.getPath(), 2, cfs.indexManager.getIndexes());
 
         // Add rowA
         cfamily.addColumn(new Column(ByteBufferUtil.bytes("data"), UTF8Type.instance.fromString("{\"foo\":\"bar\"}")));
@@ -280,9 +289,10 @@ public class SSTableExportTest extends SchemaLoader
     public void testExportColumnsWithMetadata() throws IOException, ParseException
     {
 
-        File tempSS = tempSSTableFile("Keyspace1", "Standard1");
-        ColumnFamily cfamily = TreeMapBackedSortedColumns.factory.create("Keyspace1", "Standard1");
-        SSTableWriter writer = new SSTableWriter(tempSS.getPath(), 2);
+        File tempSS = tempSSTableFile(KEYSPACE, "Standard1");
+        ColumnFamily cfamily = TreeMapBackedSortedColumns.factory.create(KEYSPACE, CF_STANDARD1);
+        ColumnFamilyStore cfs = Keyspace.open(KEYSPACE).getColumnFamilyStore(CF_STANDARD1);
+        SSTableWriter writer = new SSTableWriter(tempSS.getPath(), 2, cfs.indexManager.getIndexes());
 
         // Add rowA
         cfamily.addColumn(ByteBufferUtil.bytes("colName"), ByteBufferUtil.bytes("val"), System.currentTimeMillis());
@@ -343,9 +353,10 @@ public class SSTableExportTest extends SchemaLoader
     @Test
     public void testColumnNameEqualToDefaultKeyAlias() throws IOException, ParseException
     {
-        File tempSS = tempSSTableFile("Keyspace1", "UUIDKeys");
-        ColumnFamily cfamily = TreeMapBackedSortedColumns.factory.create("Keyspace1", "UUIDKeys");
-        SSTableWriter writer = new SSTableWriter(tempSS.getPath(), 2);
+        File tempSS = tempSSTableFile(KEYSPACE, "UUIDKeys");
+        ColumnFamily cfamily = TreeMapBackedSortedColumns.factory.create(KEYSPACE, "UUIDKeys");
+        ColumnFamilyStore cfs = Keyspace.open(KEYSPACE).getColumnFamilyStore("UUIDKeys");
+        SSTableWriter writer = new SSTableWriter(tempSS.getPath(), 2, cfs.indexManager.getIndexes());
 
         // Add a row
         cfamily.addColumn(column(CFMetaData.DEFAULT_KEY_ALIAS, "not a uuid", 1L));

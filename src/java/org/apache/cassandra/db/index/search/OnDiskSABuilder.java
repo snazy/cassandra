@@ -24,6 +24,9 @@ import com.google.common.collect.AbstractIterator;
 import net.mintern.primitive.Primitive;
 import net.mintern.primitive.comparators.LongComparator;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 /**
  * TODO: when serializing PointerSuffix, maybe it makes sense to encode blockIdx into the size of the suffix string
  * which limits number of blocks to 64K (can address 4GB with 64KB size blocks) and size of the suffix to the 64K
@@ -31,6 +34,8 @@ import net.mintern.primitive.comparators.LongComparator;
  */
 public class OnDiskSABuilder
 {
+    private static final Logger logger = LoggerFactory.getLogger(OnDiskSABuilder.class);
+
     public static enum Mode
     {
         SUFFIX, ORIGINAL, SPARSE;
@@ -111,6 +116,12 @@ public class OnDiskSABuilder
 
     public OnDiskSABuilder add(ByteBuffer term, TokenTreeBuilder keys)
     {
+        if (term.remaining() >= Short.MAX_VALUE)
+        {
+            logger.error("Rejecting value (value size {}, maximum size {} bytes).", term.remaining(), Short.MAX_VALUE);
+            return this;
+        }
+
         sa.add(term, keys);
         return this;
     }

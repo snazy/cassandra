@@ -7,8 +7,8 @@ import java.util.concurrent.ConcurrentSkipListSet;
 
 import org.apache.cassandra.config.ColumnDefinition;
 import org.apache.cassandra.db.DecoratedKey;
+import org.apache.cassandra.db.index.SuffixArraySecondaryIndex.IndexMode;
 import org.apache.cassandra.db.index.search.Expression;
-import org.apache.cassandra.db.index.search.OnDiskSABuilder.Mode;
 import org.apache.cassandra.db.index.search.container.TokenTree.Token;
 import org.apache.cassandra.db.index.utils.LazyMergeSortIterator;
 import org.apache.cassandra.db.index.utils.SkippableIterator;
@@ -20,7 +20,7 @@ public class SkipListColumnIndex extends ColumnIndex
 {
     private final ConcurrentSkipListMap<ByteBuffer, ConcurrentSkipListSet<DecoratedKey>> index;
 
-    public SkipListColumnIndex(Mode mode, ColumnDefinition definition)
+    public SkipListColumnIndex(IndexMode mode, ColumnDefinition definition)
     {
         super(mode, definition);
         index = new ConcurrentSkipListMap<>(definition.getValidator());

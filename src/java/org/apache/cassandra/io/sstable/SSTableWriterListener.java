@@ -6,8 +6,10 @@ import org.apache.cassandra.db.DecoratedKey;
 /**
  * Observer for events in the lifecycle of writing out an sstable.
  */
-public interface SSTableWriterListener extends Comparable<String> //?????? with the Comparable<String>   ?????
+public interface SSTableWriterListener
 {
+    enum Source { MEMTABLE, COMPACTION }
+
     /**
      * called before writing any data to the sstable.
      */

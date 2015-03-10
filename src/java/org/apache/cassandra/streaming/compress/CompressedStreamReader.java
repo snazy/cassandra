@@ -86,6 +86,7 @@ public class CompressedStreamReader extends StreamReader
                     session.progress(desc, ProgressInfo.Direction.IN, cis.getTotalCompressedBytesRead(), totalSize);
                 }
             }
+            writer.complete();
             return writer;
         }
         catch (Throwable e)

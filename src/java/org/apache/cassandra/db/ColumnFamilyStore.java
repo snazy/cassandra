@@ -252,11 +252,16 @@ public class ColumnFamilyStore implements ColumnFamilyStoreMBean
         // scan for sstables corresponding to this cf and load them
         data = new DataTracker(this);
 
+        Collection<SSTableReader> initialSstables;
         if (loadSSTables)
         {
             Directories.SSTableLister sstableFiles = directories.sstableLister().skipTemporary(true);
-            Collection<SSTableReader> sstables = SSTableReader.openAll(sstableFiles.list().entrySet(), metadata, this.partitioner);
-            data.addInitialSSTables(sstables);
+            initialSstables = SSTableReader.openAll(sstableFiles.list().entrySet(), metadata, this.partitioner);
+            data.addInitialSSTables(initialSstables);
+        }
+        else
+        {
+            initialSstables = Collections.emptyList();
         }
 
         if (caching == Caching.ALL || caching == Caching.KEYS_ONLY)
@@ -278,6 +283,7 @@ public class ColumnFamilyStore implements ColumnFamilyStoreMBean
             if (info.getIndexType() != null)
                 indexManager.addIndexedColumn(info);
         }
+        indexManager.candidatesForIndexing(initialSstables);
 
         // register the mbean
         String type = this.partitioner instanceof LocalPartitioner ? "IndexColumnFamilies" : "ColumnFamilies";

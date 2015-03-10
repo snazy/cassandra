@@ -1691,12 +1691,12 @@ public class ColumnFamilyStoreTest extends SchemaLoader
         String ks = "Keyspace1";
         String cf = "Standard3"; // should be empty
 
-        final CFMetaData cfmeta = Schema.instance.getCFMetaData(ks, cf);
+        final ColumnFamilyStore cfs = Keyspace.open(ks).getColumnFamilyStore(cf);
         Directories dir = Directories.create(ks, cf);
         ByteBuffer key = bytes("key");
 
         // 1st sstable
-        SSTableSimpleWriter writer = new SSTableSimpleWriter(dir.getDirectoryForNewSSTables(), cfmeta, StorageService.getPartitioner());
+        SSTableSimpleWriter writer = new SSTableSimpleWriter(dir.getDirectoryForNewSSTables(), cfs.metadata, StorageService.getPartitioner());
         writer.newRow(key);
         writer.addColumn(bytes("col"), bytes("val"), 1);
         writer.close();
@@ -1709,17 +1709,18 @@ public class ColumnFamilyStoreTest extends SchemaLoader
 
         // simulate incomplete compaction
         writer = new SSTableSimpleWriter(dir.getDirectoryForNewSSTables(),
-                                         cfmeta, StorageService.getPartitioner())
+                                         cfs.metadata, StorageService.getPartitioner())
         {
             protected SSTableWriter getWriter()
             {
-                SSTableMetadata.Collector collector = SSTableMetadata.createCollector(cfmeta.comparator);
+                SSTableMetadata.Collector collector = SSTableMetadata.createCollector(cfs.metadata.comparator);
                 collector.addAncestor(sstable1.descriptor.generation); // add ancestor from previously written sstable
                 return new SSTableWriter(makeFilename(directory, metadata.ksName, metadata.cfName),
                                          0,
                                          metadata,
                                          StorageService.getPartitioner(),
-                                         collector);
+                                         collector,
+                                         cfs.indexManager.getIndexes());
             }
         };
         writer.newRow(key);
@@ -1756,26 +1757,27 @@ public class ColumnFamilyStoreTest extends SchemaLoader
         final String ks = "Keyspace1";
         final String cf = "Standard4"; // should be empty
 
-        final CFMetaData cfmeta = Schema.instance.getCFMetaData(ks, cf);
+        final ColumnFamilyStore cfs = Keyspace.open(ks).getColumnFamilyStore(cf);
         Directories dir = Directories.create(ks, cf);
         ByteBuffer key = bytes("key");
 
         // Write SSTable generation 3 that has ancestors 1 and 2
         final Set<Integer> ancestors = Sets.newHashSet(1, 2);
         SSTableSimpleWriter writer = new SSTableSimpleWriter(dir.getDirectoryForNewSSTables(),
-                                                cfmeta, StorageService.getPartitioner())
+                                                cfs.metadata, StorageService.getPartitioner())
         {
             protected SSTableWriter getWriter()
             {
-                SSTableMetadata.Collector collector = SSTableMetadata.createCollector(cfmeta.comparator);
+                SSTableMetadata.Collector collector = SSTableMetadata.createCollector(cfs.metadata.comparator);
                 for (int ancestor : ancestors)
                     collector.addAncestor(ancestor);
                 String file = new Descriptor(directory, ks, cf, 3, true).filenameFor(Component.DATA);
                 return new SSTableWriter(file,
                                          0,
-                                         metadata,
+                                         cfs.metadata,
                                          StorageService.getPartitioner(),
-                                         collector);
+                                         collector,
+                                         cfs.indexManager.getIndexes());
             }
         };
         writer.newRow(key);
