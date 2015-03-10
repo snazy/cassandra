@@ -27,9 +27,8 @@ import org.apache.cassandra.db.index.search.tokenization.NoOpTokenizer;
 import org.apache.cassandra.db.index.search.tokenization.StandardTokenizer;
 import org.apache.cassandra.db.index.utils.LazyMergeSortIterator;
 import org.apache.cassandra.db.index.utils.SkippableIterator;
-import org.apache.cassandra.db.marshal.AbstractType;
-import org.apache.cassandra.db.marshal.AsciiType;
-import org.apache.cassandra.db.marshal.UTF8Type;
+import org.apache.cassandra.db.index.utils.TypeUtil;
+import org.apache.cassandra.db.marshal.*;
 import org.apache.cassandra.dht.*;
 import org.apache.cassandra.exceptions.ConfigurationException;
 import org.apache.cassandra.io.FSReadError;
@@ -37,7 +36,6 @@ import org.apache.cassandra.io.sstable.*;
 import org.apache.cassandra.io.sstable.SSTableWriterListener.Source;
 import org.apache.cassandra.io.util.FileUtils;
 import org.apache.cassandra.notifications.*;
-import org.apache.cassandra.serializers.MarshalException;
 import org.apache.cassandra.service.StorageService;
 import org.apache.cassandra.thrift.IndexExpression;
 import org.apache.cassandra.utils.*;
@@ -516,20 +514,41 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex
             {
                 final Long keyToken = ((LongToken) key.getToken()).token;
 
-                if (!validate(key.key, term))
+                if (term.remaining() == 0)
                     return;
+
+                boolean isAdded = false;
 
                 tokenizer.reset(term);
                 while (tokenizer.hasNext())
                 {
                     ByteBuffer token = tokenizer.next();
 
+                    if (!TypeUtil.isValid(token, column.getValidator()))
+                    {
+                        int size = token.remaining();
+                        if ((token = TypeUtil.tryUpcast(token, column.getValidator())) == null)
+                        {
+                            logger.error("({}) Failed to add {} to index for key: {}, value size was {} bytes, validator is {}.",
+                                         outputFile,
+                                         baseCfs.getComparator().getString(column.name),
+                                         keyComparator.getString(key.key),
+                                         size,
+                                         column.getValidator());
+                            continue;
+                        }
+                    }
+
                     TokenTreeBuilder keys = keysPerTerm.get(token);
                     if (keys == null)
                         keysPerTerm.put(token, (keys = new TokenTreeBuilder()));
 
                     keys.add(Pair.create(keyToken, keyPosition));
+                    isAdded = true;
                 }
+
+                if (!isAdded)
+                    return; // non of the generated tokens were added to the index
 
                 /* calculate key range (based on actual key values) for current index */
 
@@ -552,23 +571,6 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex
                 keysPerTerm.clear();
 
                 builder.finish(Pair.create(min, max), new File(outputFile));
-            }
-
-            public boolean validate(ByteBuffer key, ByteBuffer term)
-            {
-                try
-                {
-                    column.getValidator().validate(term);
-                    return true;
-                }
-                catch (MarshalException e)
-                {
-                    logger.error(String.format("Can't add column %s to index for key: %s", baseCfs.getComparator().getString(column.name),
-                                                                                           keyComparator.getString(key)),
-                                                                                           e);
-                }
-
-                return false;
             }
         }
     }
@@ -1548,7 +1550,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex
                     tokenizer.reset(ByteBuffer.wrap(e.getValue()));
                     while (tokenizer.hasNext())
                     {
-                        perColumn.add(new Expression.Column(name, validator)
+                        perColumn.add(new Expression.Column(name, baseCfs.getComparator(), validator)
                         {{
                             add(e.op, tokenizer.next());
                         }});
@@ -1560,7 +1562,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex
                 default:
                     Expression.Column range;
                     if (perColumn.size() == 0 || op != OperationType.AND)
-                        perColumn.add((range = new Expression.Column(name, validator)));
+                        perColumn.add((range = new Expression.Column(name, baseCfs.getComparator(), validator)));
                     else
                         range = Iterators.getLast(perColumn.iterator());
 

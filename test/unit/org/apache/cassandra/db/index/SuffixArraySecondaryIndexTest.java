@@ -1095,6 +1095,65 @@ public class SuffixArraySecondaryIndexTest extends SchemaLoader
         Assert.assertEquals(0, rows.size());
     }
 
+    @Test
+    public void testInsertWithTypeCasts() throws Exception
+    {
+        testInsertWithTypeCasts(false);
+        cleanupData();
+        testInsertWithTypeCasts(true);
+    }
+
+    public void testInsertWithTypeCasts(boolean forceFlush)
+    {
+        ColumnFamilyStore store = Keyspace.open(KS_NAME).getColumnFamilyStore(CF_NAME);
+
+        final ByteBuffer firstName = UTF8Type.instance.decompose("first_name");
+        final ByteBuffer timestamp = UTF8Type.instance.decompose("timestamp");
+        final ByteBuffer score = UTF8Type.instance.decompose("score");
+
+        RowMutation rm = new RowMutation(KS_NAME, AsciiType.instance.decompose("key1"));
+        rm.add(CF_NAME, firstName, AsciiType.instance.decompose("pavel"), System.currentTimeMillis());
+        rm.add(CF_NAME, timestamp, Int32Type.instance.decompose(10), System.currentTimeMillis());
+        rm.add(CF_NAME, score, DoubleType.instance.decompose(0.1d), System.currentTimeMillis());
+        rm.apply();
+
+        rm = new RowMutation(KS_NAME, AsciiType.instance.decompose("key2"));
+        rm.add(CF_NAME, firstName, AsciiType.instance.decompose("jason"), System.currentTimeMillis());
+        rm.add(CF_NAME, timestamp, (ByteBuffer) ByteBuffer.allocate(2).putShort((short) 9).flip(), System.currentTimeMillis());
+        rm.add(CF_NAME, score, FloatType.instance.decompose(0.2f), System.currentTimeMillis());
+        rm.apply();
+
+        rm = new RowMutation(KS_NAME, AsciiType.instance.decompose("key3"));
+        rm.add(CF_NAME, firstName, AsciiType.instance.decompose("jordan"), System.currentTimeMillis());
+        rm.add(CF_NAME, timestamp, LongType.instance.decompose(11L), System.currentTimeMillis());
+        rm.add(CF_NAME, score, FloatType.instance.decompose(0.3f), System.currentTimeMillis());
+        rm.apply();
+
+        if (forceFlush)
+            store.forceBlockingFlush();
+
+        Set<String> rows = getIndexed(store, 10, new IndexExpression(timestamp, IndexOperator.EQ, LongType.instance.decompose(9L)));
+        Assert.assertTrue(rows.toString(), Arrays.equals(new String[]{ "key2" }, rows.toArray(new String[rows.size()])));
+
+        rows = getIndexed(store, 10, new IndexExpression(timestamp, IndexOperator.EQ, LongType.instance.decompose(10L)));
+        Assert.assertTrue(rows.toString(), Arrays.equals(new String[]{ "key1" }, rows.toArray(new String[rows.size()])));
+
+        rows = getIndexed(store, 10, new IndexExpression(timestamp, IndexOperator.EQ, LongType.instance.decompose(11L)));
+        Assert.assertTrue(rows.toString(), Arrays.equals(new String[]{ "key3" }, rows.toArray(new String[rows.size()])));
+
+        rows = getIndexed(store, 10, new IndexExpression(firstName, IndexOperator.EQ, UTF8Type.instance.decompose("a")),
+                                     new IndexExpression(timestamp, IndexOperator.GTE, LongType.instance.decompose(9L)));
+        Assert.assertTrue(rows.toString(), Arrays.equals(new String[]{ "key1", "key2", "key3" }, rows.toArray(new String[rows.size()])));
+
+        rows = getIndexed(store, 10, new IndexExpression(firstName, IndexOperator.EQ, UTF8Type.instance.decompose("a")),
+                                     new IndexExpression(score, IndexOperator.GTE, DoubleType.instance.decompose(0.1d)));
+        Assert.assertTrue(rows.toString(), Arrays.equals(new String[]{ "key1", "key2", "key3" }, rows.toArray(new String[rows.size()])));
+
+        rows = getIndexed(store, 10, new IndexExpression(firstName, IndexOperator.EQ, UTF8Type.instance.decompose("a")),
+                                     new IndexExpression(score, IndexOperator.GTE, DoubleType.instance.decompose(0.2d)));
+        Assert.assertTrue(rows.toString(), Arrays.equals(new String[]{ "key2", "key3" }, rows.toArray(new String[rows.size()])));
+    }
+
     private static IndexExpression[] getExpressions(String cqlQuery) throws Exception
     {
         ParsedStatement parsedStatement = QueryProcessor.parseStatement(String.format(cqlQuery, KS_NAME, CF_NAME));
