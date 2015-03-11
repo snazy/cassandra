@@ -378,7 +378,7 @@ public class SchemaLoader
                 }});
     }
 
-    private static CFMetaData saIndexedCFMD(String ksName, String cfName)
+    private static CFMetaData saIndexedCFMD(String ksName, final String cfName)
     {
         return new CFMetaData(ksName, cfName, ColumnFamilyType.Standard, UTF8Type.instance, null)
                 .keyValidator(AsciiType.instance)
@@ -419,6 +419,9 @@ public class SchemaLoader
                                 }},
                                 UTF8Type.instance.compose(cName),
                                 null, ColumnDefinition.Type.REGULAR));
+
+                        cName = UTF8Type.instance.decompose("height");
+                        put(cName, ColumnDefinition.regularDef(cName, Int32Type.instance, null));
 
                         cName = UTF8Type.instance.decompose("timestamp");
                         put(cName, new ColumnDefinition(cName,

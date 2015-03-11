@@ -1233,6 +1233,57 @@ public class SuffixArraySecondaryIndexTest extends SchemaLoader
         Assert.assertTrue(rows.toString(), Arrays.equals(new String[] { "key1", "key2", "key3" }, rows.toArray(new String[rows.size()])));
     }
 
+    @Test
+    public void testHavingNonIndexedColumnsInTheClause()
+    {
+        ColumnFamilyStore store = Keyspace.open(KS_NAME).getColumnFamilyStore(CF_NAME);
+
+        final ByteBuffer firstName = UTF8Type.instance.decompose("first_name");
+        final ByteBuffer height = UTF8Type.instance.decompose("height");
+
+        RowMutation rm = new RowMutation(KS_NAME, AsciiType.instance.decompose("key1"));
+        rm.add(CF_NAME, firstName, AsciiType.instance.decompose("pavel"), System.currentTimeMillis());
+        rm.add(CF_NAME, height, Int32Type.instance.decompose(10), System.currentTimeMillis());
+        rm.apply();
+
+        rm = new RowMutation(KS_NAME, AsciiType.instance.decompose("key2"));
+        rm.add(CF_NAME, firstName, AsciiType.instance.decompose("pavel"), System.currentTimeMillis());
+        rm.add(CF_NAME, height, Int32Type.instance.decompose(20), System.currentTimeMillis());
+        rm.apply();
+
+        rm = new RowMutation(KS_NAME, AsciiType.instance.decompose("key3"));
+        rm.add(CF_NAME, firstName, AsciiType.instance.decompose("pavel"), System.currentTimeMillis());
+        rm.add(CF_NAME, height, Int32Type.instance.decompose(30), System.currentTimeMillis());
+        rm.apply();
+
+        store.forceBlockingFlush();
+
+        Set<String> rows;
+
+        rows = getIndexed(store, 10, new IndexExpression(firstName, IndexOperator.EQ, UTF8Type.instance.decompose("a")),
+                                     new IndexExpression(height, IndexOperator.EQ, Int32Type.instance.decompose(10)));
+
+        Assert.assertTrue(rows.toString(), Arrays.equals(new String[] { "key1" }, rows.toArray(new String[rows.size()])));
+
+        rows = getIndexed(store, 10, new IndexExpression(firstName, IndexOperator.EQ, UTF8Type.instance.decompose("a")),
+                                     new IndexExpression(height, IndexOperator.GT, Int32Type.instance.decompose(10)));
+
+        Assert.assertTrue(rows.toString(), Arrays.equals(new String[] { "key2", "key3" }, rows.toArray(new String[rows.size()])));
+
+        rows = getIndexed(store, 10, new IndexExpression(firstName, IndexOperator.EQ, UTF8Type.instance.decompose("a")),
+                                     new IndexExpression(height, IndexOperator.GT, Int32Type.instance.decompose(10)),
+                                     new IndexExpression(height, IndexOperator.LT, Int32Type.instance.decompose(30)));
+
+        Assert.assertTrue(rows.toString(), Arrays.equals(new String[] { "key2" }, rows.toArray(new String[rows.size()])));
+
+        rows = getIndexed(store, 10, new IndexExpression(firstName, IndexOperator.EQ, UTF8Type.instance.decompose("a")),
+                                     new IndexExpression(height, IndexOperator.GT, Int32Type.instance.decompose(10)),
+                                     new IndexExpression(height, IndexOperator.LT, Int32Type.instance.decompose(30)),
+                                     new IndexExpression(height, IndexOperator.NOT_EQ, Int32Type.instance.decompose(20)));
+
+        Assert.assertEquals(0, rows.size());
+    }
+
     private static IndexExpression[] getExpressions(String cqlQuery) throws Exception
     {
         ParsedStatement parsedStatement = QueryProcessor.parseStatement(String.format(cqlQuery, KS_NAME, CF_NAME));

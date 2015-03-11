@@ -30,6 +30,7 @@ public class Expression
     public final ByteBuffer name;
     public final AbstractType<?> comparator, validator;
     public final boolean isSuffix;
+    public final boolean isIndexed;
 
     @VisibleForTesting
     protected Op operation;
@@ -39,10 +40,16 @@ public class Expression
 
     public Expression(ByteBuffer name, AbstractType<?> comparator, AbstractType<?> validator)
     {
+        this(name, comparator, validator, true);
+    }
+
+    public Expression(ByteBuffer name, AbstractType<?> comparator, AbstractType<?> validator, boolean isIndexed)
+    {
         this.name = name;
         this.comparator = comparator;
         this.validator = validator;
         this.isSuffix = validator instanceof AsciiType || validator instanceof UTF8Type;
+        this.isIndexed = isIndexed;
     }
 
     public Expression(Expression other)

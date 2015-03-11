@@ -243,15 +243,22 @@ public class Operation
             ByteBuffer name = ByteBuffer.wrap(e.getColumn_name());
             Pair<ColumnDefinition, IndexMode> column = backend.getIndexDefinition(name);
 
+            Collection<Expression> perColumn = analyzed.get(name);
+
             if (column == null)
             {
-                logger.error("Requested column: " + comparator.getString(name) + ", wasn't found in the index.");
-                continue;
+                ColumnDefinition nonIndexedColumn = backend.getBaseCfs().metadata.getColumnDefinition(name);
+
+                if (nonIndexedColumn == null)
+                {
+                    logger.error("Requested column: " + comparator.getString(name) + ", wasn't found in the schema.");
+                    continue;
+                }
+
+                column = Pair.create(nonIndexedColumn, new IndexMode(null, false));
             }
 
             AbstractType<?> validator = column.left.getValidator();
-
-            Collection<Expression> perColumn = analyzed.get(name);
 
             switch (e.getOp())
             {
@@ -264,7 +271,7 @@ public class Operation
                     {
                         final ByteBuffer token = tokens.next();
 
-                        perColumn.add(new Expression(name, comparator, validator)
+                        perColumn.add(new Expression(name, comparator, validator, column.right.mode != null)
                         {{
                             add(e.op, token);
                         }});
@@ -277,7 +284,7 @@ public class Operation
                 default:
                     Expression range;
                     if (perColumn.size() == 0 || op != OperationType.AND)
-                        perColumn.add((range = new Expression(name, comparator, validator)));
+                        perColumn.add((range = new Expression(name, comparator, validator, column.right.mode != null)));
                     else
                         range = Iterators.getLast(perColumn.iterator());
 
@@ -303,6 +310,9 @@ public class Operation
 
         for (Expression e : expressions)
         {
+            if (!e.isIndexed)
+                continue;
+
             SAView view = backend.getView(e.name);
 
             if (view == null)
@@ -350,9 +360,9 @@ public class Operation
         List<SkippableIterator<Long, Token>> unions = new ArrayList<>(expressions.size());
         for (Expression e : expressions)
         {
-            // NO_EQ query should only act as FILTER BY for satisfiedBy(Row) method
-            // because otherwise it would always to though the whole index
-            if (e.getOp() == Expression.Op.NOT_EQ)
+            // NO_EQ and non-index column query should only act as FILTER BY for satisfiedBy(Row) method
+            // because otherwise it likely to go through the whole index.
+            if (!e.isIndexed || e.getOp() == Expression.Op.NOT_EQ)
                 continue;
 
             if (primaryExpression != null && primaryExpression.equals(e))
