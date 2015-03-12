@@ -13,6 +13,8 @@ import org.apache.cassandra.thrift.IndexOperator;
 import org.apache.cassandra.utils.ByteBufferUtil;
 
 import com.google.common.annotations.VisibleForTesting;
+import com.google.common.base.Function;
+import com.google.common.collect.Iterators;
 import org.apache.commons.lang3.builder.HashCodeBuilder;
 
 import org.slf4j.Logger;
@@ -196,13 +198,21 @@ public class Expression
     @Override
     public String toString()
     {
-        return String.format("Expression.Column{name: %s, op: %s, lower: (%s, %s), upper: (%s, %s)}",
+        return String.format("Expression{name: %s, op: %s, lower: (%s, %s), upper: (%s, %s), exclusions: %s}",
                              name == null ? "null" : UTF8Type.instance.getString(name),
                              operation,
                              lower == null ? "null" : validator.getString(lower.value),
                              lower != null && lower.inclusive,
                              upper == null ? "null" : validator.getString(upper.value),
-                             upper != null && upper.inclusive);
+                             upper != null && upper.inclusive,
+                             Iterators.toString(Iterators.transform(exclusions.iterator(), new Function<ByteBuffer, String>()
+                             {
+                                 @Override
+                                 public String apply(ByteBuffer exclusion)
+                                 {
+                                     return validator.getString(exclusion);
+                                 }
+                             })));
     }
 
     @Override
@@ -211,6 +221,7 @@ public class Expression
         return new HashCodeBuilder().append(name)
                                     .append(operation)
                                     .append(validator)
+                                    .append(isIndexed)
                                     .append(lower).append(upper)
                                     .append(exclusions).build();
     }
@@ -229,6 +240,7 @@ public class Expression
         return Objects.equals(name, o.name)
                 && validator.equals(o.validator)
                 && operation == o.operation
+                && isIndexed == o.isIndexed
                 && Objects.equals(lower, o.lower)
                 && Objects.equals(upper, o.upper)
                 && exclusions.equals(o.exclusions);

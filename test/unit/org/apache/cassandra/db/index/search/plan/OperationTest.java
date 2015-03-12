@@ -304,6 +304,68 @@ public class OperationTest extends SchemaLoader
         }
     }
 
+    @Test
+    public void testAnalyzeNotIndexedButDefinedColumn()
+    {
+        final ByteBuffer firstName = UTF8Type.instance.decompose("first_name");
+        final ByteBuffer height = UTF8Type.instance.decompose("height");
+        final ByteBuffer notDefined = UTF8Type.instance.decompose("not-defined");
+
+        ColumnFamilyStore store = Keyspace.open("sasecondaryindex").getColumnFamilyStore("saindexed1");
+
+        SuffixArraySecondaryIndex index = (SuffixArraySecondaryIndex) store.indexManager.getIndexForColumn(UTF8Type.instance.decompose("first_name"));
+
+        // first_name = 'a' AND height != 10
+        Map<Expression.Op, Expression> expressions;
+        expressions = convert(Operation.analyzeGroup(index, UTF8Type.instance, OperationType.AND,
+                Arrays.asList(new IndexExpression(firstName, IndexOperator.EQ, UTF8Type.instance.decompose("a")),
+                              new IndexExpression(height, IndexOperator.NOT_EQ, Int32Type.instance.decompose(5)))));
+
+        Assert.assertEquals(2, expressions.size());
+
+        Assert.assertEquals(new Expression(height, UTF8Type.instance, Int32Type.instance, false)
+        {{
+                operation = Op.NOT_EQ;
+                exclusions.add(Int32Type.instance.decompose(5));
+        }}, expressions.get(Expression.Op.NOT_EQ));
+
+        expressions = convert(Operation.analyzeGroup(index, UTF8Type.instance, OperationType.AND,
+                Arrays.asList(new IndexExpression(firstName, IndexOperator.EQ, UTF8Type.instance.decompose("a")),
+                              new IndexExpression(height, IndexOperator.GT, Int32Type.instance.decompose(0)),
+                              new IndexExpression(height, IndexOperator.NOT_EQ, Int32Type.instance.decompose(5)))));
+
+        Assert.assertEquals(2, expressions.size());
+
+        Assert.assertEquals(new Expression(height, UTF8Type.instance, Int32Type.instance, false)
+        {{
+                operation = Op.RANGE;
+                lower = new Bound(Int32Type.instance.decompose(0), false);
+                exclusions.add(Int32Type.instance.decompose(5));
+        }}, expressions.get(Expression.Op.RANGE));
+
+        expressions = convert(Operation.analyzeGroup(index, UTF8Type.instance, OperationType.AND,
+                Arrays.asList(new IndexExpression(firstName, IndexOperator.EQ, UTF8Type.instance.decompose("a")),
+                              new IndexExpression(height, IndexOperator.NOT_EQ, Int32Type.instance.decompose(5)),
+                              new IndexExpression(height, IndexOperator.GTE, Int32Type.instance.decompose(0)),
+                              new IndexExpression(height, IndexOperator.LT, Int32Type.instance.decompose(10)))));
+
+        Assert.assertEquals(2, expressions.size());
+
+        Assert.assertEquals(new Expression(height, UTF8Type.instance, Int32Type.instance, false)
+        {{
+                operation = Op.RANGE;
+                lower = new Bound(Int32Type.instance.decompose(0), true);
+                upper = new Bound(Int32Type.instance.decompose(10), false);
+                exclusions.add(Int32Type.instance.decompose(5));
+        }}, expressions.get(Expression.Op.RANGE));
+
+
+        expressions = convert(Operation.analyzeGroup(index, UTF8Type.instance, OperationType.AND,
+                Arrays.asList(new IndexExpression(notDefined, IndexOperator.EQ, UTF8Type.instance.decompose("a")))));
+
+        Assert.assertEquals(0, expressions.size());
+    }
+
     private Map<Expression.Op, Expression> convert(List<Expression> expressions)
     {
         Map<Expression.Op, Expression> converted = new HashMap<>();
