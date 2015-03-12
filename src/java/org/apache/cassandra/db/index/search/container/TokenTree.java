@@ -5,6 +5,7 @@ import java.nio.ByteBuffer;
 import java.util.*;
 
 import org.apache.cassandra.db.DecoratedKey;
+import org.apache.cassandra.db.index.search.Descriptor;
 import org.apache.cassandra.db.index.utils.CombinedValue;
 import org.apache.cassandra.db.index.utils.SkippableIterator;
 import org.apache.cassandra.utils.MergeIterator;
@@ -27,6 +28,7 @@ public class TokenTree
     private static final int LONG_BYTES = Long.SIZE / 8;
     private static final int SHORT_BYTES = Short.SIZE / 8;
 
+    private final Descriptor descriptor;
     private final ByteBuffer file;
     private final int startPos;
     private final long treeMinToken;
@@ -35,13 +37,22 @@ public class TokenTree
 
     public TokenTree(ByteBuffer tokenTree)
     {
+        this(Descriptor.CURRENT, tokenTree);
+    }
 
+    public TokenTree(Descriptor d, ByteBuffer tokenTree)
+    {
+        descriptor = d;
         file = tokenTree;
         startPos = file.position();
 
-        file.position(startPos + TokenTreeBuilder.SHARED_HEADER_BYTES);
-        tokenCount = file.getLong();
 
+        file.position(startPos + TokenTreeBuilder.SHARED_HEADER_BYTES);
+
+        if (!validateMagic())
+            throw new IllegalArgumentException("invalid token tree");
+
+        tokenCount = file.getLong();
         treeMinToken = file.getLong();
         treeMaxToken = file.getLong();
     }
@@ -66,6 +77,19 @@ public class TokenTree
             return tok;
         else
             return null;
+    }
+
+    private boolean validateMagic()
+    {
+        switch (descriptor.version.toString())
+        {
+            case Descriptor.VERSION_AA:
+                return true;
+            case Descriptor.VERSION_AB:
+                return TokenTreeBuilder.AB_MAGIC == file.getShort();
+            default:
+                return false;
+        }
     }
 
     // finds leaf that *could* contain token

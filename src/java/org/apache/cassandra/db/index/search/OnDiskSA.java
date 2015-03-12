@@ -456,7 +456,7 @@ public class OnDiskSA implements Iterable<OnDiskSA.DataSuffix>, Closeable
 
         public OnDiskSuperBlock(ByteBuffer buffer)
         {
-            tokenTree = new TokenTree(buffer);
+            tokenTree = new TokenTree(descriptor, buffer);
         }
 
         public SkippableIterator<Long, Token> iterator()
@@ -571,7 +571,7 @@ public class OnDiskSA implements Iterable<OnDiskSA.DataSuffix>, Closeable
                 return new PrefetchedTokensIterator(getSparseTokens());
 
             int offset = blockEnd + 4 + content.getInt(getDataOffset() + 1);
-            return new TokenTree((ByteBuffer) indexFile.duplicate().position(offset)).iterator(keyFetcher);
+            return new TokenTree(descriptor, (ByteBuffer) indexFile.duplicate().position(offset)).iterator(keyFetcher);
         }
 
         public boolean isSparse()

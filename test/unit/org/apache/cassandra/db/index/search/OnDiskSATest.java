@@ -501,17 +501,26 @@ public class OnDiskSATest
                 put(Int32Type.instance.decompose(5), keyBuilder(1L));
             }};
 
-        OnDiskSABuilder builder = new OnDiskSABuilder(Int32Type.instance, OnDiskSABuilder.Mode.ORIGINAL);
+        OnDiskSABuilder builder1 = new OnDiskSABuilder(Int32Type.instance, OnDiskSABuilder.Mode.ORIGINAL);
+        OnDiskSABuilder builder2 = new OnDiskSABuilder(Int32Type.instance, OnDiskSABuilder.Mode.ORIGINAL);
         for (Map.Entry<ByteBuffer, TokenTreeBuilder> e : data.entrySet())
-            builder.add(e.getKey(), e.getValue());
+        {
+            builder1.add(e.getKey(), e.getValue());
+            builder2.add(e.getKey(), e.getValue());
+        }
 
-        File index = File.createTempFile("on-disk-sa-int", "db");
-        index.deleteOnExit();
+        File index1 = File.createTempFile("on-disk-sa-int", "db");
+        File index2 = File.createTempFile("on-disk-sa-int2", "db");
+        index1.deleteOnExit();
+        index2.deleteOnExit();
 
-        builder.finish(Pair.create(keyAt(1), keyAt(12)), index);
+        builder1.finish(Pair.create(keyAt(1), keyAt(12)), index1);
+        builder2.finish(new Descriptor(Descriptor.VERSION_AA), Pair.create(keyAt(1), keyAt(12)), index2);
 
-        OnDiskSA onDisk = new OnDiskSA(index, Int32Type.instance, new KeyConverter());
-        Assert.assertEquals(onDisk.descriptor.version.version, Descriptor.current_version);
+        OnDiskSA onDisk1 = new OnDiskSA(index1, Int32Type.instance, new KeyConverter());
+        OnDiskSA onDisk2 = new OnDiskSA(index2, Int32Type.instance, new KeyConverter());
+
+        Assert.assertEquals(onDisk1.descriptor.version.version, Descriptor.CURRENT_VERSION);
     }
 
     @Test
@@ -610,7 +619,7 @@ public class OnDiskSATest
 
     private static TokenTreeBuilder keyBuilder(Long... keys)
     {
-        TokenTreeBuilder builder = new TokenTreeBuilder();
+        TokenTreeBuilder builder = new TokenTreeBuilder(Descriptor.CURRENT);
 
         for (final Long key : keys)
         {

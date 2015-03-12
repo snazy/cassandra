@@ -7,6 +7,7 @@ import java.nio.channels.FileChannel;
 import java.util.*;
 
 import org.apache.cassandra.db.DecoratedKey;
+import org.apache.cassandra.db.index.search.Descriptor;
 import org.apache.cassandra.db.index.utils.CombinedValue;
 import org.apache.cassandra.dht.LongToken;
 import org.apache.cassandra.utils.MurmurHash;
@@ -66,7 +67,7 @@ public class TokenTreeTest
     @Test
     public void buildAndIterate() throws Exception
     {
-        final TokenTreeBuilder builder = new TokenTreeBuilder(tokens).finish();
+        final TokenTreeBuilder builder = new TokenTreeBuilder(Descriptor.CURRENT, tokens).finish();
         final Iterator<Pair<Long, LongSet>> tokenIterator = builder.iterator();
         final Iterator<Map.Entry<Long, LongSet>> listIterator = tokens.entrySet().iterator();
         while (tokenIterator.hasNext() && listIterator.hasNext())
@@ -86,7 +87,7 @@ public class TokenTreeTest
     public void buildWithMultipleMapsAndIterate() throws Exception
     {
         final SortedMap<Long, LongSet> merged = new TreeMap<>();
-        final TokenTreeBuilder builder = new TokenTreeBuilder(simpleTokenMap).finish();
+        final TokenTreeBuilder builder = new TokenTreeBuilder(Descriptor.CURRENT, simpleTokenMap).finish();
         builder.add(collidingTokensMap);
 
         merged.putAll(collidingTokensMap);
@@ -138,7 +139,7 @@ public class TokenTreeTest
     @Test
     public void testSerializedSize() throws Exception
     {
-        final TokenTreeBuilder builder = new TokenTreeBuilder(tokens).finish();
+        final TokenTreeBuilder builder = new TokenTreeBuilder(Descriptor.CURRENT, tokens).finish();
 
         final File treeFile = File.createTempFile("token-tree-size-test", "tt");
         treeFile.deleteOnExit();
@@ -155,7 +156,7 @@ public class TokenTreeTest
     @Test
     public void buildSerializeAndIterate() throws Exception
     {
-        final TokenTreeBuilder builder = new TokenTreeBuilder(simpleTokenMap).finish();
+        final TokenTreeBuilder builder = new TokenTreeBuilder(Descriptor.CURRENT, simpleTokenMap).finish();
 
         final File treeFile = File.createTempFile("token-tree-iterate-test1", "tt");
         treeFile.deleteOnExit();
@@ -200,7 +201,7 @@ public class TokenTreeTest
                 }
         }};
 
-        final TokenTreeBuilder builder = new TokenTreeBuilder(toks).finish();
+        final TokenTreeBuilder builder = new TokenTreeBuilder(Descriptor.CURRENT, toks).finish();
         final File treeFile = File.createTempFile("token-tree-get-test", "tt");
         treeFile.deleteOnExit();
 
@@ -228,7 +229,7 @@ public class TokenTreeTest
     @Test
     public void buildSerializeIterateAndSkip() throws Exception
     {
-        final TokenTreeBuilder builder = new TokenTreeBuilder(tokens).finish();
+        final TokenTreeBuilder builder = new TokenTreeBuilder(Descriptor.CURRENT, tokens).finish();
 
         final File treeFile = File.createTempFile("token-tree-iterate-test2", "tt");
         treeFile.deleteOnExit();
@@ -276,7 +277,7 @@ public class TokenTreeTest
     @Test
     public void skipPastEnd() throws Exception
     {
-        final TokenTreeBuilder builder = new TokenTreeBuilder(simpleTokenMap).finish();
+        final TokenTreeBuilder builder = new TokenTreeBuilder(Descriptor.CURRENT, simpleTokenMap).finish();
 
         final File treeFile = File.createTempFile("token-tree-skip-past-test", "tt");
         treeFile.deleteOnExit();

@@ -6,6 +6,7 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.*;
 
+import com.google.common.annotations.VisibleForTesting;
 import org.apache.cassandra.db.DecoratedKey;
 import org.apache.cassandra.db.index.search.container.TokenTreeBuilder;
 import org.apache.cassandra.db.marshal.*;
@@ -143,14 +144,20 @@ public class OnDiskSABuilder
 
     public void finish(Pair<DecoratedKey, DecoratedKey> range, File file) throws FSWriteError
     {
+        finish(Descriptor.CURRENT, range, file);
+    }
+
+    @VisibleForTesting
+    public void finish(Descriptor descriptor, Pair<DecoratedKey, DecoratedKey> range, File file) throws FSWriteError
+    {
         SequentialWriter out = null;
 
         try
         {
             out = new SequentialWriter(file, BLOCK_SIZE, false);
 
-            SuffixIterator suffixes = sa.finish();
-            out.writeUTF(Descriptor.current_version);
+            SuffixIterator suffixes = sa.finish(descriptor);
+            out.writeUTF(descriptor.version.toString());
 
             out.writeShort(suffixSize.size);
 
@@ -166,8 +173,8 @@ public class OnDiskSABuilder
 
             out.skipBytes((int) (BLOCK_SIZE - out.getFilePointer()));
 
-            dataLevel = sa.mode == Mode.SPARSE ? new DataBuilderLevel(out, new MutableDataBlock(sa.mode))
-                                               : new MutableLevel<>(out, new MutableDataBlock(sa.mode));
+            dataLevel = sa.mode == Mode.SPARSE ? new DataBuilderLevel(out, new MutableDataBlock(sa.mode, descriptor), descriptor)
+                                               : new MutableLevel<>(out, new MutableDataBlock(sa.mode, descriptor));
             while (suffixes.hasNext())
             {
                 Pair<ByteBuffer, TokenTreeBuilder> suffix = suffixes.next();
@@ -299,12 +306,12 @@ public class OnDiskSABuilder
             charCount += term.remaining();
         }
 
-        public SuffixIterator finish()
+        public SuffixIterator finish(Descriptor descriptor)
         {
             switch (mode)
             {
                 case SUFFIX:
-                    return new SASuffixIterator();
+                    return new SASuffixIterator(descriptor);
 
                 case ORIGINAL:
                 case SPARSE:
@@ -363,12 +370,14 @@ public class OnDiskSABuilder
             private int current = 0;
             private ByteBuffer lastProcessedSuffix;
             private TokenTreeBuilder container;
+            private final Descriptor descriptor;
 
-            public SASuffixIterator()
+            public SASuffixIterator(Descriptor d)
             {
                 // each element has term index and char position encoded as two 32-bit integers
                 // to avoid binary search per suffix while sorting suffix array.
                 suffixes = new long[charCount];
+                descriptor = d;
 
                 long termIndex = -1, currentTermLength = -1;
                 for (int i = 0; i < charCount; i++)
@@ -435,7 +444,7 @@ public class OnDiskSABuilder
                     if (lastProcessedSuffix == null)
                     {
                         lastProcessedSuffix = suffix.left;
-                        container = new TokenTreeBuilder(suffix.right.getTokens());
+                        container = new TokenTreeBuilder(descriptor, suffix.right.getTokens());
                     }
                     else if (comparator.compare(lastProcessedSuffix, suffix.left) == 0)
                     {
@@ -447,7 +456,7 @@ public class OnDiskSABuilder
                         Pair<ByteBuffer, TokenTreeBuilder> result = finishSuffix();
 
                         lastProcessedSuffix = suffix.left;
-                        container = new TokenTreeBuilder(suffix.right.getTokens());
+                        container = new TokenTreeBuilder(descriptor, suffix.right.getTokens());
 
                         return result;
                     }
@@ -527,11 +536,13 @@ public class OnDiskSABuilder
         /** count of regular data blocks written since current super block was init'd */
         private int dataBlocksCnt;
         private TokenTreeBuilder superBlockTree;
+        private final Descriptor descriptor;
 
-        public DataBuilderLevel(SequentialWriter out, MutableBlock<InMemoryDataSuffix> block)
+        public DataBuilderLevel(SequentialWriter out, MutableBlock<InMemoryDataSuffix> block, Descriptor d)
         {
             super(out, block);
-            superBlockTree = new TokenTreeBuilder();
+            descriptor = d;
+            superBlockTree = new TokenTreeBuilder(descriptor);
         }
 
         public InMemoryPointerSuffix add(InMemoryDataSuffix suffix) throws IOException
@@ -555,7 +566,7 @@ public class OnDiskSABuilder
                 alignToBlock(out);
 
                 dataBlocksCnt = 0;
-                superBlockTree = new TokenTreeBuilder();
+                superBlockTree = new TokenTreeBuilder(descriptor);
             }
         }
 
@@ -632,11 +643,14 @@ public class OnDiskSABuilder
         private int sparseValueSuffixes = 0;
 
         private final List<TokenTreeBuilder> containers = new ArrayList<>();
-        private TokenTreeBuilder combinedIndex = new TokenTreeBuilder();
+        private TokenTreeBuilder combinedIndex;
+        private final Descriptor descriptor;
 
-        public MutableDataBlock(Mode mode)
+        public MutableDataBlock(Mode mode, Descriptor descriptor)
         {
             this.mode = mode;
+            this.descriptor = descriptor;
+            this.combinedIndex = new TokenTreeBuilder(descriptor);
         }
 
         @Override
@@ -688,7 +702,7 @@ public class OnDiskSABuilder
             alignToBlock(out);
 
             containers.clear();
-            combinedIndex = new TokenTreeBuilder();
+            combinedIndex = new TokenTreeBuilder(descriptor);
 
             offset = 0;
             sparseValueSuffixes = 0;

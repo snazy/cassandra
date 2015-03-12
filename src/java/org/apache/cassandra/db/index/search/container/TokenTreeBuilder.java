@@ -5,6 +5,7 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.*;
 
+import org.apache.cassandra.db.index.search.Descriptor;
 import org.apache.cassandra.utils.ByteBufferUtil;
 import org.apache.cassandra.utils.FBUtilities;
 import org.apache.cassandra.utils.Pair;
@@ -32,11 +33,12 @@ public class TokenTreeBuilder
     public static final byte LAST_LEAF_SHIFT = 1;
     public static final byte SHARED_HEADER_BYTES = 19;
     public static final byte ENTRY_TYPE_MASK = 0x03;
+    public static final short AB_MAGIC = 0x5A51;
 
     private final SortedMap<Long, LongSet> tokens = new TreeMap<>();
     private int numBlocks;
 
-
+    private final Descriptor descriptor;
     private Node root;
     private InteriorNode rightmostParent;
     private Leaf leftmostLeaf;
@@ -45,11 +47,14 @@ public class TokenTreeBuilder
     private long treeMinToken;
     private long treeMaxToken;
 
-    public TokenTreeBuilder()
-    {}
-
-    public TokenTreeBuilder(SortedMap<Long, LongSet> data)
+    public TokenTreeBuilder(Descriptor d)
     {
+        this.descriptor = d;
+    }
+
+    public TokenTreeBuilder(Descriptor d, SortedMap<Long, LongSet> data)
+    {
+        this(d);
         add(data);
     }
 
@@ -286,6 +291,7 @@ public class TokenTreeBuilder
             public void serialize(ByteBuffer buf)
             {
                 super.serialize(buf);
+                writeMagic(buf);
                 buf.putLong(tokenCount)
                         .putLong(treeMinToken)
                         .putLong(treeMaxToken);
@@ -296,6 +302,19 @@ public class TokenTreeBuilder
                 // if leaf, set leaf indicator and last leaf indicator (bits 0 & 1)
                 // if not leaf, clear both bits
                 return (byte) ((isLeaf()) ? 3 : 0);
+            }
+
+            protected void writeMagic(ByteBuffer buf)
+            {
+                switch (Descriptor.CURRENT_VERSION)
+                {
+                    case Descriptor.VERSION_AB:
+                        buf.putShort(AB_MAGIC);
+                        break;
+                    default:
+                        break;
+                }
+
             }
         }
 

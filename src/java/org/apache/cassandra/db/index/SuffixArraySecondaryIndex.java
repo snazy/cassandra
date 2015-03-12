@@ -31,6 +31,7 @@ import org.apache.cassandra.dht.*;
 import org.apache.cassandra.exceptions.ConfigurationException;
 import org.apache.cassandra.io.sstable.*;
 import org.apache.cassandra.io.sstable.SSTableWriterListener.Source;
+import org.apache.cassandra.io.sstable.Descriptor;
 import org.apache.cassandra.io.util.FileUtils;
 import org.apache.cassandra.notifications.*;
 import org.apache.cassandra.service.StorageService;
@@ -542,7 +543,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex
 
                     TokenTreeBuilder keys = keysPerTerm.get(token);
                     if (keys == null)
-                        keysPerTerm.put(token, (keys = new TokenTreeBuilder()));
+                        keysPerTerm.put(token, (keys = new TokenTreeBuilder(org.apache.cassandra.db.index.search.Descriptor.CURRENT)));
 
                     keys.add(Pair.create(keyToken, keyPosition));
                     isAdded = true;
