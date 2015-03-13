@@ -17,8 +17,8 @@ import org.apache.cassandra.db.index.utils.SkippableIterator;
 import org.apache.cassandra.service.StorageService;
 
 import com.googlecode.concurrenttrees.radix.ConcurrentRadixTree;
-import com.googlecode.concurrenttrees.radix.node.concrete.DefaultByteArrayNodeFactory;
 import com.googlecode.concurrenttrees.suffix.ConcurrentSuffixTree;
+import com.googlecode.concurrenttrees.radix.node.concrete.SmartArrayBasedNodeFactory;
 
 import org.apache.cassandra.utils.Pair;
 import org.github.jamm.MemoryMeter;
@@ -126,7 +126,7 @@ public class TrieColumnIndex extends ColumnIndex
         private ConcurrentPrefixTrie(ColumnDefinition column)
         {
             super(column);
-            trie = new ConcurrentRadixTree<>(new DefaultByteArrayNodeFactory());
+            trie = new ConcurrentRadixTree<>(new SmartArrayBasedNodeFactory());
         }
 
         @Override
@@ -155,7 +155,7 @@ public class TrieColumnIndex extends ColumnIndex
         private ConcurrentSuffixTrie(ColumnDefinition column)
         {
             super(column);
-            trie = new ConcurrentSuffixTree<>(new DefaultByteArrayNodeFactory());
+            trie = new ConcurrentSuffixTree<>(new SmartArrayBasedNodeFactory());
         }
 
         @Override

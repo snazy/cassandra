@@ -447,6 +447,19 @@ public class SchemaLoader
                                 UTF8Type.instance.compose(cName),
                                 null, ColumnDefinition.Type.REGULAR));
 
+                        cName = UTF8Type.instance.decompose("comment");
+                        put(cName, new ColumnDefinition(cName,
+                                UTF8Type.instance,
+                                IndexType.CUSTOM,
+                                new HashMap<String, String>()
+                                {{
+                                        put(SecondaryIndex.CUSTOM_INDEX_OPTION_NAME, SuffixArraySecondaryIndex.class.getName());
+                                        put("mode", OnDiskSABuilder.Mode.ORIGINAL.toString());
+                                        put("analyzed", "true");
+                                }},
+                                UTF8Type.instance.compose(cName),
+                                null, ColumnDefinition.Type.REGULAR));
+
                         cName = UTF8Type.instance.decompose("/data/output/id");
                         put(cName, new ColumnDefinition(cName,
                                 AsciiType.instance,
