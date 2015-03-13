@@ -5,6 +5,7 @@ import java.nio.ByteBuffer;
 import java.util.*;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -1314,6 +1315,33 @@ public class SuffixArraySecondaryIndexTest extends SchemaLoader
 
         rows = getIndexed(store, 10, new IndexExpression(comment, IndexOperator.EQ, UTF8Type.instance.decompose("normal")));
         Assert.assertTrue(rows.toString(), Arrays.equals(new String[] { "key1" }, rows.toArray(new String[rows.size()])));
+    }
+
+    @Test
+    public void testThatTooBigValueIsRejected()
+    {
+        ColumnFamilyStore store = Keyspace.open(KS_NAME).getColumnFamilyStore(CF_NAME);
+
+        final ByteBuffer comment = UTF8Type.instance.decompose("comment");
+
+        byte[] randomBytes = new byte[2 * Short.MAX_VALUE];
+        ThreadLocalRandom.current().nextBytes(randomBytes);
+
+        final ByteBuffer bigValue = UTF8Type.instance.decompose(new String(randomBytes));
+
+        RowMutation rm = new RowMutation(KS_NAME, AsciiType.instance.decompose("key1"));
+        rm.add(CF_NAME, comment, bigValue, System.currentTimeMillis());
+        rm.apply();
+
+        Set<String> rows;
+
+        rows = getIndexed(store, 10, new IndexExpression(comment, IndexOperator.EQ, bigValue.duplicate()));
+        Assert.assertEquals(0, rows.size());
+
+        store.forceBlockingFlush();
+
+        rows = getIndexed(store, 10, new IndexExpression(comment, IndexOperator.EQ, bigValue.duplicate()));
+        Assert.assertEquals(0, rows.size());
     }
 
     private static IndexExpression[] getExpressions(String cqlQuery) throws Exception

@@ -82,6 +82,16 @@ public class IndexMemtable
 
             ByteBuffer value = column.value();
 
+            if (value.remaining() >= Short.MAX_VALUE)
+            {
+                logger.error("Can't added column {} to index for key: {}, value size {} bytes, max allowed size {} bytes, use analyzed = true (if not yet set) for that column.",
+                             comparator.getString(definition.name),
+                             keyValidator.getString(key),
+                             value.remaining(),
+                             Short.MAX_VALUE);
+                continue;
+            }
+
             if (!TypeUtil.isValid(value, definition.getValidator()))
             {
                 int size = value.remaining();
@@ -92,7 +102,7 @@ public class IndexMemtable
                                  keyValidator.getString(key),
                                  size,
                                  definition.getValidator());
-                    return;
+                    continue;
                 }
             }
 
