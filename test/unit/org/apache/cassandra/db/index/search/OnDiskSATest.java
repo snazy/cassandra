@@ -9,6 +9,8 @@ import org.apache.cassandra.db.DecoratedKey;
 import org.apache.cassandra.db.index.search.container.TokenTree;
 import org.apache.cassandra.db.index.search.container.TokenTreeBuilder;
 import org.apache.cassandra.db.index.search.plan.Expression;
+import org.apache.cassandra.db.index.search.utils.CombinedTerm;
+import org.apache.cassandra.db.index.search.utils.OnDiskSAIterator;
 import org.apache.cassandra.db.index.utils.SkippableIterator;
 import org.apache.cassandra.db.marshal.AbstractType;
 import org.apache.cassandra.db.marshal.Int32Type;
@@ -521,6 +523,7 @@ public class OnDiskSATest
         OnDiskSA onDisk2 = new OnDiskSA(index2, Int32Type.instance, new KeyConverter());
 
         Assert.assertEquals(onDisk1.descriptor.version.version, Descriptor.CURRENT_VERSION);
+        Assert.assertEquals(onDisk2.descriptor.version.version, Descriptor.VERSION_AA);
     }
 
     @Test
@@ -583,6 +586,68 @@ public class OnDiskSATest
             for (int j = 0; j < 3; j++)
                 testSearchRangeWithSuperBlocks(onDiskSA, i, ThreadLocalRandom.current().nextInt(i, 100000));
         }
+    }
+
+    @Test
+    public void testCombiningOfThePartitionedSA() throws Exception
+    {
+        OnDiskSABuilder builderA = new OnDiskSABuilder(LongType.instance, OnDiskSABuilder.Mode.ORIGINAL);
+        OnDiskSABuilder builderB = new OnDiskSABuilder(LongType.instance, OnDiskSABuilder.Mode.ORIGINAL);
+
+        TreeMap<Long, TreeMap<Long, LongSet>> expected = new TreeMap<>();
+
+        for (long i = 0; i <= 100; i++)
+        {
+            TreeMap<Long, LongSet> offsets = expected.get(i);
+            if (offsets == null)
+                expected.put(i, (offsets = new TreeMap<>()));
+
+            builderA.add(LongType.instance.decompose(i), keyBuilder((long) i));
+            offsets.putAll(keyBuilder((long) i).getTokens());
+        }
+
+        for (long i = 50; i < 100; i++)
+        {
+            TreeMap<Long, LongSet> offsets = expected.get(i);
+            if (offsets == null)
+                expected.put(i, (offsets = new TreeMap<>()));
+
+            builderB.add(LongType.instance.decompose(i), keyBuilder(100L + i));
+            offsets.putAll(keyBuilder(100L + i).getTokens());
+        }
+
+        File indexA = File.createTempFile("on-disk-sa-partition-a", ".db");
+        indexA.deleteOnExit();
+
+        File indexB = File.createTempFile("on-disk-sa-partition-b", ".db");
+        indexB.deleteOnExit();
+
+        builderA.finish(Pair.create(keyAt(0), keyAt(100)), indexA);
+        builderB.finish(Pair.create(keyAt(50), keyAt(99)), indexB);
+
+        OnDiskSA a = new OnDiskSA(indexA, LongType.instance, new KeyConverter());
+        OnDiskSA b = new OnDiskSA(indexB, LongType.instance, new KeyConverter());
+
+        SkippableIterator<OnDiskSA.DataSuffix, CombinedTerm> union = OnDiskSAIterator.union(a, b);
+
+        TreeMap<Long, TreeMap<Long, LongSet>> actual = new TreeMap<>();
+        while (union.hasNext())
+        {
+            CombinedTerm term = union.next();
+
+            Long composedTerm = LongType.instance.compose(term.getTerm());
+
+            TreeMap<Long, LongSet> offsets = actual.get(composedTerm);
+            if (offsets == null)
+                actual.put(composedTerm, (offsets = new TreeMap<>()));
+
+            offsets.putAll(term.getTokens());
+        }
+
+        Assert.assertEquals(actual, expected);
+
+        a.close();
+        b.close();
     }
 
     private void testSearchRangeWithSuperBlocks(OnDiskSA onDiskSA, long start, long end)

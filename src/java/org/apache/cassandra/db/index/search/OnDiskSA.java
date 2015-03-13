@@ -553,7 +553,7 @@ public class OnDiskSA implements Iterable<OnDiskSA.DataSuffix>, Closeable
         }
     }
 
-    public class DataSuffix extends Suffix
+    public class DataSuffix extends Suffix implements Comparable<DataSuffix>
     {
         private final TokenTree perBlockIndex;
 
@@ -597,6 +597,12 @@ public class OnDiskSA implements Iterable<OnDiskSA.DataSuffix>, Closeable
             }
 
             return individualTokens;
+        }
+
+        @Override
+        public int compareTo(DataSuffix other)
+        {
+            return other == null ? 1 : compareTo(comparator, other.getSuffix());
         }
     }
 
@@ -769,6 +775,11 @@ public class OnDiskSA implements Iterable<OnDiskSA.DataSuffix>, Closeable
         }
 
         out.println(" ***** end of level printout ***** ");
+    }
+
+    public AbstractType<?> getComparator()
+    {
+        return comparator;
     }
 
     public String getIndexPath()
