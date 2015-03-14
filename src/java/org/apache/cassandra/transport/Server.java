@@ -48,6 +48,7 @@ import io.netty.util.internal.logging.InternalLoggerFactory;
 import io.netty.util.internal.logging.Slf4JLoggerFactory;
 import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.config.EncryptionOptions;
+import org.apache.cassandra.config.Schema;
 import org.apache.cassandra.db.marshal.AbstractType;
 import org.apache.cassandra.metrics.ClientMetrics;
 import org.apache.cassandra.security.SSLFactory;
@@ -397,83 +398,83 @@ public class Server implements CassandraDaemon.Server
 
         public void onCreateKeyspace(String ksName)
         {
-            server.connectionTracker.send(new Event.SchemaChange(Event.SchemaChange.Change.CREATED, ksName));
+            server.connectionTracker.send(new Event.SchemaChange(Event.SchemaChange.Change.CREATED, ksName, Schema.instance.getVersion()));
         }
 
         public void onCreateColumnFamily(String ksName, String cfName)
         {
-            server.connectionTracker.send(new Event.SchemaChange(Event.SchemaChange.Change.CREATED, Event.SchemaChange.Target.TABLE, ksName, cfName));
+            server.connectionTracker.send(new Event.SchemaChange(Event.SchemaChange.Change.CREATED, Event.SchemaChange.Target.TABLE, ksName, cfName, Schema.instance.getVersion()));
         }
 
         public void onCreateUserType(String ksName, String typeName)
         {
-            server.connectionTracker.send(new Event.SchemaChange(Event.SchemaChange.Change.CREATED, Event.SchemaChange.Target.TYPE, ksName, typeName));
+            server.connectionTracker.send(new Event.SchemaChange(Event.SchemaChange.Change.CREATED, Event.SchemaChange.Target.TYPE, ksName, typeName, Schema.instance.getVersion()));
         }
 
         public void onCreateFunction(String ksName, String functionName, List<AbstractType<?>> argTypes)
         {
             server.connectionTracker.send(new Event.SchemaChange(Event.SchemaChange.Change.CREATED, Event.SchemaChange.Target.FUNCTION,
-                                                                 ksName, functionName, AbstractType.asCQLTypeStringList(argTypes)));
+                                                                 ksName, functionName, AbstractType.asCQLTypeStringList(argTypes), Schema.instance.getVersion()));
         }
 
         public void onCreateAggregate(String ksName, String aggregateName, List<AbstractType<?>> argTypes)
         {
             server.connectionTracker.send(new Event.SchemaChange(Event.SchemaChange.Change.CREATED, Event.SchemaChange.Target.AGGREGATE,
-                                                                 ksName, aggregateName, AbstractType.asCQLTypeStringList(argTypes)));
+                                                                 ksName, aggregateName, AbstractType.asCQLTypeStringList(argTypes), Schema.instance.getVersion()));
         }
 
         public void onUpdateKeyspace(String ksName)
         {
-            server.connectionTracker.send(new Event.SchemaChange(Event.SchemaChange.Change.UPDATED, ksName));
+            server.connectionTracker.send(new Event.SchemaChange(Event.SchemaChange.Change.UPDATED, ksName, Schema.instance.getVersion()));
         }
 
         public void onUpdateColumnFamily(String ksName, String cfName, boolean columnsDidChange)
         {
-            server.connectionTracker.send(new Event.SchemaChange(Event.SchemaChange.Change.UPDATED, Event.SchemaChange.Target.TABLE, ksName, cfName));
+            server.connectionTracker.send(new Event.SchemaChange(Event.SchemaChange.Change.UPDATED, Event.SchemaChange.Target.TABLE, ksName, cfName, Schema.instance.getVersion()));
         }
 
         public void onUpdateUserType(String ksName, String typeName)
         {
-            server.connectionTracker.send(new Event.SchemaChange(Event.SchemaChange.Change.UPDATED, Event.SchemaChange.Target.TYPE, ksName, typeName));
+            server.connectionTracker.send(new Event.SchemaChange(Event.SchemaChange.Change.UPDATED, Event.SchemaChange.Target.TYPE, ksName, typeName, Schema.instance.getVersion()));
         }
 
         public void onUpdateFunction(String ksName, String functionName, List<AbstractType<?>> argTypes)
         {
             server.connectionTracker.send(new Event.SchemaChange(Event.SchemaChange.Change.UPDATED, Event.SchemaChange.Target.FUNCTION,
-                                                                 ksName, functionName, AbstractType.asCQLTypeStringList(argTypes)));
+                                                                 ksName, functionName, AbstractType.asCQLTypeStringList(argTypes), Schema.instance.getVersion()));
         }
 
         public void onUpdateAggregate(String ksName, String aggregateName, List<AbstractType<?>> argTypes)
         {
             server.connectionTracker.send(new Event.SchemaChange(Event.SchemaChange.Change.UPDATED, Event.SchemaChange.Target.AGGREGATE,
-                                                                 ksName, aggregateName, AbstractType.asCQLTypeStringList(argTypes)));
+                                                                 ksName, aggregateName, AbstractType.asCQLTypeStringList(argTypes), Schema.instance.getVersion()));
         }
 
         public void onDropKeyspace(String ksName)
         {
-            server.connectionTracker.send(new Event.SchemaChange(Event.SchemaChange.Change.DROPPED, ksName));
+            server.connectionTracker.send(new Event.SchemaChange(Event.SchemaChange.Change.DROPPED, ksName, Schema.instance.getVersion()));
         }
 
         public void onDropColumnFamily(String ksName, String cfName)
         {
-            server.connectionTracker.send(new Event.SchemaChange(Event.SchemaChange.Change.DROPPED, Event.SchemaChange.Target.TABLE, ksName, cfName));
+            server.connectionTracker.send(new Event.SchemaChange(Event.SchemaChange.Change.DROPPED, Event.SchemaChange.Target.TABLE, ksName, cfName, Schema.instance.getVersion()));
         }
 
         public void onDropUserType(String ksName, String typeName)
         {
-            server.connectionTracker.send(new Event.SchemaChange(Event.SchemaChange.Change.DROPPED, Event.SchemaChange.Target.TYPE, ksName, typeName));
+            server.connectionTracker.send(new Event.SchemaChange(Event.SchemaChange.Change.DROPPED, Event.SchemaChange.Target.TYPE, ksName, typeName, Schema.instance.getVersion()));
         }
 
         public void onDropFunction(String ksName, String functionName, List<AbstractType<?>> argTypes)
         {
             server.connectionTracker.send(new Event.SchemaChange(Event.SchemaChange.Change.DROPPED, Event.SchemaChange.Target.FUNCTION,
-                                                                 ksName, functionName, AbstractType.asCQLTypeStringList(argTypes)));
+                                                                 ksName, functionName, AbstractType.asCQLTypeStringList(argTypes), Schema.instance.getVersion()));
         }
 
         public void onDropAggregate(String ksName, String aggregateName, List<AbstractType<?>> argTypes)
         {
             server.connectionTracker.send(new Event.SchemaChange(Event.SchemaChange.Change.DROPPED, Event.SchemaChange.Target.AGGREGATE,
-                                                                 ksName, aggregateName, AbstractType.asCQLTypeStringList(argTypes)));
+                                                                 ksName, aggregateName, AbstractType.asCQLTypeStringList(argTypes), Schema.instance.getVersion()));
         }
     }
 }

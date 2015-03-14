@@ -80,7 +80,7 @@ public abstract class AlterTypeStatement extends SchemaAlteringStatement
 
     public Event.SchemaChange changeEvent()
     {
-        return new Event.SchemaChange(Event.SchemaChange.Change.UPDATED, Event.SchemaChange.Target.TYPE, keyspace(), name.getStringTypeName());
+        return new Event.SchemaChange(Event.SchemaChange.Change.UPDATED, Event.SchemaChange.Target.TYPE, keyspace(), name.getStringTypeName(), Schema.instance.getVersion());
     }
 
     @Override

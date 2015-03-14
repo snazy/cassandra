@@ -21,6 +21,7 @@ import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.util.Iterator;
 import java.util.List;
+import java.util.UUID;
 
 import com.google.common.base.Objects;
 import io.netty.buffer.ByteBuf;
@@ -213,8 +214,9 @@ public abstract class Event
         public final String keyspace;
         public final String name;
         public final List<String> argTypes;
+        public final UUID schemaVersion;
 
-        public SchemaChange(Change change, Target target, String keyspace, String name, List<String> argTypes)
+        public SchemaChange(Change change, Target target, String keyspace, String name, List<String> argTypes, UUID schemaVersion)
         {
             super(Type.SCHEMA_CHANGE);
             this.change = change;
@@ -224,16 +226,17 @@ public abstract class Event
             if (target != Target.KEYSPACE)
                 assert this.name != null : "Table, type, function or aggregate name should be set for non-keyspace schema change events";
             this.argTypes = argTypes;
+            this.schemaVersion = schemaVersion;
         }
 
-        public SchemaChange(Change change, Target target, String keyspace, String name)
+        public SchemaChange(Change change, Target target, String keyspace, String name, UUID schemaVersion)
         {
-            this(change, target, keyspace, name, null);
+            this(change, target, keyspace, name, null, schemaVersion);
         }
 
-        public SchemaChange(Change change, String keyspace)
+        public SchemaChange(Change change, String keyspace, UUID schemaVersion)
         {
-            this(change, Target.KEYSPACE, keyspace, null);
+            this(change, Target.KEYSPACE, keyspace, null, schemaVersion);
         }
 
         // Assumes the type has already been deserialized
@@ -248,14 +251,17 @@ public abstract class Event
                 List<String> argTypes = null;
                 if (target == Target.FUNCTION || target == Target.AGGREGATE)
                     argTypes = CBUtil.readStringList(cb);
+                UUID schemaVersion = null;
+                if (version >= 4)
+                    schemaVersion = CBUtil.readUUID(cb);
 
-                return new SchemaChange(change, target, keyspace, tableOrType, argTypes);
+                return new SchemaChange(change, target, keyspace, tableOrType, argTypes, schemaVersion);
             }
             else
             {
                 String keyspace = CBUtil.readString(cb);
                 String table = CBUtil.readString(cb);
-                return new SchemaChange(change, table.isEmpty() ? Target.KEYSPACE : Target.TABLE, keyspace, table.isEmpty() ? null : table);
+                return new SchemaChange(change, table.isEmpty() ? Target.KEYSPACE : Target.TABLE, keyspace, table.isEmpty() ? null : table, null);
             }
         }
 
@@ -271,6 +277,7 @@ public abstract class Event
                     CBUtil.writeString(keyspace, dest);
                     CBUtil.writeString(name, dest);
                     CBUtil.writeStringList(argTypes, dest);
+                    CBUtil.writeUUID(schemaVersion, dest);
                 }
                 else
                 {
@@ -291,6 +298,8 @@ public abstract class Event
                 CBUtil.writeString(keyspace, dest);
                 if (target != Target.KEYSPACE)
                     CBUtil.writeString(name, dest);
+                if (version >= 4)
+                    CBUtil.writeUUID(schemaVersion, dest);
             }
             else
             {
@@ -320,7 +329,8 @@ public abstract class Event
                                + CBUtil.sizeOfEnumValue(target)
                                + CBUtil.sizeOfString(keyspace)
                                + CBUtil.sizeOfString(name)
-                               + CBUtil.sizeOfStringList(argTypes);
+                               + CBUtil.sizeOfStringList(argTypes)
+                               + CBUtil.sizeOfUUID(schemaVersion);
                 if (version >= 3)
                     return CBUtil.sizeOfEnumValue(Change.UPDATED)
                            + CBUtil.sizeOfEnumValue(Target.KEYSPACE)
@@ -338,6 +348,9 @@ public abstract class Event
 
                 if (target != Target.KEYSPACE)
                     size += CBUtil.sizeOfString(name);
+
+                if (version >= 4)
+                    size += CBUtil.sizeOfUUID(schemaVersion);
 
                 return size;
             }
@@ -374,13 +387,15 @@ public abstract class Event
                 }
                 sb.append(')');
             }
+            if (schemaVersion != null)
+                sb.append(", version=").append(schemaVersion);
             return sb.toString();
         }
 
         @Override
         public int hashCode()
         {
-            return Objects.hashCode(change, target, keyspace, name, argTypes);
+            return Objects.hashCode(change, target, keyspace, name, argTypes, schemaVersion);
         }
 
         @Override
@@ -394,7 +409,8 @@ public abstract class Event
                 && Objects.equal(target, scc.target)
                 && Objects.equal(keyspace, scc.keyspace)
                 && Objects.equal(name, scc.name)
-                && Objects.equal(argTypes, scc.argTypes);
+                && Objects.equal(argTypes, scc.argTypes)
+                && Objects.equal(schemaVersion, scc.schemaVersion);
         }
     }
 }

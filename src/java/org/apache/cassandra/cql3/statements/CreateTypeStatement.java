@@ -94,7 +94,7 @@ public class CreateTypeStatement extends SchemaAlteringStatement
 
     public Event.SchemaChange changeEvent()
     {
-        return new Event.SchemaChange(Event.SchemaChange.Change.CREATED, Event.SchemaChange.Target.TYPE, keyspace(), name.getStringTypeName());
+        return new Event.SchemaChange(Event.SchemaChange.Change.CREATED, Event.SchemaChange.Target.TYPE, keyspace(), name.getStringTypeName(), Schema.instance.getVersion());
     }
 
     @Override

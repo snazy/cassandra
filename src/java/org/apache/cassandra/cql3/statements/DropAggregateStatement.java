@@ -21,6 +21,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 import org.apache.cassandra.auth.Permission;
+import org.apache.cassandra.config.Schema;
 import org.apache.cassandra.cql3.CQL3Type;
 import org.apache.cassandra.cql3.functions.*;
 import org.apache.cassandra.db.marshal.AbstractType;
@@ -80,7 +81,8 @@ public final class DropAggregateStatement extends SchemaAlteringStatement
     public Event.SchemaChange changeEvent()
     {
         return new Event.SchemaChange(Event.SchemaChange.Change.DROPPED, Event.SchemaChange.Target.AGGREGATE,
-                                      old.name().keyspace, old.name().name, AbstractType.asCQLTypeStringList(old.argTypes()));
+                                      old.name().keyspace, old.name().name, AbstractType.asCQLTypeStringList(old.argTypes()),
+                                      Schema.instance.getVersion());
     }
 
     public boolean announceMigration(boolean isLocalOnly) throws RequestValidationException

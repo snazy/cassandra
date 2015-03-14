@@ -116,7 +116,7 @@ public class CreateTableStatement extends SchemaAlteringStatement
 
     public Event.SchemaChange changeEvent()
     {
-        return new Event.SchemaChange(Event.SchemaChange.Change.CREATED, Event.SchemaChange.Target.TABLE, keyspace(), columnFamily());
+        return new Event.SchemaChange(Event.SchemaChange.Change.CREATED, Event.SchemaChange.Target.TABLE, keyspace(), columnFamily(), Schema.instance.getVersion());
     }
 
     protected void grantPermissionsToCreator(QueryState state)

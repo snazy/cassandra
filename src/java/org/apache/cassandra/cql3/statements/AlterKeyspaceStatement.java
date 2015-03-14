@@ -92,6 +92,6 @@ public class AlterKeyspaceStatement extends SchemaAlteringStatement
 
     public Event.SchemaChange changeEvent()
     {
-        return new Event.SchemaChange(Event.SchemaChange.Change.UPDATED, keyspace());
+        return new Event.SchemaChange(Event.SchemaChange.Change.UPDATED, keyspace(), Schema.instance.getVersion());
     }
 }

@@ -17,6 +17,7 @@
  */
 package org.apache.cassandra.cql3.statements;
 
+import org.apache.cassandra.config.Schema;
 import org.apache.cassandra.exceptions.ConfigurationException;
 import org.apache.cassandra.exceptions.InvalidRequestException;
 import org.apache.cassandra.exceptions.RequestValidationException;
@@ -72,6 +73,6 @@ public class DropKeyspaceStatement extends SchemaAlteringStatement
 
     public Event.SchemaChange changeEvent()
     {
-        return new Event.SchemaChange(Event.SchemaChange.Change.DROPPED, keyspace());
+        return new Event.SchemaChange(Event.SchemaChange.Change.DROPPED, keyspace(), Schema.instance.getVersion());
     }
 }

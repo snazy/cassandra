@@ -49,6 +49,7 @@ import org.apache.cassandra.exceptions.ConfigurationException;
 import org.apache.cassandra.exceptions.InvalidRequestException;
 import org.apache.cassandra.io.compress.CompressionParameters;
 import org.apache.cassandra.locator.AbstractReplicationStrategy;
+import org.apache.cassandra.service.MigrationManager;
 import org.apache.cassandra.service.StorageService;
 import org.apache.cassandra.utils.ByteBufferUtil;
 import org.apache.cassandra.utils.FBUtilities;
@@ -385,7 +386,7 @@ public class LegacySchemaTables
     public static synchronized void mergeSchema(Collection<Mutation> mutations) throws ConfigurationException, IOException
     {
         mergeSchema(mutations, true);
-        Schema.instance.updateVersionAndAnnounce();
+        MigrationManager.passiveAnnounce(Schema.instance.getVersion());
     }
 
     public static synchronized void mergeSchema(Collection<Mutation> mutations, boolean doFlush) throws IOException
@@ -414,6 +415,11 @@ public class LegacySchemaTables
         Map<DecoratedKey, ColumnFamily> newTypes = readSchemaForKeyspaces(USERTYPES, keyspaces);
         Map<DecoratedKey, ColumnFamily> newFunctions = readSchemaForKeyspaces(FUNCTIONS, keyspaces);
         Map<DecoratedKey, ColumnFamily> newAggregates = readSchemaForKeyspaces(AGGREGATES, keyspaces);
+
+        // re-calculate schema version here since it is needed by the notifications sent by the merge..() methods below
+        // Note: the readSchemaForKeyspaces() calls above just read a subset of the schema rows needed by updateVersion().
+        // We could omit the reads of the readSchemaForKeyspaces() invocations.
+        Schema.instance.updateVersion();
 
         Set<String> keyspacesToDrop = mergeKeyspaces(oldKeyspaces, newKeyspaces);
         mergeTables(oldColumnFamilies, newColumnFamilies);

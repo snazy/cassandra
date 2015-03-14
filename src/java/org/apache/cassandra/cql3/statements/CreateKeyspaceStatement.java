@@ -108,7 +108,7 @@ public class CreateKeyspaceStatement extends SchemaAlteringStatement
 
     public Event.SchemaChange changeEvent()
     {
-        return new Event.SchemaChange(Event.SchemaChange.Change.CREATED, keyspace());
+        return new Event.SchemaChange(Event.SchemaChange.Change.CREATED, keyspace(), Schema.instance.getVersion());
     }
 
     protected void grantPermissionsToCreator(QueryState state)

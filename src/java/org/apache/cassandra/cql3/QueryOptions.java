@@ -66,6 +66,11 @@ public abstract class QueryOptions
         return new DefaultQueryOptions(ConsistencyLevel.ONE, values, false, SpecificOptions.DEFAULT, 3);
     }
 
+    public static QueryOptions forInternalCalls(List<ByteBuffer> values, int protocolVersion)
+    {
+        return new DefaultQueryOptions(ConsistencyLevel.ONE, values, false, SpecificOptions.DEFAULT, protocolVersion);
+    }
+
     public static QueryOptions fromPreV3Batch(ConsistencyLevel consistency)
     {
         return new DefaultQueryOptions(consistency, Collections.<ByteBuffer>emptyList(), false, SpecificOptions.DEFAULT, 2);

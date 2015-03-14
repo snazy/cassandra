@@ -63,7 +63,7 @@ public class DropIndexStatement extends SchemaAlteringStatement
     public Event.SchemaChange changeEvent()
     {
         // Dropping an index is akin to updating the CF
-        return new Event.SchemaChange(Event.SchemaChange.Change.UPDATED, Event.SchemaChange.Target.TABLE, keyspace(), columnFamily());
+        return new Event.SchemaChange(Event.SchemaChange.Change.UPDATED, Event.SchemaChange.Target.TABLE, keyspace(), columnFamily(), Schema.instance.getVersion());
     }
 
     @Override

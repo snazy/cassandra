@@ -711,7 +711,7 @@ Table of Contents
       type of status change ("UP" or "DOWN") followed by the address of the
       concerned node.
     - "SCHEMA_CHANGE": events related to schema change. After the event type,
-      the rest of the message will be <change_type><target><options> where:
+      the rest of the message will be <change_type><target><options><version> where:
         - <change_type> is a [string] representing the type of changed involved.
           It will be one of "CREATED", "UPDATED" or "DROPPED".
         - <target> is a [string] that can be one of "KEYSPACE", "TABLE", "TYPE",
@@ -731,6 +731,8 @@ Table of Contents
             - [string] keyspace containing the user defined function / aggregate
             - [string] the function/aggregate name
             - [string list] one string for each argument type (as CQL type)
+        - <version> is a [uuid] and the value of the schema version including the
+          change described in this message
 
   All EVENT messages have a streamId of -1 (Section 2.3).
 
@@ -1110,6 +1112,8 @@ Table of Contents
 10. Changes from v3
 
   * The format of "SCHEMA_CHANGE" events (Section 4.2.6) (and implicitly "Schema_change" results (Section 4.2.5.5))
-    has been modified, and now includes changes related to user defined functions and user defined aggregates.
+    has been modified:
+    * includes changes related to user defined functions and user defined aggregates
+    * includes the schema version after the change
   * Read_failure error code was added.
   * Function_failure error code was added.

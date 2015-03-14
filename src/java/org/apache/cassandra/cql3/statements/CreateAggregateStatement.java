@@ -107,7 +107,8 @@ public final class CreateAggregateStatement extends SchemaAlteringStatement
     {
         return new Event.SchemaChange(replaced ? Event.SchemaChange.Change.UPDATED : Event.SchemaChange.Change.CREATED,
                                       Event.SchemaChange.Target.AGGREGATE,
-                                      udAggregate.name().keyspace, udAggregate.name().name, AbstractType.asCQLTypeStringList(udAggregate.argTypes()));
+                                      udAggregate.name().keyspace, udAggregate.name().name, AbstractType.asCQLTypeStringList(udAggregate.argTypes()),
+                                      Schema.instance.getVersion());
     }
 
     public boolean announceMigration(boolean isLocalOnly) throws RequestValidationException

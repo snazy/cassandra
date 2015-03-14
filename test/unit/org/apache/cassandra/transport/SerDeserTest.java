@@ -109,36 +109,44 @@ public class SerDeserTest
         events.add(StatusChange.nodeUp(FBUtilities.getBroadcastAddress(), 42));
         events.add(StatusChange.nodeDown(FBUtilities.getBroadcastAddress(), 42));
 
-        events.add(new SchemaChange(SchemaChange.Change.CREATED, "ks"));
-        events.add(new SchemaChange(SchemaChange.Change.UPDATED, "ks"));
-        events.add(new SchemaChange(SchemaChange.Change.DROPPED, "ks"));
+        events.add(new SchemaChange(SchemaChange.Change.CREATED, "ks", UUID.randomUUID()));
+        events.add(new SchemaChange(SchemaChange.Change.UPDATED, "ks", UUID.randomUUID()));
+        events.add(new SchemaChange(SchemaChange.Change.DROPPED, "ks", UUID.randomUUID()));
 
-        events.add(new SchemaChange(SchemaChange.Change.CREATED, SchemaChange.Target.TABLE, "ks", "table"));
-        events.add(new SchemaChange(SchemaChange.Change.UPDATED, SchemaChange.Target.TABLE, "ks", "table"));
-        events.add(new SchemaChange(SchemaChange.Change.DROPPED, SchemaChange.Target.TABLE, "ks", "table"));
+        events.add(new SchemaChange(SchemaChange.Change.CREATED, SchemaChange.Target.TABLE, "ks", "table", UUID.randomUUID()));
+        events.add(new SchemaChange(SchemaChange.Change.UPDATED, SchemaChange.Target.TABLE, "ks", "table", UUID.randomUUID()));
+        events.add(new SchemaChange(SchemaChange.Change.DROPPED, SchemaChange.Target.TABLE, "ks", "table", UUID.randomUUID()));
 
         if (version >= 3)
         {
-            events.add(new SchemaChange(SchemaChange.Change.CREATED, SchemaChange.Target.TYPE, "ks", "type"));
-            events.add(new SchemaChange(SchemaChange.Change.UPDATED, SchemaChange.Target.TYPE, "ks", "type"));
-            events.add(new SchemaChange(SchemaChange.Change.DROPPED, SchemaChange.Target.TYPE, "ks", "type"));
+            events.add(new SchemaChange(SchemaChange.Change.CREATED, SchemaChange.Target.TYPE, "ks", "type", UUID.randomUUID()));
+            events.add(new SchemaChange(SchemaChange.Change.UPDATED, SchemaChange.Target.TYPE, "ks", "type", UUID.randomUUID()));
+            events.add(new SchemaChange(SchemaChange.Change.DROPPED, SchemaChange.Target.TYPE, "ks", "type", UUID.randomUUID()));
         }
 
         if (version >= 4)
         {
             List<String> moreTypes = Arrays.asList("text", "bigint");
 
-            events.add(new SchemaChange(SchemaChange.Change.CREATED, SchemaChange.Target.FUNCTION, "ks", "func", Collections.<String>emptyList()));
-            events.add(new SchemaChange(SchemaChange.Change.UPDATED, SchemaChange.Target.FUNCTION, "ks", "func", moreTypes));
-            events.add(new SchemaChange(SchemaChange.Change.DROPPED, SchemaChange.Target.FUNCTION, "ks", "func", moreTypes));
+            events.add(new SchemaChange(SchemaChange.Change.CREATED, SchemaChange.Target.FUNCTION, "ks", "func", Collections.<String>emptyList(), UUID.randomUUID()));
+            events.add(new SchemaChange(SchemaChange.Change.UPDATED, SchemaChange.Target.FUNCTION, "ks", "func", moreTypes, UUID.randomUUID()));
+            events.add(new SchemaChange(SchemaChange.Change.DROPPED, SchemaChange.Target.FUNCTION, "ks", "func", moreTypes, UUID.randomUUID()));
 
-            events.add(new SchemaChange(SchemaChange.Change.CREATED, SchemaChange.Target.AGGREGATE, "ks", "aggr", Collections.<String>emptyList()));
-            events.add(new SchemaChange(SchemaChange.Change.UPDATED, SchemaChange.Target.AGGREGATE, "ks", "aggr", moreTypes));
-            events.add(new SchemaChange(SchemaChange.Change.DROPPED, SchemaChange.Target.AGGREGATE, "ks", "aggr", moreTypes));
+            events.add(new SchemaChange(SchemaChange.Change.CREATED, SchemaChange.Target.AGGREGATE, "ks", "aggr", Collections.<String>emptyList(), UUID.randomUUID()));
+            events.add(new SchemaChange(SchemaChange.Change.UPDATED, SchemaChange.Target.AGGREGATE, "ks", "aggr", moreTypes, UUID.randomUUID()));
+            events.add(new SchemaChange(SchemaChange.Change.DROPPED, SchemaChange.Target.AGGREGATE, "ks", "aggr", moreTypes, UUID.randomUUID()));
         }
 
         for (Event ev : events)
         {
+            if (ev instanceof SchemaChange)
+            {
+                SchemaChange sc = (SchemaChange) ev;
+                ev = new SchemaChange(sc.change, sc.target, sc.keyspace, sc.name,
+                                      version >= 4 ? sc.argTypes : null,
+                                      version >= 4 ? sc.schemaVersion : null);
+            }
+
             ByteBuf buf = Unpooled.buffer(ev.serializedSize(version));
             ev.serialize(buf, version);
             assertEquals(ev, Event.deserialize(buf, version));
