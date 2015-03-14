@@ -17,7 +17,9 @@
  */
 package org.apache.cassandra.service;
 
+import java.net.InetAddress;
 import java.util.List;
+import java.util.UUID;
 
 import org.apache.cassandra.db.marshal.AbstractType;
 
@@ -80,6 +82,10 @@ public abstract class MigrationListener
     }
 
     public void onDropAggregate(String ksName, String aggregateName, List<AbstractType<?>> argTypes)
+    {
+    }
+
+    public void onTraceFinished(InetAddress clientAddress, UUID sessionId)
     {
     }
 }

@@ -76,15 +76,15 @@ public class QueryState
 
     public void createTracingSession()
     {
-        if (this.preparedTracingSession == null)
+        UUID session = this.preparedTracingSession;
+        if (session == null)
         {
-            Tracing.instance.newSession();
+            Tracing.instance.newSession(getClientAddress());
         }
         else
         {
-            UUID session = this.preparedTracingSession;
+            Tracing.instance.newSession(getClientAddress(), session);
             this.preparedTracingSession = null;
-            Tracing.instance.newSession(session);
         }
     }
 

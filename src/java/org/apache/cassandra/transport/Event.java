@@ -21,13 +21,14 @@ import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.util.Iterator;
 import java.util.List;
+import java.util.UUID;
 
 import com.google.common.base.Objects;
 import io.netty.buffer.ByteBuf;
 
 public abstract class Event
 {
-    public enum Type { TOPOLOGY_CHANGE, STATUS_CHANGE, SCHEMA_CHANGE }
+    public enum Type { TOPOLOGY_CHANGE, STATUS_CHANGE, SCHEMA_CHANGE, TRACE_FINISHED }
 
     public final Type type;
 
@@ -46,6 +47,8 @@ public abstract class Event
                 return StatusChange.deserializeEvent(cb, version);
             case SCHEMA_CHANGE:
                 return SchemaChange.deserializeEvent(cb, version);
+            case TRACE_FINISHED:
+                return TraceFinished.deserializeEvent(cb, version);
         }
         throw new AssertionError();
     }
@@ -395,6 +398,59 @@ public abstract class Event
                 && Objects.equal(keyspace, scc.keyspace)
                 && Objects.equal(name, scc.name)
                 && Objects.equal(argTypes, scc.argTypes);
+        }
+    }
+
+    /**
+     * @since native protocol v4
+     */
+    public static class TraceFinished extends Event
+    {
+        public final UUID traceSessionId;
+
+        public TraceFinished(UUID traceSessionId)
+        {
+            super(Type.TRACE_FINISHED);
+            this.traceSessionId = traceSessionId;
+        }
+
+        public static Event deserializeEvent(ByteBuf cb, int version)
+        {
+            UUID traceSessionId = CBUtil.readUUID(cb);
+
+            return new TraceFinished(traceSessionId);
+        }
+
+        protected void serializeEvent(ByteBuf dest, int version)
+        {
+            CBUtil.writeUUID(traceSessionId, dest);
+        }
+
+        protected int eventSerializedSize(int version)
+        {
+            return CBUtil.sizeOfUUID(traceSessionId);
+        }
+
+        @Override
+        public String toString()
+        {
+            return traceSessionId.toString();
+        }
+
+        @Override
+        public int hashCode()
+        {
+            return Objects.hashCode(traceSessionId);
+        }
+
+        @Override
+        public boolean equals(Object other)
+        {
+            if (!(other instanceof TraceFinished))
+                return false;
+
+            TraceFinished tf = (TraceFinished)other;
+            return Objects.equal(traceSessionId, tf.traceSessionId);
         }
     }
 }

@@ -24,6 +24,7 @@ import java.net.UnknownHostException;
 import java.util.EnumMap;
 import java.util.Map;
 import java.util.List;
+import java.util.UUID;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -39,6 +40,7 @@ import io.netty.channel.epoll.Epoll;
 import io.netty.channel.epoll.EpollEventLoopGroup;
 import io.netty.channel.epoll.EpollServerSocketChannel;
 import io.netty.channel.group.ChannelGroup;
+import io.netty.channel.group.ChannelMatcher;
 import io.netty.channel.group.DefaultChannelGroup;
 import io.netty.channel.nio.NioEventLoopGroup;
 import io.netty.channel.socket.nio.NioServerSocketChannel;
@@ -233,15 +235,23 @@ public class Server implements CassandraDaemon.Server
             groups.get(type).add(ch);
         }
 
-        public void unregister(Channel ch)
-        {
-            for (ChannelGroup group : groups.values())
-                group.remove(ch);
-        }
-
         public void send(Event event)
         {
             groups.get(event.type).writeAndFlush(new EventMessage(event));
+        }
+
+        public void send(final InetAddress clientAddress, Event event)
+        {
+            assert clientAddress != null;
+
+            groups.get(event.type).writeAndFlush(new EventMessage(event), new ChannelMatcher()
+            {
+                public boolean matches(Channel channel)
+                {
+                    InetSocketAddress isa = (InetSocketAddress) channel.remoteAddress();
+                    return isa != null && clientAddress.equals(isa.getAddress());
+                }
+            });
         }
 
         public void closeAll()
@@ -256,7 +266,7 @@ public class Server implements CassandraDaemon.Server
                 plus one additional channel used for the server's own bootstrap.
                - When server is stopped: the size is 0
             */
-            return allChannels.size() != 0 ? allChannels.size() - 1 : 0;
+            return !allChannels.isEmpty() ? allChannels.size() - 1 : 0;
         }
     }
 
@@ -548,6 +558,11 @@ public class Server implements CassandraDaemon.Server
         {
             server.connectionTracker.send(new Event.SchemaChange(Event.SchemaChange.Change.DROPPED, Event.SchemaChange.Target.AGGREGATE,
                                                                  ksName, aggregateName, AbstractType.asCQLTypeStringList(argTypes)));
+        }
+
+        public void onTraceFinished(InetAddress clientAddress, UUID sessionId)
+        {
+            server.connectionTracker.send(clientAddress, new Event.TraceFinished(sessionId));
         }
     }
 }

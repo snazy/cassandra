@@ -21,7 +21,6 @@ package org.apache.cassandra.tracing;
 
 import java.net.InetAddress;
 import java.nio.ByteBuffer;
-import java.util.Arrays;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
@@ -30,15 +29,10 @@ import java.util.concurrent.ConcurrentMap;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import org.apache.cassandra.concurrent.Stage;
-import org.apache.cassandra.concurrent.StageManager;
 import org.apache.cassandra.config.DatabaseDescriptor;
-import org.apache.cassandra.db.*;
 import org.apache.cassandra.db.marshal.TimeUUIDType;
-import org.apache.cassandra.exceptions.OverloadedException;
 import org.apache.cassandra.net.MessageIn;
 import org.apache.cassandra.net.MessagingService;
-import org.apache.cassandra.service.StorageProxy;
 import org.apache.cassandra.utils.FBUtilities;
 import org.apache.cassandra.utils.UUIDGen;
 
@@ -82,7 +76,7 @@ public class Tracing
         }
     }
 
-    private static final Logger logger = LoggerFactory.getLogger(Tracing.class);
+    static final Logger logger = LoggerFactory.getLogger(Tracing.class);
 
     private final InetAddress localAddress = FBUtilities.getLocalAddress();
 
@@ -118,26 +112,31 @@ public class Tracing
         return instance.state.get() != null;
     }
 
-    public UUID newSession()
+    public UUID newSession(InetAddress clientAddress)
     {
-        return newSession(TraceType.QUERY);
+        return newSession(clientAddress, TraceType.QUERY);
     }
 
     public UUID newSession(TraceType traceType)
     {
-        return newSession(TimeUUIDType.instance.compose(ByteBuffer.wrap(UUIDGen.getTimeUUIDBytes())), traceType);
+        return newSession(null, traceType);
     }
 
-    public UUID newSession(UUID sessionId)
+    public UUID newSession(InetAddress clientAddress, TraceType traceType)
     {
-        return newSession(sessionId, TraceType.QUERY);
+        return newSession(clientAddress, TimeUUIDType.instance.compose(ByteBuffer.wrap(UUIDGen.getTimeUUIDBytes())), traceType);
     }
 
-    public UUID newSession(UUID sessionId, TraceType traceType)
+    public UUID newSession(InetAddress clientAddress, UUID sessionId)
+    {
+        return newSession(clientAddress, sessionId, TraceType.QUERY);
+    }
+
+    private UUID newSession(InetAddress clientAddress, UUID sessionId, TraceType traceType)
     {
         assert state.get() == null;
 
-        TraceState ts = new TraceState(localAddress, sessionId, traceType);
+        TraceState ts = new TraceState(localAddress, clientAddress, sessionId, traceType);
         state.set(ts);
         sessions.put(sessionId, ts);
 
@@ -166,13 +165,7 @@ public class Tracing
             final ByteBuffer sessionId = state.sessionIdBytes;
             final int ttl = state.ttl;
 
-            StageManager.getStage(Stage.TRACING).execute(new Runnable()
-            {
-                public void run()
-                {
-                    mutateWithCatch(TraceKeyspace.makeStopSessionMutation(sessionId, elapsed, ttl));
-                }
-            });
+            state.executeMutation(TraceKeyspace.makeStopSessionMutation(sessionId, elapsed, ttl));
 
             state.stop();
             sessions.remove(state.sessionId);
@@ -210,13 +203,7 @@ public class Tracing
         final String command = state.traceType.toString();
         final int ttl = state.ttl;
 
-        StageManager.getStage(Stage.TRACING).execute(new Runnable()
-        {
-            public void run()
-            {
-                mutateWithCatch(TraceKeyspace.makeStartSessionMutation(sessionId, client, parameters, request, startedAt, command, ttl));
-            }
-        });
+        state.executeMutation(TraceKeyspace.makeStartSessionMutation(sessionId, client, parameters, request, startedAt, command, ttl));
 
         return state;
     }
@@ -251,7 +238,7 @@ public class Tracing
         }
         else
         {
-            ts = new TraceState(message.from, sessionId, traceType);
+            ts = new TraceState(message.from, null, sessionId, traceType);
             sessions.put(sessionId, ts);
             return ts;
         }
@@ -303,17 +290,5 @@ public class Tracing
             return;
 
         state.trace(format, args);
-    }
-
-    static void mutateWithCatch(Mutation mutation)
-    {
-        try
-        {
-            StorageProxy.mutate(Arrays.asList(mutation), ConsistencyLevel.ANY);
-        }
-        catch (OverloadedException e)
-        {
-            logger.warn("Too many nodes are overloaded to save trace events");
-        }
     }
 }
