@@ -19,9 +19,9 @@ package org.apache.cassandra.tracing;
 
 import java.net.InetAddress;
 import java.nio.ByteBuffer;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -50,7 +50,7 @@ public class TraceState implements ProgressEventNotifier
     public final int ttl;
 
     private boolean notify;
-    private List<ProgressListener> listeners = new ArrayList<>();
+    private final List<ProgressListener> listeners = new CopyOnWriteArrayList<>();
     private String tag;
 
     public enum Status
