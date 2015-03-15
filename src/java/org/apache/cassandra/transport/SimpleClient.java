@@ -45,6 +45,7 @@ import org.apache.cassandra.db.ConsistencyLevel;
 import org.apache.cassandra.security.SSLFactory;
 import org.apache.cassandra.transport.messages.CredentialsMessage;
 import org.apache.cassandra.transport.messages.ErrorMessage;
+import org.apache.cassandra.transport.messages.EventMessage;
 import org.apache.cassandra.transport.messages.ExecuteMessage;
 import org.apache.cassandra.transport.messages.PrepareMessage;
 import org.apache.cassandra.transport.messages.QueryMessage;
@@ -103,7 +104,7 @@ public class SimpleClient
     {
         establishConnection();
 
-        Map<String, String> options = new HashMap<String, String>();
+        Map<String, String> options = new HashMap<>();
         options.put(StartupMessage.CQL_VERSION, "3.0.0");
         if (useCompression)
         {
@@ -111,6 +112,11 @@ public class SimpleClient
             connection.setCompressor(FrameCompressor.SnappyCompressor.instance);
         }
         execute(new StartupMessage(options));
+    }
+
+    public void setEventHandler(EventHandler eventHandler)
+    {
+        responseHandler.eventHandler = eventHandler;
     }
 
     protected void establishConnection() throws IOException
@@ -188,7 +194,7 @@ public class SimpleClient
         bootstrap.group().shutdownGracefully();
     }
 
-    protected Message.Response execute(Message.Request request)
+    public Message.Response execute(Message.Request request)
     {
         try
         {
@@ -203,6 +209,11 @@ public class SimpleClient
         {
             throw new RuntimeException(e);
         }
+    }
+
+    public interface EventHandler
+    {
+        void onEvent(Event event);
     }
 
     // Stateless handlers
@@ -260,13 +271,20 @@ public class SimpleClient
     private static class ResponseHandler extends SimpleChannelInboundHandler<Message.Response>
     {
         public final BlockingQueue<Message.Response> responses = new SynchronousQueue<Message.Response>(true);
+        public EventHandler eventHandler;
 
         @Override
         public void channelRead0(ChannelHandlerContext ctx, Message.Response r)
         {
             try
             {
-                responses.put(r);
+                if (r instanceof EventMessage)
+                {
+                    if (eventHandler != null)
+                        eventHandler.onEvent(((EventMessage) r).event);
+                }
+                else
+                    responses.put(r);
             }
             catch (InterruptedException ie)
             {

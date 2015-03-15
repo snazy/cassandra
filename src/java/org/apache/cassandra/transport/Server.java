@@ -24,7 +24,6 @@ import java.net.UnknownHostException;
 import java.util.EnumMap;
 import java.util.Map;
 import java.util.List;
-import java.util.UUID;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -240,16 +239,13 @@ public class Server implements CassandraDaemon.Server
             groups.get(event.type).writeAndFlush(new EventMessage(event));
         }
 
-        public void send(final InetAddress clientAddress, Event event)
+        public void send(final Connection connection, Event event)
         {
-            assert clientAddress != null;
-
             groups.get(event.type).writeAndFlush(new EventMessage(event), new ChannelMatcher()
             {
                 public boolean matches(Channel channel)
                 {
-                    InetSocketAddress isa = (InetSocketAddress) channel.remoteAddress();
-                    return isa != null && clientAddress.equals(isa.getAddress());
+                    return channel == connection.channel();
                 }
             });
         }
@@ -558,11 +554,6 @@ public class Server implements CassandraDaemon.Server
         {
             server.connectionTracker.send(new Event.SchemaChange(Event.SchemaChange.Change.DROPPED, Event.SchemaChange.Target.AGGREGATE,
                                                                  ksName, aggregateName, AbstractType.asCQLTypeStringList(argTypes)));
-        }
-
-        public void onTraceFinished(InetAddress clientAddress, UUID sessionId)
-        {
-            server.connectionTracker.send(clientAddress, new Event.TraceFinished(sessionId));
         }
     }
 }

@@ -33,6 +33,7 @@ import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.db.marshal.TimeUUIDType;
 import org.apache.cassandra.net.MessageIn;
 import org.apache.cassandra.net.MessagingService;
+import org.apache.cassandra.transport.Connection;
 import org.apache.cassandra.utils.FBUtilities;
 import org.apache.cassandra.utils.UUIDGen;
 
@@ -112,9 +113,9 @@ public class Tracing
         return instance.state.get() != null;
     }
 
-    public UUID newSession(InetAddress clientAddress)
+    public UUID newSession(Connection connection)
     {
-        return newSession(clientAddress, TraceType.QUERY);
+        return newSession(connection, TraceType.QUERY);
     }
 
     public UUID newSession(TraceType traceType)
@@ -122,21 +123,21 @@ public class Tracing
         return newSession(null, traceType);
     }
 
-    public UUID newSession(InetAddress clientAddress, TraceType traceType)
+    public UUID newSession(Connection connection, TraceType traceType)
     {
-        return newSession(clientAddress, TimeUUIDType.instance.compose(ByteBuffer.wrap(UUIDGen.getTimeUUIDBytes())), traceType);
+        return newSession(connection, TimeUUIDType.instance.compose(ByteBuffer.wrap(UUIDGen.getTimeUUIDBytes())), traceType);
     }
 
-    public UUID newSession(InetAddress clientAddress, UUID sessionId)
+    public UUID newSession(Connection connection, UUID sessionId)
     {
-        return newSession(clientAddress, sessionId, TraceType.QUERY);
+        return newSession(connection, sessionId, TraceType.QUERY);
     }
 
-    private UUID newSession(InetAddress clientAddress, UUID sessionId, TraceType traceType)
+    private UUID newSession(Connection connection, UUID sessionId, TraceType traceType)
     {
         assert state.get() == null;
 
-        TraceState ts = new TraceState(localAddress, clientAddress, sessionId, traceType);
+        TraceState ts = new TraceState(localAddress, connection, sessionId, traceType);
         state.set(ts);
         sessions.put(sessionId, ts);
 

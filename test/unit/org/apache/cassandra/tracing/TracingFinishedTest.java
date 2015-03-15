@@ -17,48 +17,60 @@
  */
 package org.apache.cassandra.tracing;
 
-import java.net.InetAddress;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.UUID;
+import java.util.Collections;
+import java.util.concurrent.SynchronousQueue;
+import java.util.concurrent.TimeUnit;
 
 import org.junit.Assert;
 import org.junit.Test;
 
-import com.datastax.driver.core.Session;
-import com.datastax.driver.core.SimpleStatement;
 import org.apache.cassandra.cql3.CQLTester;
-import org.apache.cassandra.service.MigrationListener;
-import org.apache.cassandra.service.MigrationManager;
+import org.apache.cassandra.cql3.QueryOptions;
+import org.apache.cassandra.transport.Event;
+import org.apache.cassandra.transport.Message;
+import org.apache.cassandra.transport.SimpleClient;
+import org.apache.cassandra.transport.messages.QueryMessage;
+import org.apache.cassandra.transport.messages.RegisterMessage;
 
 public class TracingFinishedTest extends CQLTester
 {
     @Test
     public void testTracingFinished() throws Throwable
     {
-        final List<InetAddress> clientAddresses = new ArrayList<>();
-        final List<UUID> sessionIds = new ArrayList<>();
+        sessionNet(3);
 
-        MigrationManager.instance.register(new MigrationListener()
+        SimpleClient client = new SimpleClient(nativeAddr.getHostAddress(), nativePort);
+        client.connect(false);
+        try
         {
-            public void onTraceFinished(InetAddress clientAddress, UUID sessionId)
+            final SynchronousQueue<Event> eventQueue = new SynchronousQueue<>();
+
+            client.setEventHandler(new SimpleClient.EventHandler()
             {
-                clientAddresses.add(clientAddress);
-                sessionIds.add(sessionId);
-            }
-        });
+                public void onEvent(Event event)
+                {
+                    eventQueue.add(event);
+                }
+            });
 
-        createTable("CREATE TABLE %s (pk int PRIMARY KEY, v text)");
+            Message.Response resp = client.execute(new RegisterMessage(Collections.singletonList(Event.Type.TRACE_FINISHED)));
+            Assert.assertSame(Message.Type.READY, resp.type);
 
-        int version = 3;
+            createTable("CREATE TABLE %s (pk int PRIMARY KEY, v text)");
 
-        Session session = sessionNet(version);
-        SimpleStatement statement = new SimpleStatement("SELECT * FROM " + KEYSPACE + '.' + currentTable());
-        statement.enableTracing();
-        assertRowsNet(version, session.execute(statement));
+            QueryMessage query = new QueryMessage("SELECT * FROM " + KEYSPACE + '.' + currentTable(), QueryOptions.DEFAULT);
+            query.setTracingRequested();;
+            resp = client.execute(query);
 
-        Assert.assertEquals(1, clientAddresses.size());
-        Assert.assertEquals(InetAddress.getLoopbackAddress(), clientAddresses.get(0));
-        Assert.assertNotNull(sessionIds.size());
+            Event event = eventQueue.poll(1, TimeUnit.SECONDS);
+            Assert.assertNotNull(event);
+
+            Assert.assertSame(Event.Type.TRACE_FINISHED, event.type);
+            Assert.assertEquals(resp.getTracingId(), ((Event.TraceFinished) event).traceSessionId);
+        }
+        finally
+        {
+            client.close();
+        }
     }
 }

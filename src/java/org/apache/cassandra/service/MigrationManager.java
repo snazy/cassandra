@@ -249,12 +249,6 @@ public class MigrationManager
             listener.onDropAggregate(udf.name().keyspace, udf.name().name, udf.argTypes());
     }
 
-    public void notifyTraceFinished(InetAddress clientAddress, UUID sessionId)
-    {
-        for (MigrationListener listener : listeners)
-            listener.onTraceFinished(clientAddress, sessionId);
-    }
-
     public static void announceNewKeyspace(KSMetaData ksm) throws ConfigurationException
     {
         announceNewKeyspace(ksm, false);

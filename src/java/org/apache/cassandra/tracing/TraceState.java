@@ -34,8 +34,10 @@ import org.apache.cassandra.concurrent.StageManager;
 import org.apache.cassandra.db.ConsistencyLevel;
 import org.apache.cassandra.db.Mutation;
 import org.apache.cassandra.exceptions.OverloadedException;
-import org.apache.cassandra.service.MigrationManager;
 import org.apache.cassandra.service.StorageProxy;
+import org.apache.cassandra.transport.Connection;
+import org.apache.cassandra.transport.Event;
+import org.apache.cassandra.transport.Server;
 import org.apache.cassandra.utils.ByteBufferUtil;
 import org.apache.cassandra.utils.WrappedRunnable;
 import org.apache.cassandra.utils.progress.ProgressEvent;
@@ -60,7 +62,7 @@ public class TraceState implements ProgressEventNotifier
     private String tag;
 
     private final AtomicInteger pendingMutations = new AtomicInteger();
-    private final InetAddress clientAddress;
+    private final Connection connection;
 
     public enum Status
     {
@@ -80,13 +82,13 @@ public class TraceState implements ProgressEventNotifier
         this(coordinator, null, sessionId, Tracing.TraceType.QUERY);
     }
 
-    public TraceState(InetAddress coordinator, InetAddress clientAddress, UUID sessionId, Tracing.TraceType traceType)
+    public TraceState(InetAddress coordinator, Connection connection, UUID sessionId, Tracing.TraceType traceType)
     {
         assert coordinator != null;
         assert sessionId != null;
 
         this.coordinator = coordinator;
-        this.clientAddress = clientAddress;
+        this.connection = connection;
         this.sessionId = sessionId;
         sessionIdBytes = ByteBufferUtil.bytes(sessionId);
         this.traceType = traceType;
@@ -141,8 +143,11 @@ public class TraceState implements ProgressEventNotifier
             // poor-man's prevention of duplicate tracing-finished events
             pendingMutations.set(Integer.MIN_VALUE);
 
-            if (clientAddress != null)
-                MigrationManager.instance.notifyTraceFinished(clientAddress, this.sessionId);
+            if (connection != null)
+            {
+                ((Server.ConnectionTracker) connection.getTracker()).send(connection,
+                                                                          new Event.TraceFinished(sessionId));
+            }
         }
     }
 
