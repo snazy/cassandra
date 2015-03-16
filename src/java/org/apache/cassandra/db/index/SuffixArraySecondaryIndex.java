@@ -510,23 +510,23 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex
                 if (term.remaining() == 0)
                     return;
 
-                if (term.remaining() >= Short.MAX_VALUE)
-                {
-                    logger.error("Rejecting value (size {}, maximum {} bytes) for column {} (analyzed {}) at {} SSTable.",
-                                 term.remaining(),
-                                 Short.MAX_VALUE,
-                                 baseCfs.getComparator().getString(column.name),
-                                 indexedColumns.get(column.name).right.isAnalyzed,
-                                 descriptor);
-                    return;
-                }
-
                 boolean isAdded = false;
 
                 tokenizer.reset(term);
                 while (tokenizer.hasNext())
                 {
                     ByteBuffer token = tokenizer.next();
+
+                    if (token.remaining() >= Short.MAX_VALUE)
+                    {
+                        logger.error("Rejecting value (size {}, maximum {} bytes) for column {} (analyzed {}) at {} SSTable.",
+                                     term.remaining(),
+                                     Short.MAX_VALUE,
+                                     baseCfs.getComparator().getString(column.name),
+                                     indexedColumns.get(column.name).right.isAnalyzed,
+                                     descriptor);
+                        continue;
+                    }
 
                     if (!TypeUtil.isValid(token, column.getValidator()))
                     {

@@ -1322,7 +1322,7 @@ public class SuffixArraySecondaryIndexTest extends SchemaLoader
     {
         ColumnFamilyStore store = Keyspace.open(KS_NAME).getColumnFamilyStore(CF_NAME);
 
-        final ByteBuffer comment = UTF8Type.instance.decompose("comment");
+        final ByteBuffer comment = UTF8Type.instance.decompose("comment_suffix_split");
 
         byte[] randomBytes = new byte[2 * Short.MAX_VALUE];
         ThreadLocalRandom.current().nextBytes(randomBytes);
