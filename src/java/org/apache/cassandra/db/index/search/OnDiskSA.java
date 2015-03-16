@@ -2,7 +2,6 @@ package org.apache.cassandra.db.index.search;
 
 import java.io.*;
 import java.nio.ByteBuffer;
-import java.nio.MappedByteBuffer;
 import java.nio.channels.FileChannel;
 import java.util.*;
 
@@ -19,6 +18,7 @@ import org.apache.cassandra.db.index.utils.SkippableIterator;
 import org.apache.cassandra.db.marshal.AbstractType;
 import org.apache.cassandra.io.FSReadError;
 import org.apache.cassandra.io.util.FileUtils;
+import org.apache.cassandra.io.util.NativeMappedBuffer;
 import org.apache.cassandra.utils.ByteBufferUtil;
 import org.apache.cassandra.utils.FBUtilities;
 
@@ -65,7 +65,7 @@ public class OnDiskSA implements Iterable<OnDiskSA.DataSuffix>, Closeable
     protected final SuffixSize suffixSize;
 
     protected final AbstractType<?> comparator;
-    protected final MappedByteBuffer indexFile;
+    protected final NativeMappedBuffer indexFile;
     protected final int indexSize;
 
     protected final Function<Long, DecoratedKey> keyFetcher;
@@ -103,7 +103,7 @@ public class OnDiskSA implements Iterable<OnDiskSA.DataSuffix>, Closeable
             mode = Mode.mode(backingFile.readUTF());
 
             indexSize = (int) backingFile.length();
-            indexFile = backingFile.getChannel().map(FileChannel.MapMode.READ_ONLY, 0, indexSize);
+            indexFile = new NativeMappedBuffer(backingFile.getFD(), 0, indexSize);
 
             // start of the levels
             indexFile.position((int) indexFile.getLong(indexSize - 8));
@@ -369,10 +369,7 @@ public class OnDiskSA implements Iterable<OnDiskSA.DataSuffix>, Closeable
     @Override
     public void close() throws IOException
     {
-        if (!FileUtils.isCleanerAvailable())
-            return;
-
-        FileUtils.clean(indexFile);
+        indexFile.unmap();
     }
 
     private PointerSuffix findPointer(ByteBuffer query)
@@ -417,7 +414,7 @@ public class OnDiskSA implements Iterable<OnDiskSA.DataSuffix>, Closeable
         }
 
         @Override
-        protected PointerBlock cast(ByteBuffer block)
+        protected PointerBlock cast(NativeMappedBuffer block)
         {
             return new PointerBlock(block);
         }
@@ -437,7 +434,7 @@ public class OnDiskSA implements Iterable<OnDiskSA.DataSuffix>, Closeable
         }
 
         @Override
-        protected DataBlock cast(ByteBuffer block)
+        protected DataBlock cast(NativeMappedBuffer block)
         {
             return new DataBlock(block);
         }
@@ -446,7 +443,7 @@ public class OnDiskSA implements Iterable<OnDiskSA.DataSuffix>, Closeable
         {
             assert idx < superBlockCnt : String.format("requested index %d is greater than super block count %d", idx, superBlockCnt);
             long blockOffset = indexFile.getLong((int) (superBlocksOffset + idx * 8));
-            return new OnDiskSuperBlock((ByteBuffer) indexFile.duplicate().position((int) blockOffset));
+            return new OnDiskSuperBlock(indexFile.duplicate().position(blockOffset));
         }
     }
 
@@ -454,7 +451,7 @@ public class OnDiskSA implements Iterable<OnDiskSA.DataSuffix>, Closeable
     {
         private final TokenTree tokenTree;
 
-        public OnDiskSuperBlock(ByteBuffer buffer)
+        public OnDiskSuperBlock(NativeMappedBuffer buffer)
         {
             tokenTree = new TokenTree(descriptor, buffer);
         }
@@ -483,21 +480,21 @@ public class OnDiskSA implements Iterable<OnDiskSA.DataSuffix>, Closeable
             // calculate block offset and move there
             // (long is intentional, we'll just need mmap implementation which supports long positions)
             long blockOffset = indexFile.getLong((int) (blockOffsets + idx * 8));
-            return cast((ByteBuffer) indexFile.duplicate().position((int) blockOffset));
+            return cast(indexFile.duplicate().position((int) blockOffset));
         }
 
-        protected abstract T cast(ByteBuffer block);
+        protected abstract T cast(NativeMappedBuffer block);
     }
 
     protected class DataBlock extends OnDiskBlock<DataSuffix>
     {
-        public DataBlock(ByteBuffer data)
+        public DataBlock(NativeMappedBuffer data)
         {
             super(data, BlockType.DATA);
         }
 
         @Override
-        protected DataSuffix cast(ByteBuffer data)
+        protected DataSuffix cast(NativeMappedBuffer data)
         {
             return new DataSuffix(data, suffixSize, getBlockIndex());
         }
@@ -541,13 +538,13 @@ public class OnDiskSA implements Iterable<OnDiskSA.DataSuffix>, Closeable
 
     protected class PointerBlock extends OnDiskBlock<PointerSuffix>
     {
-        public PointerBlock(ByteBuffer block)
+        public PointerBlock(NativeMappedBuffer block)
         {
             super(block, BlockType.POINTER);
         }
 
         @Override
-        protected PointerSuffix cast(ByteBuffer data)
+        protected PointerSuffix cast(NativeMappedBuffer data)
         {
             return new PointerSuffix(data, suffixSize);
         }
@@ -557,7 +554,7 @@ public class OnDiskSA implements Iterable<OnDiskSA.DataSuffix>, Closeable
     {
         private final TokenTree perBlockIndex;
 
-        protected DataSuffix(ByteBuffer content, SuffixSize size, TokenTree perBlockIndex)
+        protected DataSuffix(NativeMappedBuffer content, SuffixSize size, TokenTree perBlockIndex)
         {
             super(content, size);
             this.perBlockIndex = perBlockIndex;
@@ -571,7 +568,7 @@ public class OnDiskSA implements Iterable<OnDiskSA.DataSuffix>, Closeable
                 return new PrefetchedTokensIterator(getSparseTokens());
 
             int offset = blockEnd + 4 + content.getInt(getDataOffset() + 1);
-            return new TokenTree(descriptor, (ByteBuffer) indexFile.duplicate().position(offset)).iterator(keyFetcher);
+            return new TokenTree(descriptor, indexFile.duplicate().position(offset)).iterator(keyFetcher);
         }
 
         public boolean isSparse()
@@ -581,7 +578,7 @@ public class OnDiskSA implements Iterable<OnDiskSA.DataSuffix>, Closeable
 
         public NavigableMap<Long, Token> getSparseTokens()
         {
-            int ptrOffset = getDataOffset();
+            long ptrOffset = getDataOffset();
 
             byte size = content.get(ptrOffset);
 
@@ -608,7 +605,7 @@ public class OnDiskSA implements Iterable<OnDiskSA.DataSuffix>, Closeable
 
     protected static class PointerSuffix extends Suffix
     {
-        public PointerSuffix(ByteBuffer content, SuffixSize size)
+        public PointerSuffix(NativeMappedBuffer content, SuffixSize size)
         {
             super(content, size);
         }
