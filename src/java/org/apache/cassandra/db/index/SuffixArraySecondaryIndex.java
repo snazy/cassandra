@@ -29,11 +29,13 @@ import org.apache.cassandra.db.marshal.AsciiType;
 import org.apache.cassandra.db.marshal.UTF8Type;
 import org.apache.cassandra.dht.*;
 import org.apache.cassandra.exceptions.ConfigurationException;
+import org.apache.cassandra.io.FSReadError;
 import org.apache.cassandra.io.sstable.*;
 import org.apache.cassandra.io.sstable.SSTableWriterListener.Source;
 import org.apache.cassandra.io.sstable.Descriptor;
 import org.apache.cassandra.io.util.FileUtils;
 import org.apache.cassandra.notifications.*;
+import org.apache.cassandra.serializers.MarshalException;
 import org.apache.cassandra.service.StorageService;
 import org.apache.cassandra.thrift.IndexExpression;
 import org.apache.cassandra.utils.*;
@@ -734,15 +736,28 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex
                 if (!indexFile.exists())
                     continue;
 
-                SSTableIndex index = new SSTableIndex(col, indexFile, sstable);
+                SSTableIndex index = null;
 
-                logger.info("Interval.create(field: {}, minSuffix: {}, maxSuffix: {}, minKey: {}, maxKey: {}, sstable: {})",
-                            name,
-                            validator.getString(index.minSuffix()),
-                            validator.getString(index.maxSuffix()),
-                            keyComparator.getString(index.minKey()),
-                            keyComparator.getString(index.maxKey()),
-                            sstable);
+                try
+                {
+                    index = new SSTableIndex(col, indexFile, sstable);
+                    logger.info("Interval.create(column: {}, minSuffix: {}, maxSuffix: {}, minKey: {}, maxKey: {}, sstable: {})",
+                                name,
+                                validator.getString(index.minSuffix()),
+                                validator.getString(index.maxSuffix()),
+                                keyComparator.getString(index.minKey()),
+                                keyComparator.getString(index.maxKey()),
+                                sstable);
+                }
+                catch (Exception e)
+                {
+                    logger.error("Can't open index file at " + indexFile.getAbsolutePath() + ", skipping.", e);
+
+                    if (index != null)
+                        index.release();
+
+                    continue;
+                }
 
                 CopyOnWriteArrayList<SSTableIndex> openIndexes = currentIndexes.get(sstable.descriptor);
                 if (openIndexes == null)
