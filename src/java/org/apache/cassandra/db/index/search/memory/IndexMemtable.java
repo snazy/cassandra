@@ -12,6 +12,7 @@ import org.apache.cassandra.db.Column;
 import org.apache.cassandra.db.ColumnFamily;
 import org.apache.cassandra.db.index.SuffixArraySecondaryIndex;
 import org.apache.cassandra.db.index.SuffixArraySecondaryIndex.IndexMode;
+import org.apache.cassandra.db.index.search.OnDiskSABuilder;
 import org.apache.cassandra.db.index.search.plan.Expression;
 import org.apache.cassandra.db.index.search.container.TokenTree;
 import org.apache.cassandra.db.index.utils.SkippableIterator;
@@ -82,13 +83,13 @@ public class IndexMemtable
 
             ByteBuffer value = column.value();
 
-            if (value.remaining() >= Short.MAX_VALUE)
+            if (value.remaining() >= OnDiskSABuilder.MAX_TERM_SIZE)
             {
                 logger.error("Can't added column {} to index for key: {}, value size {} bytes, max allowed size {} bytes, use analyzed = true (if not yet set) for that column.",
                              comparator.getString(definition.name),
                              keyValidator.getString(key),
                              value.remaining(),
-                             Short.MAX_VALUE);
+                             OnDiskSABuilder.MAX_TERM_SIZE);
                 continue;
             }
 

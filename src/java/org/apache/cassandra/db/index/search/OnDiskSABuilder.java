@@ -101,6 +101,7 @@ public class OnDiskSABuilder
     }
 
     public static final int BLOCK_SIZE = 4096;
+    public static final int MAX_TERM_SIZE = 1024;
     public static final int SUPER_BLOCK_SIZE = 64;
 
     private final List<MutableLevel<InMemoryPointerSuffix>> levels = new ArrayList<>();
@@ -117,7 +118,7 @@ public class OnDiskSABuilder
 
     public OnDiskSABuilder add(ByteBuffer term, TokenTreeBuilder keys)
     {
-        if (term.remaining() >= Short.MAX_VALUE)
+        if (term.remaining() >= MAX_TERM_SIZE)
         {
             logger.error("Rejecting value (value size {}, maximum size {} bytes).", term.remaining(), Short.MAX_VALUE);
             return this;

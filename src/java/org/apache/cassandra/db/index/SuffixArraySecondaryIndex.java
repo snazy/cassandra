@@ -29,13 +29,11 @@ import org.apache.cassandra.db.marshal.AsciiType;
 import org.apache.cassandra.db.marshal.UTF8Type;
 import org.apache.cassandra.dht.*;
 import org.apache.cassandra.exceptions.ConfigurationException;
-import org.apache.cassandra.io.FSReadError;
 import org.apache.cassandra.io.sstable.*;
 import org.apache.cassandra.io.sstable.SSTableWriterListener.Source;
 import org.apache.cassandra.io.sstable.Descriptor;
 import org.apache.cassandra.io.util.FileUtils;
 import org.apache.cassandra.notifications.*;
-import org.apache.cassandra.serializers.MarshalException;
 import org.apache.cassandra.service.StorageService;
 import org.apache.cassandra.thrift.IndexExpression;
 import org.apache.cassandra.utils.*;
@@ -517,11 +515,11 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex
                 {
                     ByteBuffer token = tokenizer.next();
 
-                    if (token.remaining() >= Short.MAX_VALUE)
+                    if (token.remaining() >= OnDiskSABuilder.MAX_TERM_SIZE)
                     {
                         logger.error("Rejecting value (size {}, maximum {} bytes) for column {} (analyzed {}) at {} SSTable.",
                                      term.remaining(),
-                                     Short.MAX_VALUE,
+                                     OnDiskSABuilder.MAX_TERM_SIZE,
                                      baseCfs.getComparator().getString(column.name),
                                      indexedColumns.get(column.name).right.isAnalyzed,
                                      descriptor);

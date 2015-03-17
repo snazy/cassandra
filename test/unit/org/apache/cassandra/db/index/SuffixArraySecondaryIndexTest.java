@@ -19,6 +19,7 @@ import org.apache.cassandra.db.columniterator.IdentityQueryFilter;
 import org.apache.cassandra.db.filter.ExtendedFilter;
 import org.apache.cassandra.db.filter.IDiskAtomFilter;
 import org.apache.cassandra.db.filter.NamesQueryFilter;
+import org.apache.cassandra.db.index.search.OnDiskSABuilder;
 import org.apache.cassandra.db.marshal.*;
 import org.apache.cassandra.dht.*;
 import org.apache.cassandra.exceptions.ConfigurationException;
@@ -1324,24 +1325,27 @@ public class SuffixArraySecondaryIndexTest extends SchemaLoader
 
         final ByteBuffer comment = UTF8Type.instance.decompose("comment_suffix_split");
 
-        byte[] randomBytes = new byte[2 * Short.MAX_VALUE];
-        ThreadLocalRandom.current().nextBytes(randomBytes);
+        for (int i = 0; i < 10; i++)
+        {
+            byte[] randomBytes = new byte[ThreadLocalRandom.current().nextInt(OnDiskSABuilder.MAX_TERM_SIZE, 5 * OnDiskSABuilder.MAX_TERM_SIZE)];
+            ThreadLocalRandom.current().nextBytes(randomBytes);
 
-        final ByteBuffer bigValue = UTF8Type.instance.decompose(new String(randomBytes));
+            final ByteBuffer bigValue = UTF8Type.instance.decompose(new String(randomBytes));
 
-        RowMutation rm = new RowMutation(KS_NAME, AsciiType.instance.decompose("key1"));
-        rm.add(CF_NAME, comment, bigValue, System.currentTimeMillis());
-        rm.apply();
+            RowMutation rm = new RowMutation(KS_NAME, AsciiType.instance.decompose("key1"));
+            rm.add(CF_NAME, comment, bigValue, System.currentTimeMillis());
+            rm.apply();
 
-        Set<String> rows;
+            Set<String> rows;
 
-        rows = getIndexed(store, 10, new IndexExpression(comment, IndexOperator.EQ, bigValue.duplicate()));
-        Assert.assertEquals(0, rows.size());
+            rows = getIndexed(store, 10, new IndexExpression(comment, IndexOperator.EQ, bigValue.duplicate()));
+            Assert.assertEquals(0, rows.size());
 
-        store.forceBlockingFlush();
+            store.forceBlockingFlush();
 
-        rows = getIndexed(store, 10, new IndexExpression(comment, IndexOperator.EQ, bigValue.duplicate()));
-        Assert.assertEquals(0, rows.size());
+            rows = getIndexed(store, 10, new IndexExpression(comment, IndexOperator.EQ, bigValue.duplicate()));
+            Assert.assertEquals(0, rows.size());
+        }
     }
 
     private static IndexExpression[] getExpressions(String cqlQuery) throws Exception
