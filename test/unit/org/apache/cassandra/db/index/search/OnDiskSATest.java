@@ -602,8 +602,8 @@ public class OnDiskSATest
             if (offsets == null)
                 expected.put(i, (offsets = new TreeMap<>()));
 
-            builderA.add(LongType.instance.decompose(i), keyBuilder((long) i));
-            offsets.putAll(keyBuilder((long) i).getTokens());
+            builderA.add(LongType.instance.decompose(i), keyBuilder(i));
+            offsets.putAll(keyBuilder(i).getTokens());
         }
 
         for (long i = 50; i < 100; i++)
@@ -631,6 +631,31 @@ public class OnDiskSATest
         SkippableIterator<OnDiskSA.DataSuffix, CombinedTerm> union = OnDiskSAIterator.union(a, b);
 
         TreeMap<Long, TreeMap<Long, LongSet>> actual = new TreeMap<>();
+        while (union.hasNext())
+        {
+            CombinedTerm term = union.next();
+
+            Long composedTerm = LongType.instance.compose(term.getTerm());
+
+            TreeMap<Long, LongSet> offsets = actual.get(composedTerm);
+            if (offsets == null)
+                actual.put(composedTerm, (offsets = new TreeMap<>()));
+
+            offsets.putAll(term.getTokens());
+        }
+
+        Assert.assertEquals(actual, expected);
+
+        File indexC = File.createTempFile("on-disk-sa-partition-final", ".db");
+        indexC.deleteOnExit();
+
+        OnDiskSABuilder combined = new OnDiskSABuilder(LongType.instance, OnDiskSABuilder.Mode.ORIGINAL);
+        combined.finish(Pair.create(keyAt(0).key, keyAt(100).key), indexC, new OnDiskSAIterator.CombinedSuffixIterator(Descriptor.CURRENT, a, b));
+
+        OnDiskSA c = new OnDiskSA(indexC, LongType.instance, new KeyConverter());
+        union = OnDiskSAIterator.union(c);
+        actual.clear();
+
         while (union.hasNext())
         {
             CombinedTerm term = union.next();

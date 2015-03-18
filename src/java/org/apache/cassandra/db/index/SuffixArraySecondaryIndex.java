@@ -10,10 +10,12 @@ import com.google.common.annotations.VisibleForTesting;
 import org.apache.cassandra.concurrent.JMXEnabledThreadPoolExecutor;
 import org.apache.cassandra.concurrent.NamedThreadFactory;
 import org.apache.cassandra.config.ColumnDefinition;
+import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.db.*;
 import org.apache.cassandra.db.columniterator.SSTableNamesIterator;
 import org.apache.cassandra.db.compaction.*;
 import org.apache.cassandra.db.filter.ExtendedFilter;
+import org.apache.cassandra.db.index.search.OnDiskSA;
 import org.apache.cassandra.db.index.search.plan.Expression;
 import org.apache.cassandra.db.index.search.OnDiskSABuilder;
 import org.apache.cassandra.db.index.search.SSTableIndex;
@@ -23,6 +25,7 @@ import org.apache.cassandra.db.index.search.plan.QueryPlan;
 import org.apache.cassandra.db.index.search.tokenization.AbstractTokenizer;
 import org.apache.cassandra.db.index.search.tokenization.NoOpTokenizer;
 import org.apache.cassandra.db.index.search.tokenization.StandardTokenizer;
+import org.apache.cassandra.db.index.search.utils.OnDiskSAIterator;
 import org.apache.cassandra.db.index.utils.TypeUtil;
 import org.apache.cassandra.db.marshal.AbstractType;
 import org.apache.cassandra.db.marshal.AsciiType;
@@ -42,7 +45,6 @@ import com.google.common.base.Function;
 import com.google.common.base.Predicate;
 import com.google.common.collect.*;
 import com.google.common.util.concurrent.Futures;
-import com.google.common.util.concurrent.Uninterruptibles;
 import org.cliffc.high_scale_lib.NonBlockingHashMap;
 
 import org.slf4j.Logger;
@@ -62,6 +64,8 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex
 
     private static final String INDEX_MODE_OPTION = "mode";
     private static final String INDEX_ANALYZED_OPTION = "analyzed";
+    private static final String INDEX_MAX_FLUSH_MEMORY_OPTION = "max_compaction_flush_memory_in_mb";
+    private static final double INDEX_MAX_FLUSH_DEFAULT_MULTIPLIER = 0.15;
 
     private static final Set<AbstractType<?>> TOKENIZABLE_TYPES = new HashSet<AbstractType<?>>()
     {{
@@ -131,8 +135,11 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex
 
         Mode mode = indexOptions.get(INDEX_MODE_OPTION) == null ? Mode.ORIGINAL : Mode.mode(indexOptions.get(INDEX_MODE_OPTION));
         boolean isAnalyzed = indexOptions.get(INDEX_ANALYZED_OPTION) == null ? false : Boolean.valueOf(indexOptions.get(INDEX_ANALYZED_OPTION));
+        Long maxMemMb = indexOptions.get(INDEX_MAX_FLUSH_MEMORY_OPTION) == null
+                ? (long) ((DatabaseDescriptor.getTotalMemtableSpaceInMB() * 1048576L) * INDEX_MAX_FLUSH_DEFAULT_MULTIPLIER)
+                : Long.parseLong(indexOptions.get(INDEX_MAX_FLUSH_MEMORY_OPTION));
 
-        indexedColumns.put(columnDef.name, Pair.create(columnDef, new IndexMode(mode, isAnalyzed)));
+        indexedColumns.put(columnDef.name, Pair.create(columnDef, new IndexMode(mode, isAnalyzed, maxMemMb)));
         addComponent(Collections.singleton(columnDef));
     }
 
@@ -385,7 +392,8 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex
         private final Source source;
 
         // need one entry for each term we index
-        private final Map<ByteBuffer, ColumnIndex> indexPerColumn;
+        private final Map<ByteBuffer, CurrentColumnIndex> indexPerColumn;
+        private final Phaser phaser;
 
         private DecoratedKey currentKey;
         private long currentKeyPosition;
@@ -396,6 +404,8 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex
             this.descriptor = descriptor;
             this.source = source;
             this.indexPerColumn = new HashMap<>();
+            this.phaser = new Phaser();
+            this.phaser.register();
         }
 
         public void begin()
@@ -415,61 +425,107 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex
             if (component == null)
                 return;
 
-            ColumnIndex index = indexPerColumn.get(column.name());
+            CurrentColumnIndex index = indexPerColumn.get(column.name());
             if (index == null)
             {
-                String outputFile = descriptor.filenameFor(component);
-                indexPerColumn.put(column.name(), (index = new ColumnIndex(getColumnDef(component), outputFile)));
+                ColumnIndex newIndex = new ColumnIndex(getColumnDef(component), descriptor.filenameFor(component));
+                indexPerColumn.put(column.name(), (index = new CurrentColumnIndex(newIndex, 1, maxMemorySize(newIndex))));
             }
 
-            index.add(column.value().duplicate(), currentKey, currentKeyPosition);
+            index.getIndex().add(column.value().duplicate(), currentKey, currentKeyPosition);
+            if (index.getIndex().estimateSize() > index.getMaxMem())
+            {
+                logger.info("about to submit " + baseCfs.getComparator().compose(index.getIndex().getColumn().name) + " index for partial SA'ing");
+                flushAsync(index.getIndex(), index.getPartNumber(), false);
+
+                ColumnIndex nextIndex = new ColumnIndex(getColumnDef(component), descriptor.filenameFor(component));
+                indexPerColumn.put(index.getIndex().getColumn().name, new CurrentColumnIndex(nextIndex, index.getPartNumber() + 1, index.getMaxMem()));
+            }
+
         }
 
         public void complete()
         {
             if (isComplete)
                 return;
-            currentKey = null;
 
+            currentKey = null;
             try
             {
-                logger.info("about to submit for concurrent SA'ing");
-                final CountDownLatch latch = new CountDownLatch(indexPerColumn.size());
+                logger.info("waiting for any partial SAs to complete flushing");
+                awaitPhaser();
 
-                // first, build up a listing per-component (per-index)
-                for (final ColumnIndex index : indexPerColumn.values())
-                {
-                    logger.info("Submitting {} for concurrent SA'ing", index.outputFile);
-                    ThreadPoolExecutor executor = source == Source.MEMTABLE ? INDEX_FLUSHER_MEMTABLE : INDEX_FLUSHER_GENERAL;
-                    executor.submit(new Runnable()
-                    {
-                        @Override
-                        public void run()
-                        {
-                            try
-                            {
-                                long flushStart = System.nanoTime();
-                                index.blockingFlush();
-                                logger.info("Flushing SA index to {} took {} ms.",
-                                        index.outputFile,
-                                        TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - flushStart));
-                            }
-                            finally
-                            {
-                                latch.countDown();
-                            }
-                        }
-                    });
-                }
+                logger.info("about to submit for concurrent final SA'ing");
+                for (final CurrentColumnIndex index : indexPerColumn.values())
+                        flushAsync(index.getIndex(), index.getPartNumber(), true);
 
-                Uninterruptibles.awaitUninterruptibly(latch, 10, TimeUnit.MINUTES);
+                logger.info("waiting for final SAs to complete flushing");
+                awaitPhaser();
             }
             finally
             {
                 // drop this data ASAP
                 indexPerColumn.clear();
+                phaser.arriveAndDeregister();
                 isComplete = true;
             }
+        }
+
+        protected long maxMemorySize(ColumnIndex index)
+        {
+            final long def = DatabaseDescriptor.getTotalMemtableSpaceInMB() * 1048576L;
+            if (source == Source.MEMTABLE)
+                return def;
+
+            Pair<ColumnDefinition, IndexMode> config = indexedColumns.get(index.column.name);
+            if (config == null)
+                return (long) (def * INDEX_MAX_FLUSH_DEFAULT_MULTIPLIER);
+
+            return config.right.maxCompactionFlushMemoryInMb;
+        }
+
+        protected void awaitPhaser()
+        {
+            try
+            {
+                phaser.awaitAdvanceInterruptibly(phaser.arrive(), 10, TimeUnit.MINUTES);
+            }
+            catch (InterruptedException e)
+            {
+                logger.error("Thread interrupted while waiting for final SAs to flush");
+            }
+            catch (TimeoutException e)
+            {
+                logger.error("Timed out while waiting for final SAs to flush");
+            }
+
+        }
+
+        protected void flushAsync(final ColumnIndex index, final int partNumber, final boolean isFinal)
+        {
+            logger.info("Submitting {} for concurrent SA'ing", index.filename(isFinal, partNumber));
+            ThreadPoolExecutor executor = source == Source.MEMTABLE ? INDEX_FLUSHER_MEMTABLE : INDEX_FLUSHER_GENERAL;
+            phaser.register();
+            executor.submit(new Runnable()
+            {
+                @Override
+                public void run()
+                {
+                    try
+                    {
+                        long flushStart = System.nanoTime();
+                        index.blockingFlush(isFinal, partNumber);
+                        logger.info("Flushing SA index to {} took {} ms.",
+                                //index.outputFile,
+                                index.filename(isFinal, partNumber),
+                                TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - flushStart));
+                    }
+                    finally
+                    {
+                        phaser.arriveAndDeregister();
+                    }
+                }
+            });
         }
 
         public int hashCode()
@@ -482,12 +538,42 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex
             return !(o == null || !(o instanceof PerSSTableIndexWriter)) && descriptor.equals(((PerSSTableIndexWriter) o).descriptor);
         }
 
+        private class CurrentColumnIndex
+        {
+            private final ColumnIndex index;
+            private final int partNumber;
+            private final long maxMem;
+
+            public CurrentColumnIndex(ColumnIndex index, int partNumber, long maxMem)
+            {
+                this.index = index;
+                this.partNumber = partNumber;
+                this.maxMem = maxMem;
+            }
+
+            public ColumnIndex getIndex()
+            {
+                return index;
+            }
+
+            public int getPartNumber()
+            {
+                return partNumber;
+            }
+
+            public long getMaxMem()
+            {
+                return maxMem;
+            }
+        }
+
         private class ColumnIndex
         {
             private final ColumnDefinition column;
             private final String outputFile;
             private final AbstractTokenizer tokenizer;
             private final Map<ByteBuffer, TokenTreeBuilder> keysPerTerm;
+            private long estimatedBytes = 0;
 
             // key range of the per-column index
             private DecoratedKey min, max;
@@ -501,7 +587,17 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex
                 this.keysPerTerm = new HashMap<>();
             }
 
-            private void add(ByteBuffer term, DecoratedKey key, long keyPosition)
+            public ColumnDefinition getColumn()
+            {
+                return column;
+            }
+
+            public long estimateSize()
+            {
+                return estimatedBytes;
+            }
+
+            public void add(ByteBuffer term, DecoratedKey key, long keyPosition)
             {
                 final Long keyToken = ((LongToken) key.getToken()).token;
 
@@ -525,10 +621,11 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex
                 while (tokenizer.hasNext())
                 {
                     ByteBuffer token = tokenizer.next();
+                    int size = token.remaining();
 
                     if (!TypeUtil.isValid(token, column.getValidator()))
                     {
-                        int size = token.remaining();
+
                         if ((token = TypeUtil.tryUpcast(token, column.getValidator())) == null)
                         {
                             logger.error("({}) Failed to add {} to index for key: {}, value size was {} bytes, validator is {}.",
@@ -547,32 +644,75 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex
 
                     keys.add(Pair.create(keyToken, keyPosition));
                     isAdded = true;
+
+                    // update size estimate.
+                    // An extra 16 bytes are included in the estimate update
+                    // (8 for keyToken, 8 for keyPosition)
+                    // this may overestimate if the keyToken has already been
+                    // added to this index but the chance of collision is very low
+                    estimatedBytes += size;
+                    estimatedBytes += 16;
                 }
 
                 if (!isAdded)
                     return; // non of the generated tokens were added to the index
 
-                /* calculate key range (based on actual key values) for current index */
-
+                // calculate key range (based on actual key values) for current index
                 min = (min == null || keyComparator.compare(min.key, currentKey.key) > 0) ? currentKey : min;
                 max = (max == null || keyComparator.compare(max.key, currentKey.key) < 0) ? currentKey : max;
             }
 
-            public void blockingFlush()
+            protected void blockingFlush(boolean isFinal, int partNumber)
             {
+                boolean flushed = false;
                 Mode mode = getMode(column.name);
-                if (mode == null || keysPerTerm.size() == 0)
+                if (mode == null)
                     return;
 
-                OnDiskSABuilder builder = new OnDiskSABuilder(column.getValidator(), mode);
+                if (keysPerTerm.size() > 0) {
+                    OnDiskSABuilder builder = new OnDiskSABuilder(column.getValidator(), mode);
 
-                for (Map.Entry<ByteBuffer, TokenTreeBuilder> e : keysPerTerm.entrySet())
-                    builder.add(e.getKey(), e.getValue());
+                    for (Map.Entry<ByteBuffer, TokenTreeBuilder> e : keysPerTerm.entrySet())
+                        builder.add(e.getKey(), e.getValue());
 
-                // since everything added to the builder, it's time to drop references to the data
-                keysPerTerm.clear();
+                    // since everything added to the builder, it's time to drop references to the data
+                    keysPerTerm.clear();
 
-                builder.finish(Pair.create(min, max), new File(outputFile));
+                    builder.finish(Pair.create(min, max), new File(filename(isFinal, partNumber)));
+                    flushed = true;
+                }
+
+                if (isFinal && partNumber > 1)
+                {
+                    // the final flush may have not actually flushed anything (there were no terms after the
+                    // last flush). account for that case here.
+                    int numParts = flushed ? partNumber : partNumber - 1;
+
+                    ByteBuffer combinedMin = null, combinedMax = null;
+                    OnDiskSA[] sas = new OnDiskSA[numParts];
+                    for (int i = 0; i < numParts; i++)
+                    {
+                        sas[i] = new OnDiskSA(new File(partFilename(i + 1)), column.getValidator(), null);
+                        combinedMin = (combinedMin == null || keyComparator.compare(combinedMin, sas[i].minKey()) > 0) ? sas[i].minKey() : combinedMin;
+                        combinedMax = (combinedMax == null || keyComparator.compare(combinedMax, sas[i].maxKey()) < 0) ? sas[i].maxKey() : combinedMax;
+
+                    }
+
+                    OnDiskSABuilder combined = new OnDiskSABuilder(column.getValidator(), mode);
+                    combined.finish(Pair.create(combinedMin, combinedMax), new File(outputFile),
+                            new OnDiskSAIterator.CombinedSuffixIterator(org.apache.cassandra.db.index.search.Descriptor.CURRENT, sas));
+                }
+
+            }
+
+            public String filename(boolean isFinal, int partNumber)
+            {
+                return (!isFinal || partNumber > 1) ? partFilename(partNumber) : outputFile;
+            }
+
+            protected String partFilename(int partNumber)
+            {
+                return outputFile + partNumber;
             }
         }
     }
@@ -965,11 +1105,13 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex
     {
         public final Mode mode;
         public final boolean isAnalyzed;
+        public final long maxCompactionFlushMemoryInMb;
 
-        public IndexMode(Mode mode, boolean isAnalyzed)
+        public IndexMode(Mode mode, boolean isAnalyzed, long maxFlushMemMb)
         {
             this.mode = mode;
             this.isAnalyzed = isAnalyzed;
+            this.maxCompactionFlushMemoryInMb = maxFlushMemMb;
         }
     }
 }

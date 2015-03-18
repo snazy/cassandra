@@ -4,8 +4,10 @@ import java.nio.ByteBuffer;
 import java.util.Map;
 import java.util.TreeMap;
 
+import org.apache.cassandra.db.index.search.Descriptor;
 import org.apache.cassandra.db.index.search.OnDiskSA.DataSuffix;
 import org.apache.cassandra.db.index.search.container.TokenTree;
+import org.apache.cassandra.db.index.search.container.TokenTreeBuilder;
 import org.apache.cassandra.db.index.utils.CombinedValue;
 import org.apache.cassandra.db.index.utils.SkippableIterator;
 import org.apache.cassandra.db.marshal.AbstractType;
@@ -47,6 +49,11 @@ public class CombinedTerm implements CombinedValue<DataSuffix>
     public Map<Long, LongSet> getTokens()
     {
         return tokens;
+    }
+
+    public TokenTreeBuilder getTokenTreeBuilder(Descriptor descriptor)
+    {
+        return new TokenTreeBuilder(descriptor, tokens).finish();
     }
 
     @Override
