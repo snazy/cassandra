@@ -4,11 +4,16 @@ import java.io.DataOutput;
 import java.io.File;
 import java.io.IOException;
 import java.nio.ByteBuffer;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Iterator;
+import java.util.List;
 
-import com.google.common.annotations.VisibleForTesting;
 import org.apache.cassandra.db.DecoratedKey;
 import org.apache.cassandra.db.index.search.container.TokenTreeBuilder;
+import org.apache.cassandra.db.index.search.sa.IntegralSA;
+import org.apache.cassandra.db.index.search.sa.SA;
+import org.apache.cassandra.db.index.search.sa.TermIterator;
+import org.apache.cassandra.db.index.search.sa.SuffixSA;
 import org.apache.cassandra.db.marshal.*;
 import org.apache.cassandra.io.FSWriteError;
 import org.apache.cassandra.io.util.FileUtils;
@@ -21,9 +26,7 @@ import org.apache.cassandra.utils.Pair;
 import com.carrotsearch.hppc.LongArrayList;
 import com.carrotsearch.hppc.LongSet;
 import com.carrotsearch.hppc.ShortArrayList;
-import com.google.common.collect.AbstractIterator;
-import net.mintern.primitive.Primitive;
-import net.mintern.primitive.comparators.LongComparator;
+import com.google.common.annotations.VisibleForTesting;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -107,12 +110,15 @@ public class OnDiskSABuilder
     private final List<MutableLevel<InMemoryPointerSuffix>> levels = new ArrayList<>();
     private MutableLevel<InMemoryDataSuffix> dataLevel;
 
-    private final SA sa;
+    private final SA<?> sa;
     private final SuffixSize suffixSize;
 
     public OnDiskSABuilder(AbstractType<?> comparator, Mode mode)
     {
-        this.sa = new SA(comparator, mode);
+        // split terms into suffixes only if it's text, otherwise (even if SUFFIX is set) use terms in original form
+        this.sa = ((comparator instanceof UTF8Type || comparator instanceof AsciiType) && mode == Mode.SUFFIX)
+                    ? new SuffixSA(comparator, mode) : new IntegralSA(comparator, mode);
+
         this.suffixSize = SuffixSize.sizeOf(comparator);
     }
 
@@ -157,29 +163,31 @@ public class OnDiskSABuilder
         {
             out = new SequentialWriter(file, BLOCK_SIZE, false);
 
-            SuffixIterator suffixes = sa.finish(descriptor);
+            TermIterator terms = sa.finish(descriptor);
             out.writeUTF(descriptor.version.toString());
 
             out.writeShort(suffixSize.size);
 
             // min, max suffix (useful to find initial scan range from search expressions)
-            ByteBufferUtil.writeWithShortLength(suffixes.minSuffix(), out);
-            ByteBufferUtil.writeWithShortLength(suffixes.maxSuffix(), out);
+            ByteBufferUtil.writeWithShortLength(terms.minTerm(), out);
+            ByteBufferUtil.writeWithShortLength(terms.maxTerm(), out);
 
             // min, max keys covered by index (useful when searching across multiple indexes)
             ByteBufferUtil.writeWithShortLength(range.left.key, out);
             ByteBufferUtil.writeWithShortLength(range.right.key, out);
 
-            out.writeUTF(sa.mode.toString());
+            Mode saMode = sa.getMode();
+
+            out.writeUTF(saMode.toString());
 
             out.skipBytes((int) (BLOCK_SIZE - out.getFilePointer()));
 
-            dataLevel = sa.mode == Mode.SPARSE ? new DataBuilderLevel(out, new MutableDataBlock(sa.mode, descriptor), descriptor)
-                                               : new MutableLevel<>(out, new MutableDataBlock(sa.mode, descriptor));
-            while (suffixes.hasNext())
+            dataLevel = saMode == Mode.SPARSE ? new DataBuilderLevel(out, new MutableDataBlock(saMode, descriptor), descriptor)
+                                              : new MutableLevel<>(out, new MutableDataBlock(saMode, descriptor));
+            while (terms.hasNext())
             {
-                Pair<ByteBuffer, TokenTreeBuilder> suffix = suffixes.next();
-                addSuffix(new InMemoryDataSuffix(suffix.left, suffix.right), out);
+                Pair<ByteBuffer, TokenTreeBuilder> term = terms.next();
+                addSuffix(new InMemoryDataSuffix(term.left, term.right), out);
             }
 
             dataLevel.finalFlush();
@@ -284,190 +292,6 @@ public class OnDiskSABuilder
         {
             super(suffix);
             this.keys = keys;
-        }
-    }
-
-    private static class SA
-    {
-        private final List<Term> terms = new ArrayList<>();
-        private final AbstractType<?> comparator;
-        private final Mode mode;
-
-        private int charCount = 0;
-
-        public SA(AbstractType<?> comparator, Mode mode)
-        {
-            this.comparator = comparator;
-            this.mode = mode;
-        }
-
-        public void add(ByteBuffer term, TokenTreeBuilder keys)
-        {
-            terms.add(new Term(charCount, term, keys));
-            charCount += term.remaining();
-        }
-
-        public SuffixIterator finish(Descriptor descriptor)
-        {
-            switch (mode)
-            {
-                case SUFFIX:
-                    return new SASuffixIterator(descriptor);
-
-                case ORIGINAL:
-                case SPARSE:
-                    return new IntegralSuffixIterator();
-
-                default:
-                    throw new IllegalArgumentException("unknown mode: " + mode);
-            }
-        }
-
-        private class IntegralSuffixIterator extends SuffixIterator
-        {
-            private final Iterator<Term> termIterator;
-
-            public IntegralSuffixIterator()
-            {
-                Collections.sort(terms, new Comparator<Term>()
-                {
-                    @Override
-                    public int compare(Term a, Term b)
-                    {
-                        return comparator.compare(a.value, b.value);
-                    }
-                });
-
-                termIterator = terms.iterator();
-            }
-
-            @Override
-            public ByteBuffer minSuffix()
-            {
-                return terms.get(0).value;
-            }
-
-            @Override
-            public ByteBuffer maxSuffix()
-            {
-                return terms.get(terms.size() - 1).value;
-            }
-
-            @Override
-            protected Pair<ByteBuffer, TokenTreeBuilder> computeNext()
-            {
-                if (!termIterator.hasNext())
-                    return endOfData();
-
-                Term term = termIterator.next();
-                return Pair.create(term.value, term.keys.finish());
-            }
-        }
-
-        private class SASuffixIterator extends SuffixIterator
-        {
-            private final long[] suffixes;
-
-            private int current = 0;
-            private ByteBuffer lastProcessedSuffix;
-            private TokenTreeBuilder container;
-            private final Descriptor descriptor;
-
-            public SASuffixIterator(Descriptor d)
-            {
-                // each element has term index and char position encoded as two 32-bit integers
-                // to avoid binary search per suffix while sorting suffix array.
-                suffixes = new long[charCount];
-                descriptor = d;
-
-                long termIndex = -1, currentTermLength = -1;
-                for (int i = 0; i < charCount; i++)
-                {
-                    if (i >= currentTermLength || currentTermLength == -1)
-                    {
-                        Term currentTerm = terms.get((int) ++termIndex);
-                        currentTermLength = currentTerm.position + currentTerm.value.remaining();
-                    }
-
-                    suffixes[i] = (termIndex << 32) | i;
-                }
-
-                Primitive.sort(suffixes, new LongComparator()
-                {
-                    @Override
-                    public int compare(long a, long b)
-                    {
-                        Term aTerm = terms.get((int) (a >>> 32));
-                        Term bTerm = terms.get((int) (b >>> 32));
-                        return comparator.compare(aTerm.getSuffix(((int) a) - aTerm.position),
-                                bTerm.getSuffix(((int) b) - bTerm.position));
-                    }
-                });
-            }
-
-            private Pair<ByteBuffer, TokenTreeBuilder> suffixAt(int position)
-            {
-                long index = suffixes[position];
-                Term term = terms.get((int) (index >>> 32));
-                return Pair.create(term.getSuffix(((int) index) - term.position), term.keys);
-            }
-
-            @Override
-            public ByteBuffer minSuffix()
-            {
-                return suffixAt(0).left;
-            }
-
-            @Override
-            public ByteBuffer maxSuffix()
-            {
-                return suffixAt(suffixes.length - 1).left;
-            }
-
-            @Override
-            protected Pair<ByteBuffer, TokenTreeBuilder> computeNext()
-            {
-                while (true)
-                {
-                    if (current >= suffixes.length)
-                    {
-                        if (lastProcessedSuffix == null)
-                            return endOfData();
-
-                        Pair<ByteBuffer, TokenTreeBuilder> result = finishSuffix();
-
-                        lastProcessedSuffix = null;
-                        return result;
-                    }
-
-                    Pair<ByteBuffer, TokenTreeBuilder> suffix = suffixAt(current++);
-
-                    if (lastProcessedSuffix == null)
-                    {
-                        lastProcessedSuffix = suffix.left;
-                        container = new TokenTreeBuilder(descriptor, suffix.right.getTokens());
-                    }
-                    else if (comparator.compare(lastProcessedSuffix, suffix.left) == 0)
-                    {
-                        lastProcessedSuffix = suffix.left;
-                        container.add(suffix.right.getTokens());
-                    }
-                    else
-                    {
-                        Pair<ByteBuffer, TokenTreeBuilder> result = finishSuffix();
-
-                        lastProcessedSuffix = suffix.left;
-                        container = new TokenTreeBuilder(descriptor, suffix.right.getTokens());
-
-                        return result;
-                    }
-                }
-            }
-
-            private Pair<ByteBuffer, TokenTreeBuilder> finishSuffix()
-            {
-                return Pair.create(lastProcessedSuffix, container.finish());
-            }
         }
     }
 
@@ -732,11 +556,5 @@ public class OnDiskSABuilder
             buffer.writeByte(0x0);
             buffer.writeInt(offset);
         }
-    }
-
-    public static abstract class SuffixIterator extends AbstractIterator<Pair<ByteBuffer, TokenTreeBuilder>>
-    {
-        public abstract ByteBuffer minSuffix();
-        public abstract ByteBuffer maxSuffix();
     }
 }

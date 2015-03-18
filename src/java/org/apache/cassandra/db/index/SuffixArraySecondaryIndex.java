@@ -739,7 +739,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex
                 try
                 {
                     index = new SSTableIndex(col, indexFile, sstable);
-                    logger.info("Interval.create(column: {}, minSuffix: {}, maxSuffix: {}, minKey: {}, maxKey: {}, sstable: {})",
+                    logger.info("Interval.create(column: {}, minTerm: {}, maxTerm: {}, minKey: {}, maxKey: {}, sstable: {})",
                                 name,
                                 validator.getString(index.minSuffix()),
                                 validator.getString(index.maxSuffix()),

@@ -83,6 +83,9 @@ public class IndexMemtable
 
             ByteBuffer value = column.value();
 
+            if (value.remaining() == 0)
+                continue;
+
             if (value.remaining() >= OnDiskSABuilder.MAX_TERM_SIZE)
             {
                 logger.error("Can't added column {} to index for key: {}, value size {} bytes, max allowed size {} bytes, use analyzed = true (if not yet set) for that column.",

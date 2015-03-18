@@ -1297,6 +1297,23 @@ public class SuffixArraySecondaryIndexTest extends SchemaLoader
         rm.add(CF_NAME, comment, UTF8Type.instance.decompose("ⓈⓅⒺⒸⒾⒶⓁ ⒞⒣⒜⒭⒮ and normal ones"), System.currentTimeMillis());
         rm.apply();
 
+        rm = new RowMutation(KS_NAME, AsciiType.instance.decompose("key2"));
+        rm.add(CF_NAME, comment, UTF8Type.instance.decompose("龍馭鬱"), System.currentTimeMillis());
+        rm.apply();
+
+        rm = new RowMutation(KS_NAME, AsciiType.instance.decompose("key3"));
+        rm.add(CF_NAME, comment, UTF8Type.instance.decompose("インディアナ"), System.currentTimeMillis());
+        rm.apply();
+
+        rm = new RowMutation(KS_NAME, AsciiType.instance.decompose("key4"));
+        rm.add(CF_NAME, comment, UTF8Type.instance.decompose("レストラン"), System.currentTimeMillis());
+        rm.apply();
+
+        rm = new RowMutation(KS_NAME, AsciiType.instance.decompose("key5"));
+        rm.add(CF_NAME, comment, UTF8Type.instance.decompose("ベンジャミン ウエスト"), System.currentTimeMillis());
+        rm.apply();
+
+
         Set<String> rows;
 
         /* Memtable */
@@ -1307,6 +1324,30 @@ public class SuffixArraySecondaryIndexTest extends SchemaLoader
         rows = getIndexed(store, 10, new IndexExpression(comment, IndexOperator.EQ, UTF8Type.instance.decompose("normal")));
         Assert.assertTrue(rows.toString(), Arrays.equals(new String[] { "key1" }, rows.toArray(new String[rows.size()])));
 
+        rows = getIndexed(store, 10, new IndexExpression(comment, IndexOperator.EQ, UTF8Type.instance.decompose("龍")));
+        Assert.assertTrue(rows.toString(), Arrays.equals(new String[] { "key2" }, rows.toArray(new String[rows.size()])));
+
+        rows = getIndexed(store, 10, new IndexExpression(comment, IndexOperator.EQ, UTF8Type.instance.decompose("鬱")));
+        Assert.assertTrue(rows.toString(), Arrays.equals(new String[] { "key2" }, rows.toArray(new String[rows.size()])));
+
+        rows = getIndexed(store, 10, new IndexExpression(comment, IndexOperator.EQ, UTF8Type.instance.decompose("馭鬱")));
+        Assert.assertTrue(rows.toString(), Arrays.equals(new String[] { "key2" }, rows.toArray(new String[rows.size()])));
+
+        rows = getIndexed(store, 10, new IndexExpression(comment, IndexOperator.EQ, UTF8Type.instance.decompose("龍馭鬱")));
+        Assert.assertTrue(rows.toString(), Arrays.equals(new String[] { "key2" }, rows.toArray(new String[rows.size()])));
+
+        rows = getIndexed(store, 10, new IndexExpression(comment, IndexOperator.EQ, UTF8Type.instance.decompose("ベンジャミン")));
+        Assert.assertTrue(rows.toString(), Arrays.equals(new String[] { "key5" }, rows.toArray(new String[rows.size()])));
+
+        rows = getIndexed(store, 10, new IndexExpression(comment, IndexOperator.EQ, UTF8Type.instance.decompose("レストラ")));
+        Assert.assertTrue(rows.toString(), Arrays.equals(new String[] { "key4" }, rows.toArray(new String[rows.size()])));
+
+        rows = getIndexed(store, 10, new IndexExpression(comment, IndexOperator.EQ, UTF8Type.instance.decompose("インディ")));
+        Assert.assertTrue(rows.toString(), Arrays.equals(new String[] { "key3" }, rows.toArray(new String[rows.size()])));
+
+        rows = getIndexed(store, 10, new IndexExpression(comment, IndexOperator.EQ, UTF8Type.instance.decompose("ベンジャミ")));
+        Assert.assertTrue(rows.toString(), Arrays.equals(new String[] { "key5" }, rows.toArray(new String[rows.size()])));
+
         store.forceBlockingFlush();
 
         /* OnDiskSA */
@@ -1316,6 +1357,117 @@ public class SuffixArraySecondaryIndexTest extends SchemaLoader
 
         rows = getIndexed(store, 10, new IndexExpression(comment, IndexOperator.EQ, UTF8Type.instance.decompose("normal")));
         Assert.assertTrue(rows.toString(), Arrays.equals(new String[] { "key1" }, rows.toArray(new String[rows.size()])));
+
+        rows = getIndexed(store, 10, new IndexExpression(comment, IndexOperator.EQ, UTF8Type.instance.decompose("龍")));
+        Assert.assertTrue(rows.toString(), Arrays.equals(new String[] { "key2" }, rows.toArray(new String[rows.size()])));
+
+        rows = getIndexed(store, 10, new IndexExpression(comment, IndexOperator.EQ, UTF8Type.instance.decompose("鬱")));
+        Assert.assertTrue(rows.toString(), Arrays.equals(new String[] { "key2" }, rows.toArray(new String[rows.size()])));
+
+        rows = getIndexed(store, 10, new IndexExpression(comment, IndexOperator.EQ, UTF8Type.instance.decompose("馭鬱")));
+        Assert.assertTrue(rows.toString(), Arrays.equals(new String[] { "key2" }, rows.toArray(new String[rows.size()])));
+
+        rows = getIndexed(store, 10, new IndexExpression(comment, IndexOperator.EQ, UTF8Type.instance.decompose("龍馭鬱")));
+        Assert.assertTrue(rows.toString(), Arrays.equals(new String[] { "key2" }, rows.toArray(new String[rows.size()])));
+
+        rows = getIndexed(store, 10, new IndexExpression(comment, IndexOperator.EQ, UTF8Type.instance.decompose("ベンジャミン")));
+        Assert.assertTrue(rows.toString(), Arrays.equals(new String[] { "key5" }, rows.toArray(new String[rows.size()])));
+
+        rows = getIndexed(store, 10, new IndexExpression(comment, IndexOperator.EQ, UTF8Type.instance.decompose("レストラ")));
+        Assert.assertTrue(rows.toString(), Arrays.equals(new String[] { "key4" }, rows.toArray(new String[rows.size()])));
+
+        rows = getIndexed(store, 10, new IndexExpression(comment, IndexOperator.EQ, UTF8Type.instance.decompose("インディ")));
+        Assert.assertTrue(rows.toString(), Arrays.equals(new String[] { "key3" }, rows.toArray(new String[rows.size()])));
+
+        rows = getIndexed(store, 10, new IndexExpression(comment, IndexOperator.EQ, UTF8Type.instance.decompose("ベンジャミ")));
+        Assert.assertTrue(rows.toString(), Arrays.equals(new String[] { "key5" }, rows.toArray(new String[rows.size()])));
+    }
+
+    @Test
+    public void testUnicodeSuffixMode()
+    {
+        ColumnFamilyStore store = Keyspace.open(KS_NAME).getColumnFamilyStore(CF_NAME);
+
+        final ByteBuffer comment = UTF8Type.instance.decompose("comment_suffix_split");
+
+        RowMutation rm = new RowMutation(KS_NAME, AsciiType.instance.decompose("key1"));
+        rm.add(CF_NAME, comment, UTF8Type.instance.decompose("龍馭鬱"), System.currentTimeMillis());
+        rm.apply();
+
+        rm = new RowMutation(KS_NAME, AsciiType.instance.decompose("key2"));
+        rm.add(CF_NAME, comment, UTF8Type.instance.decompose("インディアナ"), System.currentTimeMillis());
+        rm.apply();
+
+        rm = new RowMutation(KS_NAME, AsciiType.instance.decompose("key3"));
+        rm.add(CF_NAME, comment, UTF8Type.instance.decompose("レストラン"), System.currentTimeMillis());
+        rm.apply();
+
+        rm = new RowMutation(KS_NAME, AsciiType.instance.decompose("key4"));
+        rm.add(CF_NAME, comment, UTF8Type.instance.decompose("ベンジャミン ウエスト"), System.currentTimeMillis());
+        rm.apply();
+
+
+        Set<String> rows;
+
+        /* Memtable */
+
+        rows = getIndexed(store, 10, new IndexExpression(comment, IndexOperator.EQ, UTF8Type.instance.decompose("龍")));
+        Assert.assertTrue(rows.toString(), Arrays.equals(new String[] { "key1" }, rows.toArray(new String[rows.size()])));
+
+        rows = getIndexed(store, 10, new IndexExpression(comment, IndexOperator.EQ, UTF8Type.instance.decompose("鬱")));
+        Assert.assertTrue(rows.toString(), Arrays.equals(new String[] { "key1" }, rows.toArray(new String[rows.size()])));
+
+        rows = getIndexed(store, 10, new IndexExpression(comment, IndexOperator.EQ, UTF8Type.instance.decompose("馭鬱")));
+        Assert.assertTrue(rows.toString(), Arrays.equals(new String[] { "key1" }, rows.toArray(new String[rows.size()])));
+
+        rows = getIndexed(store, 10, new IndexExpression(comment, IndexOperator.EQ, UTF8Type.instance.decompose("龍馭鬱")));
+        Assert.assertTrue(rows.toString(), Arrays.equals(new String[] { "key1" }, rows.toArray(new String[rows.size()])));
+
+        rows = getIndexed(store, 10, new IndexExpression(comment, IndexOperator.EQ, UTF8Type.instance.decompose("ベンジャミン")));
+        Assert.assertTrue(rows.toString(), Arrays.equals(new String[] { "key4" }, rows.toArray(new String[rows.size()])));
+
+        rows = getIndexed(store, 10, new IndexExpression(comment, IndexOperator.EQ, UTF8Type.instance.decompose("トラン")));
+        Assert.assertTrue(rows.toString(), Arrays.equals(new String[] { "key3" }, rows.toArray(new String[rows.size()])));
+
+        rows = getIndexed(store, 10, new IndexExpression(comment, IndexOperator.EQ, UTF8Type.instance.decompose("ディア")));
+        Assert.assertTrue(rows.toString(), Arrays.equals(new String[] { "key2" }, rows.toArray(new String[rows.size()])));
+
+        rows = getIndexed(store, 10, new IndexExpression(comment, IndexOperator.EQ, UTF8Type.instance.decompose("ジャミン")));
+        Assert.assertTrue(rows.toString(), Arrays.equals(new String[] { "key4" }, rows.toArray(new String[rows.size()])));
+
+        rows = getIndexed(store, 10, new IndexExpression(comment, IndexOperator.EQ, UTF8Type.instance.decompose("ン")));
+        Assert.assertTrue(rows.toString(), Arrays.equals(new String[] { "key2", "key3", "key4" }, rows.toArray(new String[rows.size()])));
+
+        store.forceBlockingFlush();
+
+        /* OnDiskSA */
+
+        rows = getIndexed(store, 10, new IndexExpression(comment, IndexOperator.EQ, UTF8Type.instance.decompose("龍")));
+        Assert.assertTrue(rows.toString(), Arrays.equals(new String[] { "key1" }, rows.toArray(new String[rows.size()])));
+
+        rows = getIndexed(store, 10, new IndexExpression(comment, IndexOperator.EQ, UTF8Type.instance.decompose("鬱")));
+        Assert.assertTrue(rows.toString(), Arrays.equals(new String[] { "key1" }, rows.toArray(new String[rows.size()])));
+
+        rows = getIndexed(store, 10, new IndexExpression(comment, IndexOperator.EQ, UTF8Type.instance.decompose("馭鬱")));
+        Assert.assertTrue(rows.toString(), Arrays.equals(new String[] { "key1" }, rows.toArray(new String[rows.size()])));
+
+        rows = getIndexed(store, 10, new IndexExpression(comment, IndexOperator.EQ, UTF8Type.instance.decompose("龍馭鬱")));
+        Assert.assertTrue(rows.toString(), Arrays.equals(new String[] { "key1" }, rows.toArray(new String[rows.size()])));
+
+        rows = getIndexed(store, 10, new IndexExpression(comment, IndexOperator.EQ, UTF8Type.instance.decompose("ベンジャミン")));
+        Assert.assertTrue(rows.toString(), Arrays.equals(new String[] { "key4" }, rows.toArray(new String[rows.size()])));
+
+        rows = getIndexed(store, 10, new IndexExpression(comment, IndexOperator.EQ, UTF8Type.instance.decompose("トラン")));
+        Assert.assertTrue(rows.toString(), Arrays.equals(new String[] { "key3" }, rows.toArray(new String[rows.size()])));
+
+        rows = getIndexed(store, 10, new IndexExpression(comment, IndexOperator.EQ, UTF8Type.instance.decompose("ディア")));
+        Assert.assertTrue(rows.toString(), Arrays.equals(new String[] { "key2" }, rows.toArray(new String[rows.size()])));
+
+        rows = getIndexed(store, 10, new IndexExpression(comment, IndexOperator.EQ, UTF8Type.instance.decompose("ジャミン")));
+        Assert.assertTrue(rows.toString(), Arrays.equals(new String[] { "key4" }, rows.toArray(new String[rows.size()])));
+
+        rows = getIndexed(store, 10, new IndexExpression(comment, IndexOperator.EQ, UTF8Type.instance.decompose("ン")));
+        Assert.assertTrue(rows.toString(), Arrays.equals(new String[] { "key2", "key3", "key4" }, rows.toArray(new String[rows.size()])));
     }
 
     @Test
