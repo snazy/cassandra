@@ -10,6 +10,7 @@ import org.apache.cassandra.db.index.search.container.TokenTree;
 import org.apache.cassandra.db.index.search.container.TokenTreeBuilder;
 import org.apache.cassandra.db.index.search.plan.Expression;
 import org.apache.cassandra.db.index.search.utils.CombinedTerm;
+import org.apache.cassandra.db.index.search.utils.CombinedTermIterator;
 import org.apache.cassandra.db.index.search.utils.OnDiskSAIterator;
 import org.apache.cassandra.db.index.utils.SkippableIterator;
 import org.apache.cassandra.db.marshal.AbstractType;
@@ -650,7 +651,7 @@ public class OnDiskSATest
         indexC.deleteOnExit();
 
         OnDiskSABuilder combined = new OnDiskSABuilder(LongType.instance, OnDiskSABuilder.Mode.ORIGINAL);
-        combined.finish(Pair.create(keyAt(0).key, keyAt(100).key), indexC, new OnDiskSAIterator.CombinedSuffixIterator(Descriptor.CURRENT, a, b));
+        combined.finish(Pair.create(keyAt(0).key, keyAt(100).key), indexC, new CombinedTermIterator(a, b));
 
         OnDiskSA c = new OnDiskSA(indexC, LongType.instance, new KeyConverter());
         union = OnDiskSAIterator.union(c);

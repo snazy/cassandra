@@ -25,7 +25,7 @@ import org.apache.cassandra.db.index.search.plan.QueryPlan;
 import org.apache.cassandra.db.index.search.tokenization.AbstractTokenizer;
 import org.apache.cassandra.db.index.search.tokenization.NoOpTokenizer;
 import org.apache.cassandra.db.index.search.tokenization.StandardTokenizer;
-import org.apache.cassandra.db.index.search.utils.OnDiskSAIterator;
+import org.apache.cassandra.db.index.search.utils.CombinedTermIterator;
 import org.apache.cassandra.db.index.utils.TypeUtil;
 import org.apache.cassandra.db.marshal.AbstractType;
 import org.apache.cassandra.db.marshal.AsciiType;
@@ -669,7 +669,8 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex
                 if (mode == null)
                     return;
 
-                if (keysPerTerm.size() > 0) {
+                if (keysPerTerm.size() > 0)
+                {
                     OnDiskSABuilder builder = new OnDiskSABuilder(column.getValidator(), mode);
 
                     for (Map.Entry<ByteBuffer, TokenTreeBuilder> e : keysPerTerm.entrySet())
@@ -699,8 +700,9 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex
                     }
 
                     OnDiskSABuilder combined = new OnDiskSABuilder(column.getValidator(), mode);
-                    combined.finish(Pair.create(combinedMin, combinedMax), new File(outputFile),
-                            new OnDiskSAIterator.CombinedSuffixIterator(org.apache.cassandra.db.index.search.Descriptor.CURRENT, sas));
+                    combined.finish(Pair.create(combinedMin, combinedMax),
+                                    new File(outputFile),
+                                    new CombinedTermIterator(sas));
                 }
 
             }
@@ -879,7 +881,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex
                 try
                 {
                     index = new SSTableIndex(col, indexFile, sstable);
-                    logger.info("Interval.create(column: {}, minSuffix: {}, maxSuffix: {}, minKey: {}, maxKey: {}, sstable: {})",
+                    logger.info("Interval.create(column: {}, minTerm: {}, maxTerm: {}, minKey: {}, maxKey: {}, sstable: {})",
                                 name,
                                 validator.getString(index.minSuffix()),
                                 validator.getString(index.maxSuffix()),
