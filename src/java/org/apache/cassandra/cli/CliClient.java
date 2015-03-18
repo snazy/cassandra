@@ -824,16 +824,9 @@ public class CliClient
 
         // fetching all columns
         SlicePredicate predicate = new SlicePredicate();
-        //SliceRange sliceRange = new SliceRange();
-        //sliceRange.setStart(new byte[0]).setFinish(new byte[0]);
-        //predicate.setSlice_range(sliceRange);
-        predicate.addToColumn_names(UTF8Type.instance.decompose("id"));
-        predicate.addToColumn_names(UTF8Type.instance.decompose("source"));
-        predicate.addToColumn_names(UTF8Type.instance.decompose("/data/fraudTransaction/id/"));
-        predicate.addToColumn_names(UTF8Type.instance.decompose("/output/build-full-name/"));
-        predicate.addToColumn_names(UTF8Type.instance.decompose("/data/currentBillingInfo/postalCode/"));
-        predicate.addToColumn_names(UTF8Type.instance.decompose("timestamp"));
-
+        SliceRange sliceRange = new SliceRange();
+        sliceRange.setStart(new byte[0]).setFinish(new byte[0]);
+        predicate.setSlice_range(sliceRange);
 
         for (int i = 0; i < conditions.getChildCount(); i++)
         {
