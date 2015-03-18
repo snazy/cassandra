@@ -20,11 +20,9 @@ package org.apache.cassandra.utils;
 import java.io.FileDescriptor;
 import java.lang.reflect.Field;
 
+import com.sun.jna.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
-import com.sun.jna.LastErrorException;
-import com.sun.jna.Native;
 
 public final class CLibrary
 {
@@ -47,6 +45,14 @@ public final class CLibrary
     private static final int POSIX_FADV_WILLNEED   = 3; /* fadvise.h */
     private static final int POSIX_FADV_DONTNEED   = 4; /* fadvise.h */
     private static final int POSIX_FADV_NOREUSE    = 5; /* fadvise.h */
+
+    // from sys/mman.h (or uapi/asm-generic/mman-common.h on linux)
+    private static final int PROT_NONE  = 0x00;
+    private static final int PROT_READ  = 0x01;
+    private static final int PROT_WRITE = 0x02;
+
+    // from sys/mman.h (or uapi/asm-generic/mman-common.h on linux)
+    private static final int MAP_SHARED = 0x01;
     
     static boolean jnaAvailable = false;
     static boolean jnaLockable = false;
@@ -79,12 +85,22 @@ public final class CLibrary
     // fcntl - manipulate file descriptor, `man 2 fcntl`
     public static native int fcntl(int fd, int command, long flags) throws LastErrorException;
 
-    // fadvice
-    public static native int posix_fadvise(int fd, long offset, int len, int flag) throws LastErrorException;
-
     public static native int open(String path, int flags) throws LastErrorException;
     public static native int fsync(int fd) throws LastErrorException;
     public static native int close(int fd) throws LastErrorException;
+
+    public static native Pointer mmap(Pointer address, long len, int prot, int flags, int fildes, long off) throws LastErrorException;
+    public static native int munmap(Pointer address, long len) throws LastErrorException;
+
+    // fadvice
+    public static int posix_fadvise(int fd, long offset, int len, int flag)
+    {
+        Function fadvise = NativeLibrary.getInstance("c").getFunction("posix_fadvise");
+        return fadvise == null ? -1 : fadvise.invokeInt(new Object[] { fd, offset, len, flag });
+    }
+
+    public static Function fadvise;
+
 
     private static int errno(RuntimeException e)
     {
@@ -293,4 +309,27 @@ public final class CLibrary
             return -1;
         }
     }
+
+    // TODO (jwest): change to take FileChannel.MapMode
+    public static Pointer nativeMapping(FileDescriptor fd, long offset, long length, String mode)
+    {
+        int mapMode;
+
+        if (mode.equals("r"))
+            mapMode = PROT_READ;
+        else if (mode.equals("w"))
+            mapMode = PROT_WRITE;
+        else if (mode.equals("rw"))
+            mapMode = PROT_READ | PROT_WRITE;
+        else
+            mapMode = PROT_NONE;
+
+        return nativeMapping(getfd(fd), offset, length, mapMode);
+    }
+
+    public static Pointer nativeMapping(int fd, long offset, long length, int mode)
+    {
+        return mmap(Pointer.createConstant(0), length, mode, MAP_SHARED, fd, offset);
+    }
+
 }

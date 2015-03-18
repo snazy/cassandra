@@ -255,7 +255,7 @@ public class Operation
                     continue;
                 }
 
-                column = Pair.create(nonIndexedColumn, new IndexMode(null, false));
+                column = Pair.create(nonIndexedColumn, new IndexMode(null, false, 0));
             }
 
             AbstractType<?> validator = column.left.getValidator();

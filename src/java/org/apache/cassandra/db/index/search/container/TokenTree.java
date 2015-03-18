@@ -8,6 +8,7 @@ import org.apache.cassandra.db.DecoratedKey;
 import org.apache.cassandra.db.index.search.Descriptor;
 import org.apache.cassandra.db.index.utils.CombinedValue;
 import org.apache.cassandra.db.index.utils.SkippableIterator;
+import org.apache.cassandra.io.util.NativeMappedBuffer;
 import org.apache.cassandra.utils.MergeIterator;
 import org.apache.cassandra.utils.Pair;
 
@@ -29,18 +30,18 @@ public class TokenTree
     private static final int SHORT_BYTES = Short.SIZE / 8;
 
     private final Descriptor descriptor;
-    private final ByteBuffer file;
-    private final int startPos;
+    private final NativeMappedBuffer file;
+    private final long startPos;
     private final long treeMinToken;
     private final long treeMaxToken;
     private final long tokenCount;
 
-    public TokenTree(ByteBuffer tokenTree)
+    public TokenTree(NativeMappedBuffer tokenTree)
     {
         this(Descriptor.CURRENT, tokenTree);
     }
 
-    public TokenTree(Descriptor d, ByteBuffer tokenTree)
+    public TokenTree(Descriptor d, NativeMappedBuffer tokenTree)
     {
         descriptor = d;
         file = tokenTree;
@@ -65,7 +66,7 @@ public class TokenTree
     public Token get(final long searchToken, Function<Long, DecoratedKey> kf)
     {
         seekToLeaf(searchToken, file);
-        int leafStart = file.position();
+        long leafStart = file.position();
         short leafSize = file.getShort(leafStart + 1); // skip the info byte
 
         file.position(leafStart + TokenTreeBuilder.BLOCK_HEADER_BYTES); // skip to tokens
@@ -93,11 +94,11 @@ public class TokenTree
     }
 
     // finds leaf that *could* contain token
-    private void seekToLeaf(long token, ByteBuffer file)
+    private void seekToLeaf(long token, NativeMappedBuffer file)
     {
         // this loop always seeks forward except for the first iteration
         // where it may seek back to the root
-        int blockStart = startPos;
+        long blockStart = startPos;
         while (true)
         {
             file.position(blockStart);
@@ -116,7 +117,7 @@ public class TokenTree
             long minToken = file.getLong();
             long maxToken = file.getLong();
 
-            int seekBase = blockStart + TokenTreeBuilder.BLOCK_HEADER_BYTES;
+            long seekBase = blockStart + TokenTreeBuilder.BLOCK_HEADER_BYTES;
             if (minToken > token)
             {
                 // seek to beginning of child offsets to locate first child
@@ -147,7 +148,7 @@ public class TokenTree
         }
     }
 
-    private short searchBlock(long searchToken, short tokenCount, ByteBuffer file)
+    private short searchBlock(long searchToken, short tokenCount, NativeMappedBuffer file)
     {
         short offsetIndex = 0;
         for (int i = 0; i < tokenCount; i++)
@@ -164,7 +165,7 @@ public class TokenTree
 
     private short searchLeaf(long searchToken, short tokenCount)
     {
-        int base = file.position();
+        long base = file.position();
 
         int start = 0;
         int end = tokenCount;
@@ -193,17 +194,17 @@ public class TokenTree
     {
         private final Function<Long, DecoratedKey> keyFetcher;
 
-        private int currentLeafStart;
+        private long currentLeafStart;
         private int currentTokenIndex;
         private Token lastToken;
         private boolean lastLeaf;
         private short leafSize;
         private long leafMinToken;
         private long leafMaxToken;
-        private ByteBuffer file;
+        private NativeMappedBuffer file;
         private Long skipToToken;
 
-        TokenTreeIterator(ByteBuffer file, Function<Long, DecoratedKey> keyFetcher)
+        TokenTreeIterator(NativeMappedBuffer file, Function<Long, DecoratedKey> keyFetcher)
         {
             this.file = file;
             this.keyFetcher = keyFetcher;
@@ -329,7 +330,7 @@ public class TokenTree
             return Token.getTokenAt(idx, leafSize, file, keyFetcher);
         }
 
-        private int getTokenPosition(int idx)
+        private long getTokenPosition(int idx)
         {
             // skip 4 byte entry header to get position pointing directly at the entry's token
             return Token.getEntryPosition(idx, file) + (2 * SHORT_BYTES);
@@ -362,9 +363,9 @@ public class TokenTree
             }};
         }
 
-        public static Token getTokenAt(int idx, short max, ByteBuffer file, Function<Long, DecoratedKey> keyFetcher)
+        public static Token getTokenAt(int idx, short max, NativeMappedBuffer file, Function<Long, DecoratedKey> keyFetcher)
         {
-            int position = getEntryPosition(idx, file);
+            long position = getEntryPosition(idx, file);
 
             short info = file.getShort(position);
             short offsetShort = file.getShort(position + SHORT_BYTES);
@@ -374,19 +375,19 @@ public class TokenTree
             return new Token(token, Pair.create(keyFetcher, offsets));
         }
 
-        private static int getEntryPosition(int idx, ByteBuffer file)
+        private static long getEntryPosition(int idx, NativeMappedBuffer file)
         {
             // info (4 bytes) + token (8 bytes) + offset (4 bytes) = 16 bytes
             return file.position() + (idx * (2 * LONG_BYTES));
         }
 
-        private static long[] reconstructOffset(short info, short offsetShort, int offsetInt, ByteBuffer file, short leafSize)
+        private static long[] reconstructOffset(short info, short offsetShort, int offsetInt, NativeMappedBuffer file, short leafSize)
         {
             int type = (info & TokenTreeBuilder.ENTRY_TYPE_MASK);
             if (type == TokenTreeBuilder.EntryType.OVERFLOW.ordinal())
             {
                 long[] offsets = new long[offsetShort]; // offsetShort contains count of tokens
-                int offsetPos = (file.position() + (2 * (leafSize * LONG_BYTES)) + (offsetInt * LONG_BYTES));
+                long offsetPos = (file.position() + (2 * (leafSize * LONG_BYTES)) + (offsetInt * LONG_BYTES));
                 for (int i = 0; i < offsetShort; i++) {
                     offsets[i] = file.getLong(offsetPos + (i * LONG_BYTES));
                 }

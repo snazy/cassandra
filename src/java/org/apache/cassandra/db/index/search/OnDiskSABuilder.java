@@ -148,8 +148,18 @@ public class OnDiskSABuilder
         finish(Descriptor.CURRENT, range, file);
     }
 
+    public void finish(Pair<ByteBuffer, ByteBuffer> range, File file, SuffixIterator suffixes)
+    {
+        finish(Descriptor.CURRENT, range, file, suffixes);
+    }
+
     @VisibleForTesting
     public void finish(Descriptor descriptor, Pair<DecoratedKey, DecoratedKey> range, File file) throws FSWriteError
+    {
+        finish(descriptor, Pair.create(range.left.key, range.right.key), file, sa.finish(descriptor));
+    }
+
+    protected void finish(Descriptor descriptor, Pair<ByteBuffer, ByteBuffer> range, File file, SuffixIterator suffixes)
     {
         SequentialWriter out = null;
 
@@ -157,7 +167,6 @@ public class OnDiskSABuilder
         {
             out = new SequentialWriter(file, BLOCK_SIZE, false);
 
-            SuffixIterator suffixes = sa.finish(descriptor);
             out.writeUTF(descriptor.version.toString());
 
             out.writeShort(suffixSize.size);
@@ -167,8 +176,8 @@ public class OnDiskSABuilder
             ByteBufferUtil.writeWithShortLength(suffixes.maxSuffix(), out);
 
             // min, max keys covered by index (useful when searching across multiple indexes)
-            ByteBufferUtil.writeWithShortLength(range.left.key, out);
-            ByteBufferUtil.writeWithShortLength(range.right.key, out);
+            ByteBufferUtil.writeWithShortLength(range.left, out);
+            ByteBufferUtil.writeWithShortLength(range.right, out);
 
             out.writeUTF(sa.mode.toString());
 

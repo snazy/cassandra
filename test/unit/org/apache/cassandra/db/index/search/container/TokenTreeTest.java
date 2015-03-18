@@ -10,6 +10,7 @@ import org.apache.cassandra.db.DecoratedKey;
 import org.apache.cassandra.db.index.search.Descriptor;
 import org.apache.cassandra.db.index.utils.CombinedValue;
 import org.apache.cassandra.dht.LongToken;
+import org.apache.cassandra.io.util.NativeMappedBuffer;
 import org.apache.cassandra.utils.MurmurHash;
 import org.apache.cassandra.utils.Pair;
 import org.apache.cassandra.db.index.utils.SkippableIterator;
@@ -166,7 +167,7 @@ public class TokenTreeTest
         writer.close();
 
         final RandomAccessReader reader = RandomAccessReader.open(treeFile);
-        final TokenTree tokenTree = new TokenTree(reader.getChannel().map(FileChannel.MapMode.READ_ONLY, 0, reader.length()));
+        final TokenTree tokenTree = new TokenTree(new NativeMappedBuffer(reader.getFD(), 0, reader.length()));
 
         final Iterator<Token> tokenIterator = tokenTree.iterator(KEY_CONVERTER);
         final Iterator<Map.Entry<Long, LongSet>> listIterator = simpleTokenMap.entrySet().iterator();
@@ -210,7 +211,7 @@ public class TokenTreeTest
         writer.close();
 
         final RandomAccessReader reader = RandomAccessReader.open(treeFile);
-        final TokenTree tokenTree = new TokenTree(reader.getChannel().map(FileChannel.MapMode.READ_ONLY, 0, reader.length()));
+        final TokenTree tokenTree = new TokenTree(new NativeMappedBuffer(reader.getFD(), 0, reader.length()));
 
         for (long i = 0; i <= tokMax; i++)
         {
@@ -239,7 +240,7 @@ public class TokenTreeTest
         writer.close();
 
         final RandomAccessReader reader = RandomAccessReader.open(treeFile);
-        final TokenTree tokenTree = new TokenTree(reader.getChannel().map(FileChannel.MapMode.READ_ONLY, 0, reader.length()));
+        final TokenTree tokenTree = new TokenTree(new NativeMappedBuffer(reader.getFD(), 0, reader.length()));
 
         final SkippableIterator<Long, Token> treeIterator = tokenTree.iterator(KEY_CONVERTER);
         final SkippableIterator<Long, TokenWithOffsets> listIterator = new EntrySetSkippableIterator(tokens.entrySet().iterator());
@@ -287,7 +288,7 @@ public class TokenTreeTest
         writer.close();
 
         final RandomAccessReader reader = RandomAccessReader.open(treeFile);
-        final SkippableIterator<Long, Token> tokenTree = new TokenTree(reader.getChannel().map(FileChannel.MapMode.READ_ONLY, 0, reader.length())).iterator(KEY_CONVERTER);
+        final SkippableIterator<Long, Token> tokenTree = new TokenTree(new NativeMappedBuffer(reader.getFD(), 0, reader.length())).iterator(KEY_CONVERTER);
 
         tokenTree.skipTo(simpleTokenMap.lastKey() + 10);
     }
