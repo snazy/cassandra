@@ -1,39 +1,40 @@
 package org.apache.cassandra.db.index;
 
 import java.io.File;
-import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.*;
 import java.util.concurrent.*;
-import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
+import com.google.common.annotations.VisibleForTesting;
 import org.apache.cassandra.concurrent.JMXEnabledThreadPoolExecutor;
 import org.apache.cassandra.concurrent.NamedThreadFactory;
 import org.apache.cassandra.config.ColumnDefinition;
+import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.db.*;
 import org.apache.cassandra.db.columniterator.SSTableNamesIterator;
 import org.apache.cassandra.db.compaction.*;
 import org.apache.cassandra.db.filter.ExtendedFilter;
-import org.apache.cassandra.db.filter.IDiskAtomFilter;
-import org.apache.cassandra.db.index.search.Expression;
 import org.apache.cassandra.db.index.search.OnDiskSA;
+import org.apache.cassandra.db.index.search.plan.Expression;
 import org.apache.cassandra.db.index.search.OnDiskSABuilder;
+import org.apache.cassandra.db.index.search.SSTableIndex;
 import org.apache.cassandra.db.index.search.container.TokenTreeBuilder;
 import org.apache.cassandra.db.index.search.memory.IndexMemtable;
+import org.apache.cassandra.db.index.search.plan.QueryPlan;
 import org.apache.cassandra.db.index.search.tokenization.AbstractTokenizer;
 import org.apache.cassandra.db.index.search.tokenization.NoOpTokenizer;
 import org.apache.cassandra.db.index.search.tokenization.StandardTokenizer;
-import org.apache.cassandra.db.index.utils.LazyMergeSortIterator;
-import org.apache.cassandra.db.index.utils.SkippableIterator;
+import org.apache.cassandra.db.index.search.utils.CombinedTermIterator;
 import org.apache.cassandra.db.index.utils.TypeUtil;
-import org.apache.cassandra.db.marshal.*;
+import org.apache.cassandra.db.marshal.AbstractType;
+import org.apache.cassandra.db.marshal.AsciiType;
+import org.apache.cassandra.db.marshal.UTF8Type;
 import org.apache.cassandra.dht.*;
 import org.apache.cassandra.exceptions.ConfigurationException;
-import org.apache.cassandra.io.FSReadError;
 import org.apache.cassandra.io.sstable.*;
 import org.apache.cassandra.io.sstable.SSTableWriterListener.Source;
+import org.apache.cassandra.io.sstable.Descriptor;
 import org.apache.cassandra.io.util.FileUtils;
 import org.apache.cassandra.notifications.*;
 import org.apache.cassandra.service.StorageService;
@@ -44,14 +45,11 @@ import com.google.common.base.Function;
 import com.google.common.base.Predicate;
 import com.google.common.collect.*;
 import com.google.common.util.concurrent.Futures;
-import com.google.common.util.concurrent.Uninterruptibles;
 import org.cliffc.high_scale_lib.NonBlockingHashMap;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import static org.apache.cassandra.db.index.utils.LazyMergeSortIterator.OperationType;
-import static org.apache.cassandra.db.index.search.container.TokenTree.Token;
 import static org.apache.cassandra.db.index.search.OnDiskSABuilder.Mode;
 
 /**
@@ -66,17 +64,14 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex
 
     private static final String INDEX_MODE_OPTION = "mode";
     private static final String INDEX_ANALYZED_OPTION = "analyzed";
+    private static final String INDEX_MAX_FLUSH_MEMORY_OPTION = "max_compaction_flush_memory_in_mb";
+    private static final double INDEX_MAX_FLUSH_DEFAULT_MULTIPLIER = 0.15;
 
     private static final Set<AbstractType<?>> TOKENIZABLE_TYPES = new HashSet<AbstractType<?>>()
     {{
         add(UTF8Type.instance);
         add(AsciiType.instance);
     }};
-
-    /**
-     * A sanity ceiling on the number of max rows we'll ever return for a query.
-     */
-    private static final int MAX_ROWS = 10000;
 
     private static final String FILE_NAME_FORMAT = "SI_%s.db";
     private static final ThreadPoolExecutor INDEX_FLUSHER_MEMTABLE;
@@ -131,7 +126,8 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex
         baseCfs.getDataTracker().subscribe(new DataTrackerConsumer());
     }
 
-    void addColumnDef(ColumnDefinition columnDef)
+    @VisibleForTesting
+    public void addColumnDef(ColumnDefinition columnDef)
     {
         super.addColumnDef(columnDef);
 
@@ -139,8 +135,11 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex
 
         Mode mode = indexOptions.get(INDEX_MODE_OPTION) == null ? Mode.ORIGINAL : Mode.mode(indexOptions.get(INDEX_MODE_OPTION));
         boolean isAnalyzed = indexOptions.get(INDEX_ANALYZED_OPTION) == null ? false : Boolean.valueOf(indexOptions.get(INDEX_ANALYZED_OPTION));
+        Long maxMemMb = indexOptions.get(INDEX_MAX_FLUSH_MEMORY_OPTION) == null
+                ? (long) ((DatabaseDescriptor.getTotalMemtableSpaceInMB() * 1048576L) * INDEX_MAX_FLUSH_DEFAULT_MULTIPLIER)
+                : Long.parseLong(indexOptions.get(INDEX_MAX_FLUSH_MEMORY_OPTION));
 
-        indexedColumns.put(columnDef.name, Pair.create(columnDef, new IndexMode(mode, isAnalyzed)));
+        indexedColumns.put(columnDef.name, Pair.create(columnDef, new IndexMode(mode, isAnalyzed, maxMemMb)));
         addComponent(Collections.singleton(columnDef));
     }
 
@@ -376,13 +375,12 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex
         return new PerSSTableIndexWriter(descriptor, source);
     }
 
-    private AbstractType<?> getValidator(ByteBuffer columnName)
+    public IndexMemtable getMemtable()
     {
-        ColumnDefinition columnDef = getColumnDefinition(columnName);
-        return columnDef == null ? null : columnDef.getValidator();
+        return globalMemtable.get();
     }
 
-    protected SAView getView(ByteBuffer columnName)
+    public SAView getView(ByteBuffer columnName)
     {
         SADataTracker dataTracker = intervalTrees.get(columnName);
         return dataTracker != null ? dataTracker.view.get() : null;
@@ -394,7 +392,8 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex
         private final Source source;
 
         // need one entry for each term we index
-        private final Map<ByteBuffer, ColumnIndex> indexPerColumn;
+        private final Map<ByteBuffer, CurrentColumnIndex> indexPerColumn;
+        private final Phaser phaser;
 
         private DecoratedKey currentKey;
         private long currentKeyPosition;
@@ -405,6 +404,8 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex
             this.descriptor = descriptor;
             this.source = source;
             this.indexPerColumn = new HashMap<>();
+            this.phaser = new Phaser();
+            this.phaser.register();
         }
 
         public void begin()
@@ -424,61 +425,107 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex
             if (component == null)
                 return;
 
-            ColumnIndex index = indexPerColumn.get(column.name());
+            CurrentColumnIndex index = indexPerColumn.get(column.name());
             if (index == null)
             {
-                String outputFile = descriptor.filenameFor(component);
-                indexPerColumn.put(column.name(), (index = new ColumnIndex(getColumnDef(component), outputFile)));
+                ColumnIndex newIndex = new ColumnIndex(getColumnDef(component), descriptor.filenameFor(component));
+                indexPerColumn.put(column.name(), (index = new CurrentColumnIndex(newIndex, 1, maxMemorySize(newIndex))));
             }
 
-            index.add(column.value().duplicate(), currentKey, currentKeyPosition);
+            index.getIndex().add(column.value().duplicate(), currentKey, currentKeyPosition);
+            if (index.getIndex().estimateSize() > index.getMaxMem())
+            {
+                logger.info("about to submit " + baseCfs.getComparator().compose(index.getIndex().getColumn().name) + " index for partial SA'ing");
+                flushAsync(index.getIndex(), index.getPartNumber(), false);
+
+                ColumnIndex nextIndex = new ColumnIndex(getColumnDef(component), descriptor.filenameFor(component));
+                indexPerColumn.put(index.getIndex().getColumn().name, new CurrentColumnIndex(nextIndex, index.getPartNumber() + 1, index.getMaxMem()));
+            }
+
         }
 
         public void complete()
         {
             if (isComplete)
                 return;
-            currentKey = null;
 
+            currentKey = null;
             try
             {
-                logger.info("about to submit for concurrent SA'ing");
-                final CountDownLatch latch = new CountDownLatch(indexPerColumn.size());
+                logger.info("waiting for any partial SAs to complete flushing");
+                awaitPhaser();
 
-                // first, build up a listing per-component (per-index)
-                for (final ColumnIndex index : indexPerColumn.values())
-                {
-                    logger.info("Submitting {} for concurrent SA'ing", index.outputFile);
-                    ThreadPoolExecutor executor = source == Source.MEMTABLE ? INDEX_FLUSHER_MEMTABLE : INDEX_FLUSHER_GENERAL;
-                    executor.submit(new Runnable()
-                    {
-                        @Override
-                        public void run()
-                        {
-                            try
-                            {
-                                long flushStart = System.nanoTime();
-                                index.blockingFlush();
-                                logger.info("Flushing SA index to {} took {} ms.",
-                                        index.outputFile,
-                                        TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - flushStart));
-                            }
-                            finally
-                            {
-                                latch.countDown();
-                            }
-                        }
-                    });
-                }
+                logger.info("about to submit for concurrent final SA'ing");
+                for (final CurrentColumnIndex index : indexPerColumn.values())
+                        flushAsync(index.getIndex(), index.getPartNumber(), true);
 
-                Uninterruptibles.awaitUninterruptibly(latch, 10, TimeUnit.MINUTES);
+                logger.info("waiting for final SAs to complete flushing");
+                awaitPhaser();
             }
             finally
             {
                 // drop this data ASAP
                 indexPerColumn.clear();
+                phaser.arriveAndDeregister();
                 isComplete = true;
             }
+        }
+
+        protected long maxMemorySize(ColumnIndex index)
+        {
+            final long def = DatabaseDescriptor.getTotalMemtableSpaceInMB() * 1048576L;
+            if (source == Source.MEMTABLE)
+                return def;
+
+            Pair<ColumnDefinition, IndexMode> config = indexedColumns.get(index.column.name);
+            if (config == null)
+                return (long) (def * INDEX_MAX_FLUSH_DEFAULT_MULTIPLIER);
+
+            return config.right.maxCompactionFlushMemoryInMb;
+        }
+
+        protected void awaitPhaser()
+        {
+            try
+            {
+                phaser.awaitAdvanceInterruptibly(phaser.arrive(), 10, TimeUnit.MINUTES);
+            }
+            catch (InterruptedException e)
+            {
+                logger.error("Thread interrupted while waiting for final SAs to flush");
+            }
+            catch (TimeoutException e)
+            {
+                logger.error("Timed out while waiting for final SAs to flush");
+            }
+
+        }
+
+        protected void flushAsync(final ColumnIndex index, final int partNumber, final boolean isFinal)
+        {
+            logger.info("Submitting {} for concurrent SA'ing", index.filename(isFinal, partNumber));
+            ThreadPoolExecutor executor = source == Source.MEMTABLE ? INDEX_FLUSHER_MEMTABLE : INDEX_FLUSHER_GENERAL;
+            phaser.register();
+            executor.submit(new Runnable()
+            {
+                @Override
+                public void run()
+                {
+                    try
+                    {
+                        long flushStart = System.nanoTime();
+                        index.blockingFlush(isFinal, partNumber);
+                        logger.info("Flushing SA index to {} took {} ms.",
+                                //index.outputFile,
+                                index.filename(isFinal, partNumber),
+                                TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - flushStart));
+                    }
+                    finally
+                    {
+                        phaser.arriveAndDeregister();
+                    }
+                }
+            });
         }
 
         public int hashCode()
@@ -491,12 +538,42 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex
             return !(o == null || !(o instanceof PerSSTableIndexWriter)) && descriptor.equals(((PerSSTableIndexWriter) o).descriptor);
         }
 
+        private class CurrentColumnIndex
+        {
+            private final ColumnIndex index;
+            private final int partNumber;
+            private final long maxMem;
+
+            public CurrentColumnIndex(ColumnIndex index, int partNumber, long maxMem)
+            {
+                this.index = index;
+                this.partNumber = partNumber;
+                this.maxMem = maxMem;
+            }
+
+            public ColumnIndex getIndex()
+            {
+                return index;
+            }
+
+            public int getPartNumber()
+            {
+                return partNumber;
+            }
+
+            public long getMaxMem()
+            {
+                return maxMem;
+            }
+        }
+
         private class ColumnIndex
         {
             private final ColumnDefinition column;
             private final String outputFile;
             private final AbstractTokenizer tokenizer;
             private final Map<ByteBuffer, TokenTreeBuilder> keysPerTerm;
+            private long estimatedBytes = 0;
 
             // key range of the per-column index
             private DecoratedKey min, max;
@@ -510,23 +587,22 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex
                 this.keysPerTerm = new HashMap<>();
             }
 
-            private void add(ByteBuffer term, DecoratedKey key, long keyPosition)
+            public ColumnDefinition getColumn()
+            {
+                return column;
+            }
+
+            public long estimateSize()
+            {
+                return estimatedBytes;
+            }
+
+            public void add(ByteBuffer term, DecoratedKey key, long keyPosition)
             {
                 final Long keyToken = ((LongToken) key.getToken()).token;
 
                 if (term.remaining() == 0)
                     return;
-
-                if (term.remaining() >= Short.MAX_VALUE)
-                {
-                    logger.error("Rejecting value (size {}, maximum {} bytes) for column {} (analyzed {}) at {} SSTable.",
-                                 term.remaining(),
-                                 Short.MAX_VALUE,
-                                 baseCfs.getComparator().getString(column.name),
-                                 indexedColumns.get(column.name).right.isAnalyzed,
-                                 descriptor);
-                    return;
-                }
 
                 boolean isAdded = false;
 
@@ -534,10 +610,22 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex
                 while (tokenizer.hasNext())
                 {
                     ByteBuffer token = tokenizer.next();
+                    int size = token.remaining();
+
+                    if (token.remaining() >= OnDiskSABuilder.MAX_TERM_SIZE)
+                    {
+                        logger.error("Rejecting value (size {}, maximum {} bytes) for column {} (analyzed {}) at {} SSTable.",
+                                     term.remaining(),
+                                     OnDiskSABuilder.MAX_TERM_SIZE,
+                                     baseCfs.getComparator().getString(column.name),
+                                     indexedColumns.get(column.name).right.isAnalyzed,
+                                     descriptor);
+                        continue;
+                    }
 
                     if (!TypeUtil.isValid(token, column.getValidator()))
                     {
-                        int size = token.remaining();
+
                         if ((token = TypeUtil.tryUpcast(token, column.getValidator())) == null)
                         {
                             logger.error("({}) Failed to add {} to index for key: {}, value size was {} bytes, validator is {}.",
@@ -552,36 +640,81 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex
 
                     TokenTreeBuilder keys = keysPerTerm.get(token);
                     if (keys == null)
-                        keysPerTerm.put(token, (keys = new TokenTreeBuilder()));
+                        keysPerTerm.put(token, (keys = new TokenTreeBuilder(org.apache.cassandra.db.index.search.Descriptor.CURRENT)));
 
                     keys.add(Pair.create(keyToken, keyPosition));
                     isAdded = true;
+
+                    // update size estimate.
+                    // An extra 16 bytes are included in the estimate update
+                    // (8 for keyToken, 8 for keyPosition)
+                    // this may overestimate if the keyToken has already been
+                    // added to this index but the chance of collision is very low
+                    estimatedBytes += size;
+                    estimatedBytes += 16;
                 }
 
                 if (!isAdded)
                     return; // non of the generated tokens were added to the index
 
-                /* calculate key range (based on actual key values) for current index */
-
+                // calculate key range (based on actual key values) for current index
                 min = (min == null || keyComparator.compare(min.key, currentKey.key) > 0) ? currentKey : min;
                 max = (max == null || keyComparator.compare(max.key, currentKey.key) < 0) ? currentKey : max;
             }
 
-            public void blockingFlush()
+            protected void blockingFlush(boolean isFinal, int partNumber)
             {
+                boolean flushed = false;
                 Mode mode = getMode(column.name);
-                if (mode == null || keysPerTerm.size() == 0)
+                if (mode == null)
                     return;
 
-                OnDiskSABuilder builder = new OnDiskSABuilder(column.getValidator(), mode);
+                if (keysPerTerm.size() > 0)
+                {
+                    OnDiskSABuilder builder = new OnDiskSABuilder(column.getValidator(), mode);
 
-                for (Map.Entry<ByteBuffer, TokenTreeBuilder> e : keysPerTerm.entrySet())
-                    builder.add(e.getKey(), e.getValue());
+                    for (Map.Entry<ByteBuffer, TokenTreeBuilder> e : keysPerTerm.entrySet())
+                        builder.add(e.getKey(), e.getValue());
 
-                // since everything added to the builder, it's time to drop references to the data
-                keysPerTerm.clear();
+                    // since everything added to the builder, it's time to drop references to the data
+                    keysPerTerm.clear();
 
-                builder.finish(Pair.create(min, max), new File(outputFile));
+                    builder.finish(Pair.create(min, max), new File(filename(isFinal, partNumber)));
+                    flushed = true;
+                }
+
+                if (isFinal && partNumber > 1)
+                {
+                    // the final flush may have not actually flushed anything (there were no terms after the
+                    // last flush). account for that case here.
+                    int numParts = flushed ? partNumber : partNumber - 1;
+
+                    ByteBuffer combinedMin = null, combinedMax = null;
+                    OnDiskSA[] sas = new OnDiskSA[numParts];
+                    for (int i = 0; i < numParts; i++)
+                    {
+                        sas[i] = new OnDiskSA(new File(partFilename(i + 1)), column.getValidator(), null);
+                        combinedMin = (combinedMin == null || keyComparator.compare(combinedMin, sas[i].minKey()) > 0) ? sas[i].minKey() : combinedMin;
+                        combinedMax = (combinedMax == null || keyComparator.compare(combinedMax, sas[i].maxKey()) < 0) ? sas[i].maxKey() : combinedMax;
+
+                    }
+
+                    OnDiskSABuilder combined = new OnDiskSABuilder(column.getValidator(), mode);
+                    combined.finish(Pair.create(combinedMin, combinedMax),
+                                    new File(outputFile),
+                                    new CombinedTermIterator(sas));
+                }
+
+            }
+
+            public String filename(boolean isFinal, int partNumber)
+            {
+                return (!isFinal || partNumber > 1) ? partFilename(partNumber) : outputFile;
+            }
+
+            protected String partFilename(int partNumber)
+            {
+                return outputFile + partNumber;
             }
         }
     }
@@ -593,386 +726,23 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex
 
     protected class LocalSecondaryIndexSearcher extends SecondaryIndexSearcher
     {
-        private final Phaser phaser;
-
         protected LocalSecondaryIndexSearcher(SecondaryIndexManager indexManager, Set<ByteBuffer> columns)
         {
             super(indexManager, columns);
-            phaser = new Phaser();
         }
 
         public List<Row> search(ExtendedFilter filter)
         {
             try
             {
-                return performSearch(filter);
+                return filter != null && !filter.getClause().isEmpty()
+                        ? new QueryPlan(SuffixArraySecondaryIndex.this, filter).execute()
+                        : Collections.<Row>emptyList();
             }
             catch(Exception e)
             {
                 logger.info("error occurred while searching suffix array indexes; ignoring", e);
                 return Collections.emptyList();
-            }
-            finally
-            {
-                phaser.forceTermination();
-            }
-        }
-
-        protected List<Row> performSearch(ExtendedFilter filter) throws IOException
-        {
-            if (filter.getClause().isEmpty()) // not sure how this could happen in the real world, but ...
-                return Collections.emptyList();
-
-            AbstractBounds<RowPosition> requestedRange = filter.dataRange.keyRange();
-
-            final int maxRows = Math.min(MAX_ROWS, filter.maxRows() == Integer.MAX_VALUE ? filter.maxColumns() : filter.maxRows());
-            final Set<Row> rows = new TreeSet<>(new Comparator<Row>()
-            {
-                @Override
-                public int compare(Row a, Row b)
-                {
-                    return a.key.compareTo(b.key);
-                }
-            });
-
-            Stack<IndexExpression> group = new Stack<>();
-            Stack<SSTableIndexMergeIterator> combinedGroups = new Stack<>();
-
-            List<Expression> expressions = new ArrayList<>();
-
-            for (IndexExpression e : filter.getClause())
-            {
-                if (e.isSetLogicalOp())
-                {
-                    OperationType op = OperationType.valueOf(e.logicalOp.name());
-
-                    List<Expression.Column> arguments;
-                    switch (group.size())
-                    {
-                        case 0: // both arguments come from the combined groups stack
-                            SSTableIndexMergeIterator sideL = combinedGroups.pop();
-                            SSTableIndexMergeIterator sideR = combinedGroups.pop();
-
-                            combinedGroups.push(new SSTableIndexMergeIterator(op, sideL, sideR));
-                            break;
-
-                        case 1: // one of the arguments is from group other is from already combined groups stack
-                            arguments = analyzeGroup(op, group.pop());
-
-                            sideL = combinedGroups.pop();
-                            sideR = getMergeIterator(op, arguments, sideL.getContext());
-
-                            combinedGroups.push(new SSTableIndexMergeIterator(op, sideR, sideL));
-                            expressions.addAll(arguments);
-                            break;
-
-                        default: // all arguments come from group expressions
-                            arguments = analyzeGroup(op, group.pop(), group.pop());
-                            combinedGroups.push(getMergeIterator(op, arguments, Collections.<SSTableIndex>emptySet()));
-                            expressions.addAll(arguments);
-                            break;
-                    }
-
-                    expressions.add(new Expression.Logical(op));
-                }
-                else
-                {
-                    group.add(e);
-                }
-            }
-
-            // special case for backward compatibility and/or single expression statements,
-            // assumes that all expressions of the group are linked with AND.
-            if (group.size() > 0)
-            {
-                int count = 0;
-                IndexExpression[] global = new IndexExpression[group.size()];
-                while (!group.empty())
-                    global[count++] = group.pop();
-
-                List<Expression.Column> columns = analyzeGroup(OperationType.AND, global);
-                expressions.addAll(columns);
-
-                combinedGroups.push(getMergeIterator(OperationType.AND, columns, Collections.<SSTableIndex>emptySet()));
-            }
-
-            SSTableIndexMergeIterator joiner = combinedGroups.pop();
-
-            try
-            {
-                fetch(joiner, requestedRange, filter, expressions, rows, maxRows);
-                return Lists.newArrayList(rows);
-            }
-            finally
-            {
-                FileUtils.closeQuietly(joiner);
-            }
-        }
-
-        private Pair<Expression.Column, Set<SSTableIndex>> getPrimaryExpression(List<Expression.Column> expressions)
-        {
-            Expression.Column expression = null;
-            Set<SSTableIndex> primaryIndexes = null;
-
-            for (Expression.Column e : expressions)
-            {
-                SAView view = getView(e.name);
-
-                if (view == null)
-                    continue;
-
-                Set<SSTableIndex> indexes = view.match(e);
-                if (primaryIndexes == null || primaryIndexes.size() > indexes.size())
-                {
-                    primaryIndexes = indexes;
-                    expression = e;
-                }
-            }
-
-            return Pair.create(expression, primaryIndexes);
-        }
-
-        /**
-         * Get merge iterator for given set of the pre-analyzed expressions,
-         * context is only used when operation is set to AND to limit the number of
-         * SSTableIndex files read by queries of the same priority.
-         *
-         * @param op The operation to join expressions on.
-         * @param expressions The expression group to join.
-         * @param context Set of SSTableIndex files used by the neighbor AND operation.
-         *
-         * @return The joined iterator over data collected from given expressions.
-         */
-        private SSTableIndexMergeIterator getMergeIterator(OperationType op,
-                                                           List<Expression.Column> expressions,
-                                                           Set<SSTableIndex> context)
-        {
-            Expression.Column primaryExpression;
-            Set<SSTableIndex> primaryIndexes;
-
-            final IndexMemtable currentMemtable = globalMemtable.get();
-
-            // try to compute primary only for AND operation
-            if (op == OperationType.OR)
-            {
-                primaryExpression = null;
-                primaryIndexes = Collections.emptySet();
-            }
-            else
-            {
-                Pair<Expression.Column, Set<SSTableIndex>> primary = getPrimaryExpression(expressions);
-                primaryExpression = primary.left;
-                primaryIndexes = primary.right != null ? primary.right : Collections.<SSTableIndex>emptySet();
-
-                if (primaryIndexes.isEmpty())
-                    primaryIndexes = context;
-                else if (!context.isEmpty())
-                    primaryIndexes = Sets.intersection(primaryIndexes, context);
-            }
-
-            Set<SSTableIndex> allIndexes = new HashSet<>();
-
-            List<SkippableIterator<Long, Token>> unions = new ArrayList<>(expressions.size());
-            for (Expression.Column e : expressions)
-            {
-                if (primaryExpression != null && primaryExpression.equals(e))
-                {
-                    unions.add(new SuffixIterator(primaryExpression,
-                                                  currentMemtable.search(primaryExpression),
-                                                  primaryIndexes));
-                    continue;
-                }
-
-                Set<SSTableIndex> readers = new HashSet<>();
-                SAView view = getView(e.name);
-
-                if (view != null && primaryIndexes.size() > 0)
-                {
-                    for (SSTableIndex index : primaryIndexes)
-                        readers.addAll(view.match(index.minKey(), index.maxKey()));
-                }
-                else if (view != null)
-                {
-                    readers.addAll(view.match(e));
-                }
-
-                unions.add(new SuffixIterator(e, currentMemtable.search(e), readers));
-                allIndexes.addAll(readers);
-            }
-
-            return new SSTableIndexMergeIterator(op, unions, op == OperationType.AND ? primaryIndexes : allIndexes);
-        }
-
-        protected void fetch(SkippableIterator<Long, Token> joiner,
-                             AbstractBounds<RowPosition> range,
-                             ExtendedFilter filter,
-                             List<Expression> expressions,
-                             Set<Row> aggregator,
-                             int maxRows)
-        {
-
-            joiner.skipTo(((LongToken) range.left.getToken()).token);
-
-            intersection:
-            while (joiner.hasNext())
-            {
-                for (DecoratedKey key : joiner.next())
-                {
-                    if (!range.contains(key) || aggregator.size() >= maxRows)
-                        break intersection;
-
-                    Row row = getRow(key, filter, expressions);
-                    if (row != null)
-                        aggregator.add(row);
-                }
-            }
-        }
-
-        private Row getRow(DecoratedKey key, IDiskAtomFilter columnFilter, List<Expression> expressions)
-        {
-            ReadCommand cmd = ReadCommand.create(baseCfs.keyspace.getName(),
-                                                 key.key,
-                                                 baseCfs.getColumnFamilyName(),
-                                                 System.currentTimeMillis(),
-                                                 columnFilter);
-
-            return new RowReader(cmd, expressions).call();
-        }
-
-        private Row getRow(DecoratedKey key, ExtendedFilter filter, List<Expression> expressions)
-        {
-            return getRow(key, filter.columnFilter(key.key), expressions);
-        }
-
-        private class RowReader implements Callable<Row>
-        {
-            private final ReadCommand command;
-            private final List<Expression> expressions;
-
-            public RowReader(ReadCommand command, List<Expression> expressions)
-            {
-                this.command = command;
-                this.expressions = expressions;
-                phaser.register();
-            }
-
-            public Row call()
-            {
-                try
-                {
-                    Row row = command.getRow(Keyspace.open(command.ksName));
-                    return satisfiesPredicates(row) ? row : null;
-                }
-                finally
-                {
-                    phaser.arriveAndDeregister();
-                }
-            }
-
-            /**
-             * reapply the predicates to see if the row still satisfies the search predicates
-             * now that it's been loaded and merged from the LSM storage engine.
-             *
-             * Expression list has all of the predicates in the polish notation, we use this fact
-             * here and try to build a stack machine evaluation per returned indexed column, it works as follows:
-             *
-             * For each given row iterate through expressions in order and if it's column expression
-             * evaluate column value based on expression and returns a boolean,
-             * push it to the stack of results, when logical expression is encountered
-             * do a boolean logic operation & or | between previously evaluated results (binary operation),
-             * once all of the expressions have been evaluated stack will have a single element left
-             * which represents a decision for a whole row.
-             *
-             * Query: f:x OR (a > 5 AND b < 7)
-             * Expressions: [b < 7, a > 5, AND, f:x, OR]
-             * Row: key1(a:9, b:6, f:y)
-             *
-             * Evaluation:
-             *
-             * #1 expression b < 7
-             *    - get column b -> b:6
-             *    - validate value -> true
-             *    - push true
-             * #2 expression a > 5
-             *    - get column a -> a:9
-             *    - validate value -> true
-             *    - push true
-             * #3 expression AND
-             *    - pop -> true
-             *    - pop -> true
-             *    - apply AND true & true -> true
-             *    - push true
-             * #4 expression f:x
-             *    - get column f -> f:y
-             *    - validate value -> false
-             *    - push false
-             * #5 expression OR
-             *    - pop -> false
-             *    - pop -> true
-             *    - apply OR false | true -> true
-             *    - push true <--- this is the final result for the row
-             */
-            private boolean satisfiesPredicates(Row row)
-            {
-                if (row == null || row.cf == null || row.cf.isMarkedForDelete())
-                    return false;
-
-                final long now = System.currentTimeMillis();
-                final Stack<Boolean> conditions = new Stack<>();
-
-                for (Expression e : expressions)
-                {
-                    if (e.isLogical())
-                    {
-                        // expression merges the same column bounds from distinct IndexExpressions' (only for AND)
-                        // to a single Expression.Column e.g. age > X AND age < Y are going to be
-                        // Expression.Column{name: age, lower: X, upper: Y} so situation when logical operation
-                        // has a single argument in the queue is expected.
-                        if (conditions.size() == 1)
-                            continue;
-
-                        switch (e.toLogicalExpression().op)
-                        {
-                            case AND:
-                                conditions.push(conditions.pop() & conditions.pop());
-                                break;
-
-                            case OR:
-                                conditions.push(conditions.pop() | conditions.pop());
-                        }
-                    }
-                    else
-                    {
-                        Expression.Column expression = e.toColumnExpression();
-
-                        Column column = row.cf.getColumn(expression.name);
-                        if (column == null)
-                            throw new IllegalStateException("All indexed columns should be included into the column slice, missing: "
-                                                          + baseCfs.getComparator().getString(expression.name));
-
-                        if (!column.isLive(now))
-                            return false;
-
-                        conditions.push(expression.contains(column.value()));
-                    }
-                }
-
-                int conditionCount = conditions.size();
-                switch (conditionCount)
-                {
-                    case 0:
-                        throw new AssertionError();
-
-                    case 1:
-                        return conditions.pop();
-
-                    default: // backward compatibility case, everything is linked with AND
-                        boolean result = false;
-                        for (int i = 0; i < conditionCount; i++)
-                            result = (i == 0) ? conditions.pop() : result & conditions.pop();
-
-                        return result;
-                }
             }
         }
 
@@ -986,58 +756,6 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex
                     return true;
             }
             return false;
-        }
-    }
-
-    private class SuffixIterator extends AbstractIterator<Token> implements SkippableIterator<Long, Token>
-    {
-        private final SkippableIterator<Long, Token> union;
-        private final List<SSTableIndex> referencedIndexes = new ArrayList<>();
-
-        public SuffixIterator(Expression.Column expression,
-                              SkippableIterator<Long, Token> memtableIterator,
-                              final Collection<SSTableIndex> perSSTableIndexes)
-        {
-            List<SkippableIterator<Long, Token>> keys = new ArrayList<>(perSSTableIndexes.size());
-
-            if (memtableIterator != null)
-                keys.add(memtableIterator);
-
-            for (final SSTableIndex index : perSSTableIndexes)
-            {
-                if (!index.reference())
-                    continue;
-
-                ByteBuffer lower = (expression.lower == null) ? null : expression.lower.value;
-                ByteBuffer upper = (expression.upper == null) ? null : expression.upper.value;
-
-                keys.add(index.search(lower, lower == null || expression.lower.inclusive,
-                                      upper, upper == null || expression.upper.inclusive));
-
-                referencedIndexes.add(index);
-            }
-
-            union = new LazyMergeSortIterator<>(OperationType.OR, keys);
-        }
-
-        @Override
-        protected Token computeNext()
-        {
-            return union.hasNext() ? union.next() : endOfData();
-        }
-
-        @Override
-        public void skipTo(Long next)
-        {
-            union.skipTo(next);
-        }
-
-        @Override
-        public void close()
-        {
-            FileUtils.closeQuietly(union);
-            for (SSTableIndex index : referencedIndexes)
-                index.release();
         }
     }
 
@@ -1093,18 +811,18 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex
             Set<SSTableReader> toRemove = new HashSet<>();
             for (SSTableIndex index : currentView)
             {
-                if (index.sstable.getMaxTimestamp() > truncateUntil)
+                if (index.getSSTable().getMaxTimestamp() > truncateUntil)
                     continue;
 
                 index.markObsolete();
-                toRemove.add(index.sstable);
+                toRemove.add(index.getSSTable());
             }
 
             update(toRemove, Collections.<SSTableReader>emptyList());
         }
     }
 
-    private class SAView implements Iterable<SSTableIndex>
+    public class SAView implements Iterable<SSTableIndex>
     {
         private final ByteBuffer col;
         private final AbstractType<?> validator;
@@ -1131,7 +849,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex
             {
                 public boolean apply(Interval<ByteBuffer, SSTableIndex> interval)
                 {
-                    return !toRemove.contains(interval.data.sstable);
+                    return !toRemove.contains(interval.data.getSSTable());
                 }
             };
 
@@ -1158,15 +876,28 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex
                 if (!indexFile.exists())
                     continue;
 
-                SSTableIndex index = new SSTableIndex(col, indexFile, sstable);
+                SSTableIndex index = null;
 
-                logger.info("Interval.create(field: {}, minSuffix: {}, maxSuffix: {}, minKey: {}, maxKey: {}, sstable: {})",
-                            name,
-                            validator.getString(index.minSuffix()),
-                            validator.getString(index.maxSuffix()),
-                            keyComparator.getString(index.minKey()),
-                            keyComparator.getString(index.maxKey()),
-                            sstable);
+                try
+                {
+                    index = new SSTableIndex(col, indexFile, sstable);
+                    logger.info("Interval.create(column: {}, minTerm: {}, maxTerm: {}, minKey: {}, maxKey: {}, sstable: {})",
+                                name,
+                                validator.getString(index.minSuffix()),
+                                validator.getString(index.maxSuffix()),
+                                keyComparator.getString(index.minKey()),
+                                keyComparator.getString(index.maxKey()),
+                                sstable);
+                }
+                catch (Exception e)
+                {
+                    logger.error("Can't open index file at " + indexFile.getAbsolutePath() + ", skipping.", e);
+
+                    if (index != null)
+                        index.release();
+
+                    continue;
+                }
 
                 CopyOnWriteArrayList<SSTableIndex> openIndexes = currentIndexes.get(sstable.descriptor);
                 if (openIndexes == null)
@@ -1210,7 +941,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex
             maxSuffix = maxSuffix == null || validator.compare(maxSuffix, index.maxSuffix()) < 0 ? index.maxSuffix() : maxSuffix;
         }
 
-        public Set<SSTableIndex> match(Expression.Column expression)
+        public Set<SSTableIndex> match(Expression expression)
         {
             if (minSuffix == null) // no data in this view
                 return Collections.emptySet();
@@ -1289,149 +1020,6 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex
             {
                 invalidateMemtable();
             }
-        }
-    }
-
-    private static class DecoratedKeyFetcher implements Function<Long, DecoratedKey>
-    {
-        private final SSTableReader sstable;
-
-        DecoratedKeyFetcher(SSTableReader reader)
-        {
-            sstable = reader;
-        }
-
-        @Override
-        public DecoratedKey apply(Long offset)
-        {
-            try
-            {
-                return sstable.keyAt(offset);
-            }
-            catch (IOException e)
-            {
-                throw new FSReadError(e, sstable.getFilename());
-            }
-        }
-
-        @Override
-        public int hashCode()
-        {
-            return sstable.descriptor.hashCode();
-        }
-
-        @Override
-        public boolean equals(Object other)
-        {
-            return other instanceof DecoratedKeyFetcher
-                    && sstable.descriptor.equals(((DecoratedKeyFetcher) other).sstable.descriptor);
-        }
-    }
-
-    private class SSTableIndex
-    {
-        private final ByteBuffer column;
-        private final SSTableReader sstable;
-        private final OnDiskSA index;
-        private final AtomicInteger references = new AtomicInteger(1);
-        private final AtomicBoolean obsolete = new AtomicBoolean(false);
-
-        public SSTableIndex(ByteBuffer name, File indexFile, SSTableReader referent)
-        {
-            column = name;
-            sstable = referent;
-
-            if (!sstable.acquireReference())
-                throw new IllegalStateException("Couldn't acquire reference to the sstable: " + sstable);
-
-            AbstractType<?> validator = getValidator(column);
-
-            assert validator != null;
-            assert indexFile.exists() : String.format("SSTable %s should have index %s.",
-                                                      sstable.getFilename(),
-                                                      baseCfs.getComparator().getString(column));
-
-            index = new OnDiskSA(indexFile, validator, new DecoratedKeyFetcher(sstable));
-        }
-
-        public ByteBuffer minSuffix()
-        {
-            return index.minSuffix();
-        }
-
-        public ByteBuffer maxSuffix()
-        {
-            return index.maxSuffix();
-        }
-
-        public ByteBuffer minKey()
-        {
-            return index.minKey();
-        }
-
-        public ByteBuffer maxKey()
-        {
-            return index.maxKey();
-        }
-
-        public SkippableIterator<Long, Token> search(ByteBuffer lower, boolean lowerInclusive,
-                                                     ByteBuffer upper, boolean upperInclusive)
-        {
-            return index.search(lower, lowerInclusive, upper, upperInclusive);
-        }
-
-        public boolean reference()
-        {
-            while (true)
-            {
-                int n = references.get();
-                if (n <= 0)
-                    return false;
-                if (references.compareAndSet(n, n + 1))
-                    return true;
-            }
-        }
-
-        public void release()
-        {
-            int n = references.decrementAndGet();
-            if (n == 0)
-            {
-                FileUtils.closeQuietly(index);
-                sstable.releaseReference();
-                if (obsolete.get())
-                    FileUtils.delete(index.getIndexPath());
-            }
-        }
-
-        public void markObsolete()
-        {
-            obsolete.getAndSet(true);
-            release();
-        }
-
-        public boolean isObsolete()
-        {
-            return obsolete.get();
-        }
-
-        @Override
-        public boolean equals(Object o)
-        {
-            // name is not checked on purpose that simplifies context handling between logical operations
-            return o instanceof SSTableIndex && sstable.descriptor.equals(((SSTableIndex) o).sstable.descriptor);
-        }
-
-        @Override
-        public int hashCode()
-        {
-            return sstable.hashCode();
-        }
-
-        @Override
-        public String toString()
-        {
-            return String.format("SSTableIndex(column: %s, SSTable: %s)", baseCfs.getComparator().getString(column), sstable.descriptor);
         }
     }
 
@@ -1528,99 +1116,17 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex
         return column.right.isAnalyzed && TOKENIZABLE_TYPES.contains(column.left.getValidator()) ? new StandardTokenizer() : new NoOpTokenizer();
     }
 
-    private List<Expression.Column> analyzeGroup(OperationType op, IndexExpression... expressions)
-    {
-        Multimap<ByteBuffer, Expression.Column> analyzed = HashMultimap.create();
-
-        for (final IndexExpression e : expressions)
-        {
-            if (e.isSetLogicalOp())
-                continue;
-
-            ByteBuffer name = ByteBuffer.wrap(e.getColumn_name());
-            Pair<ColumnDefinition, IndexMode> column = indexedColumns.get(name);
-
-            if (column == null)
-            {
-                logger.error("Requested column: " + baseCfs.getComparator().getString(name) + ", wasn't found in the index.");
-                continue;
-            }
-
-            AbstractType<?> validator = column.left.getValidator();
-
-            Collection<Expression.Column> perColumn = analyzed.get(name);
-
-            switch (e.getOp())
-            {
-                // '=' can have multiple expressions e.g. text = "Hello World",
-                // becomes text = "Hello" AND text = "WORLD"
-                // because "space" is always interpreted as a split point.
-                case EQ:
-                    final AbstractTokenizer tokenizer = getTokenizer(column);
-                    tokenizer.init(column.left.getIndexOptions());
-                    tokenizer.reset(ByteBuffer.wrap(e.getValue()));
-                    while (tokenizer.hasNext())
-                    {
-                        perColumn.add(new Expression.Column(name, baseCfs.getComparator(), validator)
-                        {{
-                            add(e.op, tokenizer.next());
-                        }});
-                    }
-                    break;
-
-                // default means "range" operator, combines both bounds together into the single expression,
-                // iff operation of the group is AND, otherwise we are forced to create separate expressions
-                default:
-                    Expression.Column range;
-                    if (perColumn.size() == 0 || op != OperationType.AND)
-                        perColumn.add((range = new Expression.Column(name, baseCfs.getComparator(), validator)));
-                    else
-                        range = Iterators.getLast(perColumn.iterator());
-
-                    range.add(e.op, e.bufferForValue());
-                    break;
-            }
-        }
-
-        List<Expression.Column> result = new ArrayList<>();
-        for (Map.Entry<ByteBuffer, Expression.Column> e : analyzed.entries())
-            result.add(e.getValue());
-
-        return result;
-    }
-
-    public class SSTableIndexMergeIterator extends LazyMergeSortIterator<Long, Token>
-    {
-        private final Set<SSTableIndex> indexes;
-
-        public SSTableIndexMergeIterator(OperationType op, SSTableIndexMergeIterator sideL, SSTableIndexMergeIterator sideR)
-        {
-            super(op, Arrays.<SkippableIterator<Long, Token>>asList(sideL, sideR));
-            indexes = Sets.union(sideL.getContext(), sideR.getContext());
-        }
-
-        public SSTableIndexMergeIterator(OperationType op, List<SkippableIterator<Long, Token>> group, Set<SSTableIndex> context)
-        {
-            super(op, group);
-            indexes = context;
-        }
-
-        public Set<SSTableIndex> getContext()
-        {
-            return indexes;
-        }
-    }
-
     public static class IndexMode
     {
         public final Mode mode;
         public final boolean isAnalyzed;
+        public final long maxCompactionFlushMemoryInMb;
 
-        public IndexMode(Mode mode, boolean isAnalyzed)
+        public IndexMode(Mode mode, boolean isAnalyzed, long maxFlushMemMb)
         {
             this.mode = mode;
             this.isAnalyzed = isAnalyzed;
+            this.maxCompactionFlushMemoryInMb = maxFlushMemMb;
         }
     }
 }
-

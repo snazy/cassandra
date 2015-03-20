@@ -928,6 +928,7 @@ propertyValue returns [String str]
 
 relationType returns [Relation.Type op]
     : '='  { $op = Relation.Type.EQ; }
+    | '!=' { $op = Relation.Type.NOT_EQ; }
     | '<'  { $op = Relation.Type.LT; }
     | '<=' { $op = Relation.Type.LTE; }
     | '>'  { $op = Relation.Type.GT; }

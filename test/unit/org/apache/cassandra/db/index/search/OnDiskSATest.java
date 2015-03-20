@@ -8,18 +8,26 @@ import java.util.concurrent.ThreadLocalRandom;
 import org.apache.cassandra.db.DecoratedKey;
 import org.apache.cassandra.db.index.search.container.TokenTree;
 import org.apache.cassandra.db.index.search.container.TokenTreeBuilder;
+import org.apache.cassandra.db.index.search.plan.Expression;
+import org.apache.cassandra.db.index.search.utils.CombinedTerm;
+import org.apache.cassandra.db.index.search.utils.CombinedTermIterator;
+import org.apache.cassandra.db.index.search.utils.OnDiskSAIterator;
 import org.apache.cassandra.db.index.utils.SkippableIterator;
+import org.apache.cassandra.db.marshal.AbstractType;
 import org.apache.cassandra.db.marshal.Int32Type;
 import org.apache.cassandra.db.marshal.LongType;
 import org.apache.cassandra.db.marshal.UTF8Type;
 import org.apache.cassandra.service.StorageService;
+import org.apache.cassandra.thrift.IndexOperator;
 import org.apache.cassandra.utils.MurmurHash;
 import org.apache.cassandra.utils.Pair;
 
 import com.carrotsearch.hppc.LongSet;
 import com.carrotsearch.hppc.cursors.LongCursor;
 import com.google.common.base.Function;
+import com.google.common.collect.Iterables;
 import com.google.common.collect.Iterators;
+import com.google.common.collect.Sets;
 
 import junit.framework.Assert;
 import org.junit.Test;
@@ -60,24 +68,24 @@ public class OnDiskSATest
             if (UTF8Type.instance.getString(e.getKey()).equals("cat"))
                 continue; // cat is embedded into scat, we'll test it in next section
 
-            Assert.assertEquals("Key was: " + UTF8Type.instance.compose(e.getKey()), convert(e.getValue()), convert(onDisk.search(e.getKey())));
+            Assert.assertEquals("Key was: " + UTF8Type.instance.compose(e.getKey()), convert(e.getValue()), convert(onDisk.search(expressionFor(e.getKey()))));
         }
 
         // check that cat returns positions for scat & cat
-        Assert.assertEquals(convert(1, 4), convert(onDisk.search(UTF8Type.instance.fromString("cat"))));
+        Assert.assertEquals(convert(1, 4), convert(onDisk.search(expressionFor("cat"))));
 
         // random suffix queries
-        Assert.assertEquals(convert(9, 10), convert(onDisk.search(UTF8Type.instance.fromString("ar"))));
-        Assert.assertEquals(convert(1, 2, 3, 4), convert(onDisk.search(UTF8Type.instance.fromString("at"))));
-        Assert.assertEquals(convert(1, 11, 12), convert(onDisk.search(UTF8Type.instance.fromString("mic"))));
-        Assert.assertEquals(convert(1, 11, 12), convert(onDisk.search(UTF8Type.instance.fromString("ae"))));
-        Assert.assertEquals(convert(2, 5, 6), convert(onDisk.search(UTF8Type.instance.fromString("ll"))));
-        Assert.assertEquals(convert(1, 2, 5, 6, 11, 12), convert(onDisk.search(UTF8Type.instance.fromString("l"))));
-        Assert.assertEquals(convert(7), convert(onDisk.search(UTF8Type.instance.fromString("oo"))));
-        Assert.assertEquals(convert(7), convert(onDisk.search(UTF8Type.instance.fromString("o"))));
-        Assert.assertEquals(convert(1, 2, 3, 4, 6), convert(onDisk.search(UTF8Type.instance.fromString("t"))));
+        Assert.assertEquals(convert(9, 10), convert(onDisk.search(expressionFor("ar"))));
+        Assert.assertEquals(convert(1, 2, 3, 4), convert(onDisk.search(expressionFor("at"))));
+        Assert.assertEquals(convert(1, 11, 12), convert(onDisk.search(expressionFor("mic"))));
+        Assert.assertEquals(convert(1, 11, 12), convert(onDisk.search(expressionFor("ae"))));
+        Assert.assertEquals(convert(2, 5, 6), convert(onDisk.search(expressionFor("ll"))));
+        Assert.assertEquals(convert(1, 2, 5, 6, 11, 12), convert(onDisk.search(expressionFor("l"))));
+        Assert.assertEquals(convert(7), convert(onDisk.search(expressionFor("oo"))));
+        Assert.assertEquals(convert(7), convert(onDisk.search(expressionFor("o"))));
+        Assert.assertEquals(convert(1, 2, 3, 4, 6), convert(onDisk.search(expressionFor("t"))));
 
-        Assert.assertEquals(Collections.<DecoratedKey>emptySet(), convert(onDisk.search(UTF8Type.instance.decompose("hello"))));
+        Assert.assertEquals(Collections.<DecoratedKey>emptySet(), convert(onDisk.search(expressionFor("hello"))));
 
         onDisk.close();
     }
@@ -111,7 +119,7 @@ public class OnDiskSATest
 
         for (Map.Entry<ByteBuffer, TokenTreeBuilder> e : data.entrySet())
         {
-            Assert.assertEquals(convert(e.getValue()), convert(onDisk.search(e.getKey())));
+            Assert.assertEquals(convert(e.getValue()), convert(onDisk.search(expressionFor(e.getKey()))));
         }
 
         List<ByteBuffer> sortedNumbers = new ArrayList<ByteBuffer>()
@@ -257,23 +265,23 @@ public class OnDiskSATest
 
         OnDiskSA onDisk = new OnDiskSA(index, UTF8Type.instance, new KeyConverter());
 
-        Assert.assertEquals(convert(1, 2, 3, 4, 5, 6), convert(onDisk.search(UTF8Type.instance.decompose("liz"))));
-        Assert.assertEquals(convert(1, 2, 3, 4, 5, 6, 7, 8, 9, 10), convert(onDisk.search(UTF8Type.instance.decompose("a"))));
-        Assert.assertEquals(convert(5, 6), convert(onDisk.search(UTF8Type.instance.decompose("A"))));
-        Assert.assertEquals(convert(1, 2, 3, 4), convert(onDisk.search(UTF8Type.instance.decompose("E"))));
-        Assert.assertEquals(convert(1, 2, 3, 4, 5, 6, 7, 8, 9, 10), convert(onDisk.search(UTF8Type.instance.decompose("l"))));
-        Assert.assertEquals(convert(3, 4), convert(onDisk.search(UTF8Type.instance.decompose("bet"))));
-        Assert.assertEquals(convert(3, 4, 9, 10), convert(onDisk.search(UTF8Type.instance.decompose("e"))));
-        Assert.assertEquals(convert(7, 8), convert(onDisk.search(UTF8Type.instance.decompose("yl"))));
-        Assert.assertEquals(convert(7, 8), convert(onDisk.search(UTF8Type.instance.decompose("T"))));
-        Assert.assertEquals(convert(1, 2, 3, 4, 5, 6), convert(onDisk.search(UTF8Type.instance.decompose("za"))));
-        Assert.assertEquals(convert(3, 4), convert(onDisk.search(UTF8Type.instance.decompose("ab"))));
+        Assert.assertEquals(convert(1, 2, 3, 4, 5, 6), convert(onDisk.search(expressionFor("liz"))));
+        Assert.assertEquals(convert(1, 2, 3, 4, 5, 6, 7, 8, 9, 10), convert(onDisk.search(expressionFor("a"))));
+        Assert.assertEquals(convert(5, 6), convert(onDisk.search(expressionFor("A"))));
+        Assert.assertEquals(convert(1, 2, 3, 4), convert(onDisk.search(expressionFor("E"))));
+        Assert.assertEquals(convert(1, 2, 3, 4, 5, 6, 7, 8, 9, 10), convert(onDisk.search(expressionFor("l"))));
+        Assert.assertEquals(convert(3, 4), convert(onDisk.search(expressionFor("bet"))));
+        Assert.assertEquals(convert(3, 4, 9, 10), convert(onDisk.search(expressionFor("e"))));
+        Assert.assertEquals(convert(7, 8), convert(onDisk.search(expressionFor("yl"))));
+        Assert.assertEquals(convert(7, 8), convert(onDisk.search(expressionFor("T"))));
+        Assert.assertEquals(convert(1, 2, 3, 4, 5, 6), convert(onDisk.search(expressionFor("za"))));
+        Assert.assertEquals(convert(3, 4), convert(onDisk.search(expressionFor("ab"))));
 
-        Assert.assertEquals(Collections.<DecoratedKey>emptySet(), convert(onDisk.search(UTF8Type.instance.decompose("Pi"))));
-        Assert.assertEquals(Collections.<DecoratedKey>emptySet(), convert(onDisk.search(UTF8Type.instance.decompose("ethz"))));
-        Assert.assertEquals(Collections.<DecoratedKey>emptySet(), convert(onDisk.search(UTF8Type.instance.decompose("liw"))));
-        Assert.assertEquals(Collections.<DecoratedKey>emptySet(), convert(onDisk.search(UTF8Type.instance.decompose("Taw"))));
-        Assert.assertEquals(Collections.<DecoratedKey>emptySet(), convert(onDisk.search(UTF8Type.instance.decompose("Av"))));
+        Assert.assertEquals(Collections.<DecoratedKey>emptySet(), convert(onDisk.search(expressionFor("Pi"))));
+        Assert.assertEquals(Collections.<DecoratedKey>emptySet(), convert(onDisk.search(expressionFor("ethz"))));
+        Assert.assertEquals(Collections.<DecoratedKey>emptySet(), convert(onDisk.search(expressionFor("liw"))));
+        Assert.assertEquals(Collections.<DecoratedKey>emptySet(), convert(onDisk.search(expressionFor("Taw"))));
+        Assert.assertEquals(Collections.<DecoratedKey>emptySet(), convert(onDisk.search(expressionFor("Av"))));
 
         onDisk.close();
     }
@@ -304,10 +312,7 @@ public class OnDiskSATest
             boolean upperInclusive = random.nextBoolean();
 
             long limit = random.nextLong(step, start + numIterations);
-            SkippableIterator<Long, TokenTree.Token> rows = onDisk.search(LongType.instance.decompose(step),
-                                                                          lowerInclusive,
-                                                                          LongType.instance.decompose(limit),
-                                                                          upperInclusive);
+            SkippableIterator<Long, TokenTree.Token> rows = onDisk.search(expressionFor(step, lowerInclusive, limit, upperInclusive));
 
             long lowerKey = step - start;
             long upperKey = lowerKey + (limit - step);
@@ -326,61 +331,170 @@ public class OnDiskSATest
         }
 
         // let's also explicitly test whole range search
-        SkippableIterator<Long, TokenTree.Token> rows = onDisk.search(LongType.instance.decompose(start),
-                                                                      true,
-                                                                      LongType.instance.decompose(start + numIterations),
-                                                                      true);
+        SkippableIterator<Long, TokenTree.Token> rows = onDisk.search(expressionFor(start, true, start + numIterations, true));
 
         Set<DecoratedKey> actual = convert(rows);
         Assert.assertEquals(numIterations, actual.size());
     }
 
-    /*
     @Test
-    public void testRandomLookupPerformance() throws Exception
+    public void testNotEqualsQueryForStrings() throws Exception
     {
-        final int NUM_ELEMENTS = 1000000;
-        final Random random = new Random();
-        final long testStartMs = System.currentTimeMillis();
+        Map<ByteBuffer, TokenTreeBuilder> data = new HashMap<ByteBuffer, TokenTreeBuilder>()
+        {{
+                put(UTF8Type.instance.decompose("Pavel"),   keyBuilder(1L, 2L));
+                put(UTF8Type.instance.decompose("Jason"),   keyBuilder(3L));
+                put(UTF8Type.instance.decompose("Jordan"),  keyBuilder(4L));
+                put(UTF8Type.instance.decompose("Michael"), keyBuilder(5L, 6L));
+                put(UTF8Type.instance.decompose("Vijay"),   keyBuilder(7L));
+                put(UTF8Type.instance.decompose("Travis"),  keyBuilder(8L));
+                put(UTF8Type.instance.decompose("Aleksey"), keyBuilder(9L, 10L));
+        }};
 
-        long start = System.nanoTime();
-        OnDiskSABuilder builder = new OnDiskSABuilder(Int32Type.instance, OnDiskSABuilder.Mode.ORIGINAL);
-        for (int i = 0; i < NUM_ELEMENTS; i++)
-            builder.add(LongType.instance.decompose(testStartMs + i), bitMapOf(i));
+        OnDiskSABuilder builder = new OnDiskSABuilder(UTF8Type.instance, OnDiskSABuilder.Mode.ORIGINAL);
+        for (Map.Entry<ByteBuffer, TokenTreeBuilder> e : data.entrySet())
+            builder.add(e.getKey(), e.getValue());
 
-        File index = File.createTempFile("on-disk-sa-lookup", "db");
+        File index = File.createTempFile("on-disk-sa-except-test", "db");
         index.deleteOnExit();
 
-        System.out.println("building of the SA took: " + (System.nanoTime() - start) + " ns.");
+        builder.finish(Pair.create(keyAt(1), keyAt(10)), index);
 
-        start = System.nanoTime();
-        builder.finish(index);
-        System.out.println("finish of the SA took: " + (System.nanoTime() - start) + " ns.");
+        OnDiskSA onDisk = new OnDiskSA(index, UTF8Type.instance, new KeyConverter());
 
-        System.out.println("File size => " + index.length());
+        // test whole words first
+        Assert.assertEquals(convert(3, 4, 5, 6, 7, 8, 9, 10), convert(onDisk.search(expressionForNot("Pavel"))));
 
-        OnDiskSA onDisk = new OnDiskSA(index, Int32Type.instance);
+        Assert.assertEquals(convert(3, 4, 7, 8, 9, 10), convert(onDisk.search(expressionForNot("Pavel", "Michael"))));
 
-        Histogram h = Metrics.newHistogram(OnDiskSATest.class, "x");
-        for (int i = 0; i < NUM_ELEMENTS; i++)
-        {
-            int idx = random.nextInt(NUM_ELEMENTS);
-            ByteBuffer key = LongType.instance.decompose(testStartMs + idx);
+        Assert.assertEquals(convert(3, 4, 7, 9, 10), convert(onDisk.search(expressionForNot("Pavel", "Michael", "Travis"))));
 
-            start = System.nanoTime();
-            RoaringBitmap result = onDisk.search(key.duplicate());
-            h.update(System.nanoTime() - start);
+        // now test prefixes
+        Assert.assertEquals(convert(3, 4, 5, 6, 7, 8, 9, 10), convert(onDisk.search(expressionForNot("Pav"))));
 
-            Assert.assertTrue(result.equals(bitMapOf(idx)));
-        }
+        Assert.assertEquals(convert(3, 4, 7, 8, 9, 10), convert(onDisk.search(expressionForNot("Pavel", "Mic"))));
 
-        Snapshot s = h.getSnapshot();
-        System.out.printf("performance (random lookup): median: %f, p75: %f, p95: %f, p98: %f, p99: %f, p999: %f %n",
-                s.getMedian(), s.get75thPercentile(), s.get95thPercentile(), s.get98thPercentile(), s.get99thPercentile(), s.get999thPercentile());
+        Assert.assertEquals(convert(3, 4, 7, 9, 10), convert(onDisk.search(expressionForNot("Pavel", "Micha", "Tr"))));
 
         onDisk.close();
     }
-    */
+
+    @Test
+    public void testNotEqualsQueryForNumbers() throws Exception
+    {
+        final Map<ByteBuffer, TokenTreeBuilder> data = new HashMap<ByteBuffer, TokenTreeBuilder>()
+        {{
+                put(Int32Type.instance.decompose(5),  keyBuilder(1L));
+                put(Int32Type.instance.decompose(7),  keyBuilder(2L));
+                put(Int32Type.instance.decompose(1),  keyBuilder(3L));
+                put(Int32Type.instance.decompose(3),  keyBuilder(1L, 4L));
+                put(Int32Type.instance.decompose(8),  keyBuilder(8L, 6L));
+                put(Int32Type.instance.decompose(10), keyBuilder(5L));
+                put(Int32Type.instance.decompose(6),  keyBuilder(7L));
+                put(Int32Type.instance.decompose(4),  keyBuilder(9L, 10L));
+                put(Int32Type.instance.decompose(0),  keyBuilder(11L, 12L, 1L));
+        }};
+
+        OnDiskSABuilder builder = new OnDiskSABuilder(Int32Type.instance, OnDiskSABuilder.Mode.ORIGINAL);
+        for (Map.Entry<ByteBuffer, TokenTreeBuilder> e : data.entrySet())
+            builder.add(e.getKey(), e.getValue());
+
+        File index = File.createTempFile("on-disk-sa-except-int-test", "db");
+        index.deleteOnExit();
+
+        builder.finish(Pair.create(keyAt(1), keyAt(12)), index);
+
+        OnDiskSA onDisk = new OnDiskSA(index, Int32Type.instance, new KeyConverter());
+
+        Assert.assertEquals(convert(1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12), convert(onDisk.search(expressionForNot(1))));
+        Assert.assertEquals(convert(1, 2, 4, 5, 7, 9, 10, 11, 12), convert(onDisk.search(expressionForNot(1, 8))));
+        Assert.assertEquals(convert(1, 2, 4, 5, 7, 11, 12), convert(onDisk.search(expressionForNot(1, 8, 4))));
+
+        onDisk.close();
+    }
+
+    @Test
+    public void testRangeQueryWithExclusions() throws Exception
+    {
+        final long lower = 0;
+        final long upper = 100000;
+
+        OnDiskSABuilder builder = new OnDiskSABuilder(LongType.instance, OnDiskSABuilder.Mode.SPARSE);
+        for (long i = lower; i <= upper; i++)
+            builder.add(LongType.instance.decompose(i), keyBuilder(i));
+
+        File index = File.createTempFile("on-disk-sa-except-long-ranges", "db");
+        index.deleteOnExit();
+
+        builder.finish(Pair.create(keyAt(lower), keyAt(upper)), index);
+
+        OnDiskSA onDisk = new OnDiskSA(index, LongType.instance, new KeyConverter());
+
+        ThreadLocalRandom random = ThreadLocalRandom.current();
+
+        // single exclusion
+
+        // let's do small range first to figure out if searchPoint works properly
+        validateExclusions(onDisk, lower, 50, Sets.newHashSet(42L));
+        // now let's do whole data set to test SPARSE searching
+        validateExclusions(onDisk, lower, upper, Sets.newHashSet(31337L));
+
+        // pair of exclusions which would generate a split
+
+        validateExclusions(onDisk, lower, random.nextInt(400, 800), Sets.newHashSet(42L, 154L));
+        validateExclusions(onDisk, lower, upper, Sets.newHashSet(31337L, 54631L));
+
+        // 3 exclusions which would generate a split and change bounds
+
+        validateExclusions(onDisk, lower, random.nextInt(400, 800), Sets.newHashSet(42L, 154L));
+        validateExclusions(onDisk, lower, upper, Sets.newHashSet(31337L, 54631L));
+
+        validateExclusions(onDisk, lower, random.nextLong(400, upper), Sets.newHashSet(42L, 55L));
+        validateExclusions(onDisk, lower, random.nextLong(400, upper), Sets.newHashSet(42L, 55L, 93L));
+        validateExclusions(onDisk, lower, random.nextLong(400, upper), Sets.newHashSet(42L, 55L, 93L, 205L));
+
+        Set<Long> exclusions = Sets.newHashSet(3L, 12L, 13L, 14L, 27L, 54L, 81L, 125L, 384L, 771L, 1054L, 2048L, 78834L);
+
+        // test that exclusions are properly bound by lower/upper of the expression
+        Assert.assertEquals(392, validateExclusions(onDisk, lower, 400, exclusions, false));
+        Assert.assertEquals(101, validateExclusions(onDisk, lower, 100, Sets.newHashSet(-10L, -5L, -1L), false));
+
+        validateExclusions(onDisk, lower, upper, exclusions);
+
+        Assert.assertEquals(100000, convert(onDisk.search(new Expression(null, UTF8Type.instance, LongType.instance)
+                                                    .add(IndexOperator.NOT_EQ, LongType.instance.decompose(100L)))).size());
+
+        Assert.assertEquals(49, convert(onDisk.search(new Expression(null, UTF8Type.instance, LongType.instance)
+                                                    .add(IndexOperator.LT, LongType.instance.decompose(50L))
+                                                    .add(IndexOperator.NOT_EQ, LongType.instance.decompose(10L)))).size());
+
+        Assert.assertEquals(99998, convert(onDisk.search(new Expression(null, UTF8Type.instance, LongType.instance)
+                                                    .add(IndexOperator.GT, LongType.instance.decompose(1L))
+                                                    .add(IndexOperator.NOT_EQ, LongType.instance.decompose(20L)))).size());
+
+        onDisk.close();
+    }
+
+    private void validateExclusions(OnDiskSA sa, long lower, long upper, Set<Long> exclusions)
+    {
+        validateExclusions(sa, lower, upper, exclusions, true);
+    }
+
+    private int validateExclusions(OnDiskSA sa, long lower, long upper, Set<Long> exclusions, boolean checkCount)
+    {
+        int count = 0;
+        for (DecoratedKey key : convert(sa.search(rangeWithExclusions(lower, true, upper, true, exclusions))))
+        {
+            String keyId = UTF8Type.instance.getString(key.key).split("key")[1];
+            Assert.assertFalse("key" + keyId + " is present.", exclusions.contains(Long.valueOf(keyId)));
+            count++;
+        }
+
+        if (checkCount)
+            Assert.assertEquals(upper - (lower == 0 ? -1 : lower) - exclusions.size(), count);
+
+        return count;
+    }
 
     @Test
     public void testDescriptor() throws Exception
@@ -390,17 +504,27 @@ public class OnDiskSATest
                 put(Int32Type.instance.decompose(5), keyBuilder(1L));
             }};
 
-        OnDiskSABuilder builder = new OnDiskSABuilder(Int32Type.instance, OnDiskSABuilder.Mode.ORIGINAL);
+        OnDiskSABuilder builder1 = new OnDiskSABuilder(Int32Type.instance, OnDiskSABuilder.Mode.ORIGINAL);
+        OnDiskSABuilder builder2 = new OnDiskSABuilder(Int32Type.instance, OnDiskSABuilder.Mode.ORIGINAL);
         for (Map.Entry<ByteBuffer, TokenTreeBuilder> e : data.entrySet())
-            builder.add(e.getKey(), e.getValue());
+        {
+            builder1.add(e.getKey(), e.getValue());
+            builder2.add(e.getKey(), e.getValue());
+        }
 
-        File index = File.createTempFile("on-disk-sa-int", "db");
-        index.deleteOnExit();
+        File index1 = File.createTempFile("on-disk-sa-int", "db");
+        File index2 = File.createTempFile("on-disk-sa-int2", "db");
+        index1.deleteOnExit();
+        index2.deleteOnExit();
 
-        builder.finish(Pair.create(keyAt(1), keyAt(12)), index);
+        builder1.finish(Pair.create(keyAt(1), keyAt(12)), index1);
+        builder2.finish(new Descriptor(Descriptor.VERSION_AA), Pair.create(keyAt(1), keyAt(12)), index2);
 
-        OnDiskSA onDisk = new OnDiskSA(index, Int32Type.instance, new KeyConverter());
-        Assert.assertEquals(onDisk.descriptor.version.version, Descriptor.current_version);
+        OnDiskSA onDisk1 = new OnDiskSA(index1, Int32Type.instance, new KeyConverter());
+        OnDiskSA onDisk2 = new OnDiskSA(index2, Int32Type.instance, new KeyConverter());
+
+        Assert.assertEquals(onDisk1.descriptor.version.version, Descriptor.CURRENT_VERSION);
+        Assert.assertEquals(onDisk2.descriptor.version.version, Descriptor.VERSION_AA);
     }
 
     @Test
@@ -465,10 +589,96 @@ public class OnDiskSATest
         }
     }
 
+    @Test
+    public void testCombiningOfThePartitionedSA() throws Exception
+    {
+        OnDiskSABuilder builderA = new OnDiskSABuilder(LongType.instance, OnDiskSABuilder.Mode.ORIGINAL);
+        OnDiskSABuilder builderB = new OnDiskSABuilder(LongType.instance, OnDiskSABuilder.Mode.ORIGINAL);
+
+        TreeMap<Long, TreeMap<Long, LongSet>> expected = new TreeMap<>();
+
+        for (long i = 0; i <= 100; i++)
+        {
+            TreeMap<Long, LongSet> offsets = expected.get(i);
+            if (offsets == null)
+                expected.put(i, (offsets = new TreeMap<>()));
+
+            builderA.add(LongType.instance.decompose(i), keyBuilder(i));
+            offsets.putAll(keyBuilder(i).getTokens());
+        }
+
+        for (long i = 50; i < 100; i++)
+        {
+            TreeMap<Long, LongSet> offsets = expected.get(i);
+            if (offsets == null)
+                expected.put(i, (offsets = new TreeMap<>()));
+
+            builderB.add(LongType.instance.decompose(i), keyBuilder(100L + i));
+            offsets.putAll(keyBuilder(100L + i).getTokens());
+        }
+
+        File indexA = File.createTempFile("on-disk-sa-partition-a", ".db");
+        indexA.deleteOnExit();
+
+        File indexB = File.createTempFile("on-disk-sa-partition-b", ".db");
+        indexB.deleteOnExit();
+
+        builderA.finish(Pair.create(keyAt(0), keyAt(100)), indexA);
+        builderB.finish(Pair.create(keyAt(50), keyAt(99)), indexB);
+
+        OnDiskSA a = new OnDiskSA(indexA, LongType.instance, new KeyConverter());
+        OnDiskSA b = new OnDiskSA(indexB, LongType.instance, new KeyConverter());
+
+        SkippableIterator<OnDiskSA.DataSuffix, CombinedTerm> union = OnDiskSAIterator.union(a, b);
+
+        TreeMap<Long, TreeMap<Long, LongSet>> actual = new TreeMap<>();
+        while (union.hasNext())
+        {
+            CombinedTerm term = union.next();
+
+            Long composedTerm = LongType.instance.compose(term.getTerm());
+
+            TreeMap<Long, LongSet> offsets = actual.get(composedTerm);
+            if (offsets == null)
+                actual.put(composedTerm, (offsets = new TreeMap<>()));
+
+            offsets.putAll(term.getTokens());
+        }
+
+        Assert.assertEquals(actual, expected);
+
+        File indexC = File.createTempFile("on-disk-sa-partition-final", ".db");
+        indexC.deleteOnExit();
+
+        OnDiskSABuilder combined = new OnDiskSABuilder(LongType.instance, OnDiskSABuilder.Mode.ORIGINAL);
+        combined.finish(Pair.create(keyAt(0).key, keyAt(100).key), indexC, new CombinedTermIterator(a, b));
+
+        OnDiskSA c = new OnDiskSA(indexC, LongType.instance, new KeyConverter());
+        union = OnDiskSAIterator.union(c);
+        actual.clear();
+
+        while (union.hasNext())
+        {
+            CombinedTerm term = union.next();
+
+            Long composedTerm = LongType.instance.compose(term.getTerm());
+
+            TreeMap<Long, LongSet> offsets = actual.get(composedTerm);
+            if (offsets == null)
+                actual.put(composedTerm, (offsets = new TreeMap<>()));
+
+            offsets.putAll(term.getTokens());
+        }
+
+        Assert.assertEquals(actual, expected);
+
+        a.close();
+        b.close();
+    }
+
     private void testSearchRangeWithSuperBlocks(OnDiskSA onDiskSA, long start, long end)
     {
-        SkippableIterator<Long, TokenTree.Token> tokens = onDiskSA.search(LongType.instance.decompose(start), true,
-                                                                          LongType.instance.decompose(end), false);
+        SkippableIterator<Long, TokenTree.Token> tokens = onDiskSA.search(expressionFor(start, true, end, false));
 
         int keyCount = 0;
         Long lastToken = null;
@@ -500,7 +710,7 @@ public class OnDiskSATest
 
     private static TokenTreeBuilder keyBuilder(Long... keys)
     {
-        TokenTreeBuilder builder = new TokenTreeBuilder();
+        TokenTreeBuilder builder = new TokenTreeBuilder(Descriptor.CURRENT);
 
         for (final Long key : keys)
         {
@@ -546,6 +756,68 @@ public class OnDiskSATest
         }
 
         return keys;
+    }
+
+    private static Expression expressionFor(long lower, boolean lowerInclusive, long upper, boolean upperInclusive)
+    {
+        Expression expression = new Expression(null, UTF8Type.instance, LongType.instance);
+        expression.add(lowerInclusive ? IndexOperator.GTE : IndexOperator.GT, LongType.instance.decompose(lower));
+        expression.add(upperInclusive ? IndexOperator.LTE : IndexOperator.LT, LongType.instance.decompose(upper));
+        return expression;
+    }
+
+    private static Expression expressionFor(ByteBuffer term)
+    {
+        Expression expression = new Expression(null, UTF8Type.instance, UTF8Type.instance);
+        expression.add(IndexOperator.EQ, term);
+        return expression;
+    }
+
+    private static Expression expressionForNot(AbstractType<?> validator, Iterable<ByteBuffer> terms)
+    {
+        Expression expression = new Expression(null, UTF8Type.instance, validator);
+        for (ByteBuffer term : terms)
+            expression.add(IndexOperator.NOT_EQ, term);
+        return expression;
+
+    }
+
+    private static Expression expressionForNot(Integer... terms)
+    {
+        return expressionForNot(Int32Type.instance, Iterables.transform(Arrays.asList(terms), new Function<Integer, ByteBuffer>()
+        {
+            @Override
+            public ByteBuffer apply(Integer term)
+            {
+                return Int32Type.instance.decompose(term);
+            }
+        }));
+    }
+
+    private static Expression rangeWithExclusions(long lower, boolean lowerInclusive, long upper, boolean upperInclusive, Set<Long> exclusions)
+    {
+        Expression expression = expressionFor(lower, lowerInclusive, upper, upperInclusive);
+        for (long e : exclusions)
+            expression.add(IndexOperator.NOT_EQ, LongType.instance.decompose(e));
+
+        return expression;
+    }
+
+    private static Expression expressionForNot(String... terms)
+    {
+        return expressionForNot(UTF8Type.instance, Iterables.transform(Arrays.asList(terms), new Function<String, ByteBuffer>()
+        {
+            @Override
+            public ByteBuffer apply(String term)
+            {
+                return UTF8Type.instance.decompose(term);
+            }
+        }));
+    }
+
+    private static Expression expressionFor(String term)
+    {
+        return expressionFor(UTF8Type.instance.decompose(term));
     }
 
     private static class KeyConverter implements Function<Long, DecoratedKey>
