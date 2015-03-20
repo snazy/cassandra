@@ -7,12 +7,15 @@ import org.slf4j.Logger;
 
 import java.io.FileDescriptor;
 import java.nio.*;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 public class NativeMappedBuffer
 {
     private static final Logger logger = LoggerFactory.getLogger(NativeMappedBuffer.class);
 
     private static final long PAGE_SIZE = 4096; // TODO (jwest): get page size from CLibrary?
+
+    private static final boolean IS_BIG_ENDIAN_PLATFORM = ByteOrder.nativeOrder().equals(ByteOrder.BIG_ENDIAN);
 
     // TODO (jwest): add mark
     private final long fileOffset;
@@ -21,6 +24,8 @@ public class NativeMappedBuffer
     private final int skipped;
     private long position;
     private long limit;
+
+    private final AtomicBoolean isUnmapped = new AtomicBoolean(false);
 
     protected NativeMappedBuffer(Pointer region, long fileOffset, int skipped, long size, long position)
     {
@@ -47,15 +52,11 @@ public class NativeMappedBuffer
 
     public void unmap()
     {
-        //try
-        //{
+        if (isUnmapped.compareAndSet(false, true))
+        {
             if (CLibrary.munmap(region, size) != 0)
                 throw new RuntimeException("unable to unmap region starting at address" + region.toString());
-        //}
-        //catch (UnsatisfiedLinkError e)
-        //{
-//            logger.error("unable to unmap region");
-        //}
+        }
     }
 
     public NativeMappedBuffer duplicate()
@@ -121,6 +122,8 @@ public class NativeMappedBuffer
 
     public byte get(long pos)
     {
+        validateIsOpen();
+
         if (pos < 0)
             throw new IndexOutOfBoundsException("position " + position + " cannot be read");
 
@@ -142,13 +145,20 @@ public class NativeMappedBuffer
 
     public short getShort(long pos)
     {
+        validateIsOpen();
+
         if (pos < 0)
             throw new IndexOutOfBoundsException("position " + position + " cannot be read");
 
         if (pos > (limit - 2))
             throw new IndexOutOfBoundsException("position " + pos + " is not less than or equal to " + (limit - 2));
 
-        return (short) reconstruct(pos, 2);
+        short val = region.getShort(skipped + pos);
+
+        if (IS_BIG_ENDIAN_PLATFORM)
+            return val;
+
+        return (short) ((val << 8) | ((val >> 8) & 0xff));
     }
 
     public int getInt()
@@ -163,13 +173,21 @@ public class NativeMappedBuffer
 
     public int getInt(long pos)
     {
+        validateIsOpen();
+
         if (pos < 0)
             throw new IndexOutOfBoundsException("position " + position + " cannot be read");
 
         if (pos > (limit - 4))
             throw new IndexOutOfBoundsException("position " + pos + " is not less than or equal to " + (limit - 4));
 
-        return (int) reconstruct(pos, 4);
+        int val = region.getInt(skipped + pos);
+
+        if (IS_BIG_ENDIAN_PLATFORM)
+            return val;
+
+        val = ((val << 8) & 0xff00ff00) | ((val >> 8) & 0xff00ff);
+        return (val << 16) | ((val >> 16) & 0xffff);
     }
 
     public long getLong()
@@ -185,22 +203,27 @@ public class NativeMappedBuffer
 
     public long getLong(long pos)
     {
+        validateIsOpen();
+
         if (pos < 0)
             throw new IndexOutOfBoundsException("position " + position + " cannot be read");
 
         if (pos > (limit - 8))
             throw new IndexOutOfBoundsException("position " + pos + " is not less than or equal to " + (limit - 8));
 
-        return reconstruct(pos, 8);
+        long val = region.getLong(skipped + pos);
+
+        if (IS_BIG_ENDIAN_PLATFORM)
+            return val;
+
+        val = ((val <<  8) & 0xff00ff00ff00ff00L) | ((val >>  8) & 0x00ff00ff00ff00ffL);
+        val = ((val << 16) & 0xffff0000ffff0000L) | ((val >> 16) & 0x0000ffff0000ffffL);
+        return (val << 32) | ((val >> 32) & 0xffffffffL);
     }
 
-    protected long reconstruct(long pos, int numBytes)
+    private void validateIsOpen()
     {
-        long result = 0;
-        for (byte i = 0; i < numBytes; i++)
-            result = (result << 8) + (region.getByte((skipped + pos) + i) & 0xff);
-
-        return result;
+        if (isUnmapped.get())
+            throw new IllegalStateException("Buffer is unmapped.");
     }
-
 }

@@ -2,7 +2,6 @@ package org.apache.cassandra.db.index.search;
 
 import java.io.*;
 import java.nio.ByteBuffer;
-import java.nio.channels.FileChannel;
 import java.util.*;
 
 import com.google.common.base.Predicate;
@@ -66,7 +65,7 @@ public class OnDiskSA implements Iterable<OnDiskSA.DataSuffix>, Closeable
 
     protected final AbstractType<?> comparator;
     protected final NativeMappedBuffer indexFile;
-    protected final int indexSize;
+    protected final long indexSize;
 
     protected final Function<Long, DecoratedKey> keyFetcher;
 
@@ -102,11 +101,11 @@ public class OnDiskSA implements Iterable<OnDiskSA.DataSuffix>, Closeable
 
             mode = Mode.mode(backingFile.readUTF());
 
-            indexSize = (int) backingFile.length();
+            indexSize = backingFile.length();
             indexFile = new NativeMappedBuffer(backingFile.getFD(), 0, indexSize);
 
             // start of the levels
-            indexFile.position((int) indexFile.getLong(indexSize - 8));
+            indexFile.position(indexFile.getLong(indexSize - 8));
 
             int numLevels = indexFile.getInt();
             levels = new PointerLevel[numLevels];
@@ -429,7 +428,7 @@ public class OnDiskSA implements Iterable<OnDiskSA.DataSuffix>, Closeable
         {
             super(offset, count);
             long baseOffset = blockOffsets + blockCount * 8;
-            superBlockCnt = indexFile.getInt((int)baseOffset);
+            superBlockCnt = indexFile.getInt(baseOffset);
             superBlocksOffset = baseOffset + 4;
         }
 
@@ -442,7 +441,7 @@ public class OnDiskSA implements Iterable<OnDiskSA.DataSuffix>, Closeable
         public OnDiskSuperBlock getSuperBlock(int idx)
         {
             assert idx < superBlockCnt : String.format("requested index %d is greater than super block count %d", idx, superBlockCnt);
-            long blockOffset = indexFile.getLong((int) (superBlocksOffset + idx * 8));
+            long blockOffset = indexFile.getLong(superBlocksOffset + idx * 8);
             return new OnDiskSuperBlock(indexFile.duplicate().position(blockOffset));
         }
     }
@@ -479,8 +478,8 @@ public class OnDiskSA implements Iterable<OnDiskSA.DataSuffix>, Closeable
 
             // calculate block offset and move there
             // (long is intentional, we'll just need mmap implementation which supports long positions)
-            long blockOffset = indexFile.getLong((int) (blockOffsets + idx * 8));
-            return cast(indexFile.duplicate().position((int) blockOffset));
+            long blockOffset = indexFile.getLong(blockOffsets + idx * 8);
+            return cast(indexFile.duplicate().position(blockOffset));
         }
 
         protected abstract T cast(NativeMappedBuffer block);
@@ -562,12 +561,12 @@ public class OnDiskSA implements Iterable<OnDiskSA.DataSuffix>, Closeable
 
         public SkippableIterator<Long, Token> getTokens()
         {
-            final int blockEnd = (int) FBUtilities.align(content.position(), BLOCK_SIZE);
+            final long blockEnd = FBUtilities.align(content.position(), BLOCK_SIZE);
 
             if (isSparse())
                 return new PrefetchedTokensIterator(getSparseTokens());
 
-            int offset = blockEnd + 4 + content.getInt(getDataOffset() + 1);
+            long offset = blockEnd + 4 + content.getInt(getDataOffset() + 1);
             return new TokenTree(descriptor, indexFile.duplicate().position(offset)).iterator(keyFetcher);
         }
 
