@@ -4,6 +4,7 @@ import java.nio.ByteBuffer;
 
 import org.apache.cassandra.db.index.search.container.TokenTree;
 import org.apache.cassandra.db.marshal.AbstractType;
+import org.apache.cassandra.io.util.NativeMappedBuffer;
 
 import static org.apache.cassandra.db.index.search.OnDiskSABuilder.BLOCK_SIZE;
 
@@ -15,13 +16,13 @@ public abstract class OnDiskBlock<T extends Suffix>
     }
 
     // this contains offsets of the suffixes and suffix data
-    protected final ByteBuffer blockIndex;
+    protected final NativeMappedBuffer blockIndex;
     protected final int blockIndexSize;
 
     protected final boolean hasCombinedIndex;
     protected final TokenTree combinedIndex;
 
-    public OnDiskBlock(ByteBuffer block, BlockType blockType)
+    public OnDiskBlock(NativeMappedBuffer block, BlockType blockType)
     {
         blockIndex = block;
 
@@ -33,13 +34,13 @@ public abstract class OnDiskBlock<T extends Suffix>
             return;
         }
 
-        int blockOffset = block.position();
+        long blockOffset = block.position();
         int combinedIndexOffset = block.getInt(blockOffset + BLOCK_SIZE);
 
         hasCombinedIndex = (combinedIndexOffset >= 0);
-        int blockIndexOffset = blockOffset + BLOCK_SIZE + 4 + combinedIndexOffset;
+        long blockIndexOffset = blockOffset + BLOCK_SIZE + 4 + combinedIndexOffset;
 
-        combinedIndex = hasCombinedIndex ? new TokenTree((ByteBuffer) blockIndex.duplicate().position(blockIndexOffset)) : null;
+        combinedIndex = hasCombinedIndex ? new TokenTree(blockIndex.duplicate().position(blockIndexOffset)) : null;
         blockIndexSize = block.getInt() * 2;
     }
 
@@ -67,8 +68,8 @@ public abstract class OnDiskBlock<T extends Suffix>
 
     protected T getElement(int index)
     {
-        ByteBuffer dup = blockIndex.duplicate();
-        int startsAt = getElementPosition(index);
+        NativeMappedBuffer dup = blockIndex.duplicate();
+        long startsAt = getElementPosition(index);
         if (getElementsSize() - 1 == index) // last element
             dup.position(startsAt);
         else
@@ -77,7 +78,7 @@ public abstract class OnDiskBlock<T extends Suffix>
         return cast(dup);
     }
 
-    protected int getElementPosition(int idx)
+    protected long getElementPosition(int idx)
     {
         return getElementPosition(blockIndex, idx, blockIndexSize);
     }
@@ -87,9 +88,9 @@ public abstract class OnDiskBlock<T extends Suffix>
         return blockIndexSize / 2;
     }
 
-    protected abstract T cast(ByteBuffer data);
+    protected abstract T cast(NativeMappedBuffer data);
 
-    static int getElementPosition(ByteBuffer data, int idx, int indexSize)
+    static long getElementPosition(NativeMappedBuffer data, int idx, int indexSize)
     {
         idx *= 2;
         assert idx < indexSize;

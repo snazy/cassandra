@@ -37,7 +37,8 @@ public enum IndexOperator implements org.apache.thrift.TEnum {
   GTE(1),
   GT(2),
   LTE(3),
-  LT(4);
+  LT(4),
+  NOT_EQ(5);
 
   private final int value;
 
@@ -68,6 +69,8 @@ public enum IndexOperator implements org.apache.thrift.TEnum {
         return LTE;
       case 4:
         return LT;
+      case 5:
+        return NOT_EQ;
       default:
         return null;
     }

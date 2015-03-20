@@ -1097,7 +1097,7 @@ public class SelectStatement implements CQLStatement, MeasurableForPreparedCache
 
                 ByteBuffer value = values.get(0);
                 validateIndexExpressionValue(value, name);
-                expressions.add(new IndexExpression(name.name.key, IndexOperator.EQ, value));
+                expressions.add(new IndexExpression(name.name.key, restriction.isEQ() ? IndexOperator.EQ : IndexOperator.NOT_EQ, value));
             }
         }
 
@@ -1793,6 +1793,16 @@ public class SelectStatement implements CQLStatement, MeasurableForPreparedCache
 
             switch (newRel.operator())
             {
+                case NOT_EQ:
+                {
+                    if (existingRestriction != null)
+                        throw new InvalidRequestException(String.format("%s cannot be restricted by more than one relation if it includes an Equal", name));
+                    Term t = newRel.getValue().prepare(receiver);
+                    t.collectMarkerSpecification(boundNames);
+                    existingRestriction = new SingleColumnRestriction.NOT_EQ(t, newRel.onToken);
+                }
+                break;
+
                 case EQ:
                 {
                     if (existingRestriction != null)

@@ -3,9 +3,9 @@ package org.apache.cassandra.db.index.search.memory;
 import java.nio.ByteBuffer;
 
 import org.apache.cassandra.config.ColumnDefinition;
-import org.apache.cassandra.db.index.search.Expression;
 import org.apache.cassandra.db.index.SuffixArraySecondaryIndex.IndexMode;
 import org.apache.cassandra.db.index.search.container.TokenTree.Token;
+import org.apache.cassandra.db.index.search.plan.Expression;
 import org.apache.cassandra.db.index.utils.SkippableIterator;
 import org.apache.cassandra.db.marshal.AbstractType;
 import org.apache.cassandra.db.marshal.AsciiType;
@@ -24,7 +24,7 @@ public abstract class ColumnIndex
     }
 
     public abstract void add(ByteBuffer value, ByteBuffer key);
-    public abstract SkippableIterator<Long, Token> search(Expression.Column expression);
+    public abstract SkippableIterator<Long, Token> search(Expression expression);
     public abstract long estimateSize(MemoryMeter meter);
 
     public static ColumnIndex forColumn(ColumnDefinition column, IndexMode mode)

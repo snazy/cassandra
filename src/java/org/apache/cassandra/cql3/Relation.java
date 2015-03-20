@@ -26,7 +26,7 @@ public abstract class Relation
 
     public static enum Type
     {
-        EQ, LT, LTE, GTE, GT, IN;
+        EQ, LT, LTE, GTE, GT, IN, NOT_EQ;
 
         @Override
         public String toString()
@@ -45,6 +45,8 @@ public abstract class Relation
                     return ">=";
                 case IN:
                     return "IN";
+                case NOT_EQ:
+                    return "!=";
                 default:
                     return this.name();
             }

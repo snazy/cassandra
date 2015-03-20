@@ -8,7 +8,7 @@ import java.util.concurrent.ConcurrentSkipListSet;
 import org.apache.cassandra.config.ColumnDefinition;
 import org.apache.cassandra.db.DecoratedKey;
 import org.apache.cassandra.db.index.SuffixArraySecondaryIndex.IndexMode;
-import org.apache.cassandra.db.index.search.Expression;
+import org.apache.cassandra.db.index.search.plan.Expression;
 import org.apache.cassandra.db.index.search.container.TokenTree.Token;
 import org.apache.cassandra.db.index.utils.LazyMergeSortIterator;
 import org.apache.cassandra.db.index.utils.SkippableIterator;
@@ -44,7 +44,7 @@ public class SkipListColumnIndex extends ColumnIndex
     }
 
     @Override
-    public SkippableIterator<Long, Token> search(Expression.Column expression)
+    public SkippableIterator<Long, Token> search(Expression expression)
     {
         List<SkippableIterator<Long, Token>> union = new ArrayList<>();
 

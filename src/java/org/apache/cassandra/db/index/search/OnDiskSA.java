@@ -2,18 +2,22 @@ package org.apache.cassandra.db.index.search;
 
 import java.io.*;
 import java.nio.ByteBuffer;
-import java.nio.MappedByteBuffer;
-import java.nio.channels.FileChannel;
 import java.util.*;
 
+import com.google.common.base.Predicate;
+import com.google.common.collect.Iterables;
+import com.google.common.collect.PeekingIterator;
 import org.apache.cassandra.db.DecoratedKey;
 import org.apache.cassandra.db.index.search.OnDiskSABuilder.SuffixSize;
 import org.apache.cassandra.db.index.search.container.TokenTree;
+import org.apache.cassandra.db.index.search.plan.Expression;
+import org.apache.cassandra.db.index.search.plan.Expression.Op;
 import org.apache.cassandra.db.index.utils.LazyMergeSortIterator;
 import org.apache.cassandra.db.index.utils.SkippableIterator;
 import org.apache.cassandra.db.marshal.AbstractType;
 import org.apache.cassandra.io.FSReadError;
 import org.apache.cassandra.io.util.FileUtils;
+import org.apache.cassandra.io.util.NativeMappedBuffer;
 import org.apache.cassandra.utils.ByteBufferUtil;
 import org.apache.cassandra.utils.FBUtilities;
 
@@ -60,8 +64,8 @@ public class OnDiskSA implements Iterable<OnDiskSA.DataSuffix>, Closeable
     protected final SuffixSize suffixSize;
 
     protected final AbstractType<?> comparator;
-    protected final MappedByteBuffer indexFile;
-    protected final int indexSize;
+    protected final NativeMappedBuffer indexFile;
+    protected final long indexSize;
 
     protected final Function<Long, DecoratedKey> keyFetcher;
 
@@ -97,11 +101,11 @@ public class OnDiskSA implements Iterable<OnDiskSA.DataSuffix>, Closeable
 
             mode = Mode.mode(backingFile.readUTF());
 
-            indexSize = (int) backingFile.length();
-            indexFile = backingFile.getChannel().map(FileChannel.MapMode.READ_ONLY, 0, indexSize);
+            indexSize = backingFile.length();
+            indexFile = new NativeMappedBuffer(backingFile.getFD(), 0, indexSize);
 
             // start of the levels
-            indexFile.position((int) indexFile.getLong(indexSize - 8));
+            indexFile.position(indexFile.getLong(indexSize - 8));
 
             int numLevels = indexFile.getInt();
             levels = new PointerLevel[numLevels];
@@ -145,33 +149,78 @@ public class OnDiskSA implements Iterable<OnDiskSA.DataSuffix>, Closeable
         return maxKey;
     }
 
-    public SkippableIterator<Long, Token> search(ByteBuffer suffix) throws IOException
+    /**
+     * Search for rows which match all of the terms inside the given expression in the index file.
+     *
+     * @param expression The expression to use for the query.
+     *
+     * @return Iterator which contains rows for all of the terms from the given range.
+     */
+    public SkippableIterator<Long, Token> search(final Expression expression)
     {
-        return search(suffix, true, suffix, true);
+        List<ByteBuffer> exclusions = new ArrayList<>(expression.exclusions.size());
+
+        Iterables.addAll(exclusions, Iterables.filter(expression.exclusions, new Predicate<ByteBuffer>()
+        {
+            @Override
+            public boolean apply(ByteBuffer exclusion)
+            {
+                // accept only exclusions which are in the bounds of lower/upper
+                return !(expression.lower != null && comparator.compare(exclusion, expression.lower.value) < 0)
+                    && !(expression.upper != null && comparator.compare(exclusion, expression.upper.value) > 0);
+            }
+        }));
+
+        Collections.sort(exclusions, comparator);
+
+        if (exclusions.size() == 0)
+            return searchRange(expression);
+
+        List<Expression> ranges = new ArrayList<>(exclusions.size());
+
+        // calculate range splits based on the sorted exclusions
+        PeekingIterator<ByteBuffer> exclusionsIterator = Iterators.peekingIterator(exclusions.iterator());
+
+        Expression.Bound min = expression.lower, max = null;
+        while (exclusionsIterator.hasNext())
+        {
+            max = new Expression.Bound(exclusionsIterator.next(), false);
+            ranges.add(new Expression(expression).setOp(Op.RANGE).setLower(min).setUpper(max));
+            min = max;
+        }
+
+        assert max != null;
+        ranges.add(new Expression(expression).setOp(Op.RANGE).setLower(max).setUpper(expression.upper));
+
+        List<SkippableIterator<Long, Token>> unions = new ArrayList<>();
+
+        for (Expression e : ranges)
+            unions.add(searchRange(e));
+
+        return new LazyMergeSortIterator<>(OperationType.OR, unions);
     }
 
-    public SkippableIterator<Long, Token> search(ByteBuffer lower, boolean lowerInclusive,
-                                                 ByteBuffer upper, boolean upperInclusive)
+    private SkippableIterator<Long, Token> searchRange(Expression range)
     {
-        int lowerBlock = lower == null ? 0 : getDataBlock(lower);
+        Expression.Bound lower = range.lower;
+        Expression.Bound upper = range.upper;
+
+        int lowerBlock = lower == null ? 0 : getDataBlock(lower.value);
         int upperBlock = upper == null
-                            ? dataLevel.blockCount - 1
-                            // optimization so we don't have to fetch upperBlock when query has lower == upper
-                            : (lower != null && comparator.compare(lower, upper) == 0) ? lowerBlock : getDataBlock(upper);
+                ? dataLevel.blockCount - 1
+                // optimization so we don't have to fetch upperBlock when query has lower == upper
+                : (lower != null && comparator.compare(lower.value, upper.value) == 0) ? lowerBlock : getDataBlock(upper.value);
 
-        // 'same' block query has to read all of the matching suffixes
-        // as well as when the difference between lower and upper is less than once full block
-        if (mode != Mode.SPARSE || lowerBlock == upperBlock || upperBlock - lowerBlock <= 1)
-            return searchPoint(lowerBlock, lower, lowerInclusive, upperBlock, upper, upperInclusive);
+        return (mode != Mode.SPARSE || lowerBlock == upperBlock || upperBlock - lowerBlock <= 1)
+                ? searchPoint(lowerBlock, range)
+                : searchRange(lowerBlock, lower, upperBlock, upper);
+    }
 
-        // once we have determined that lower block and upper block are at least a distance of
-        // one full block away from each other it's time to figure out where lower/upper are
-        // located in their designated blocks that will help us to decide if we have to treat
-        // lowerBlock and upperBlock as partial blocks or whole block reads.
-
+    private SkippableIterator<Long, Token> searchRange(int lowerBlock, Expression.Bound lower, int upperBlock, Expression.Bound upper)
+    {
         // if lower is at the beginning of the block that means we can just do a single iterator per block
-        SearchResult<DataSuffix> lowerPosition = (lower == null) ? null : searchIndex(lower, lowerBlock);
-        SearchResult<DataSuffix> upperPosition = (upper == null) ? null : searchIndex(upper, upperBlock);
+        SearchResult<DataSuffix> lowerPosition = (lower == null) ? null : searchIndex(lower.value, lowerBlock);
+        SearchResult<DataSuffix> upperPosition = (upper == null) ? null : searchIndex(upper.value, upperBlock);
 
         final List<SkippableIterator<Long, Token>> union = new ArrayList<>();
 
@@ -182,10 +231,10 @@ public class OnDiskSA implements Iterable<OnDiskSA.DataSuffix>, Closeable
         // Two reasons why that can happen:
         //   - 'lower' is not the first element of the block
         //   - 'lower' is first element but it's not inclusive in the query
-        if (lowerPosition != null && (lowerPosition.index > 0 || !lowerInclusive))
+        if (lowerPosition != null && (lowerPosition.index > 0 || !lower.inclusive))
         {
             DataBlock block = dataLevel.getBlock(lowerBlock);
-            int start = (lowerInclusive || lowerPosition.cmp != 0) ? lowerPosition.index : lowerPosition.index + 1;
+            int start = (lower.inclusive || lowerPosition.cmp != 0) ? lowerPosition.index : lowerPosition.index + 1;
 
             union.add(block.getRange(start, block.getElementsSize()));
             firstFullBlockIdx = lowerBlock + 1;
@@ -200,9 +249,9 @@ public class OnDiskSA implements Iterable<OnDiskSA.DataSuffix>, Closeable
             // which means that we only have to get individual results if:
             //  - if it *is not* the last element, or
             //  - it *is* but shouldn't be included (dictated by upperInclusive)
-            if (upperPosition.index != lastIndex || !upperInclusive)
+            if (upperPosition.index != lastIndex || !upper.inclusive)
             {
-                int end = (upperPosition.cmp < 0 || (upperPosition.cmp == 0 && upperInclusive))
+                int end = (upperPosition.cmp < 0 || (upperPosition.cmp == 0 && upper.inclusive))
                                 ? upperPosition.index + 1 : upperPosition.index;
 
                 union.add(block.getRange(0, end));
@@ -246,26 +295,25 @@ public class OnDiskSA implements Iterable<OnDiskSA.DataSuffix>, Closeable
         return new LazyMergeSortIterator<>(OperationType.OR, union);
     }
 
-    private SkippableIterator<Long, Token> searchPoint(int lowerBlock, ByteBuffer lower, boolean lowerInclusive,
-                                                       int upperBlock, ByteBuffer upper, boolean upperInclusive)
+    private SkippableIterator<Long, Token> searchPoint(int lowerBlock, Expression expression)
     {
-        IteratorOrder order = lower == null ? IteratorOrder.ASC : IteratorOrder.DESC;
-        Iterator<DataSuffix> suffixes = lower == null
-                                         ? iteratorAt(upperBlock, upper, order, upperInclusive)
-                                         : iteratorAt(lowerBlock, lower, order, lowerInclusive);
+        Expression.Bound lower = expression.lower == null ? new Expression.Bound(minSuffix, true) : expression.lower;
+        Expression.Bound upper = expression.upper;
+
+        Iterator<DataSuffix> suffixes = iteratorAt(lowerBlock, lower.value, IteratorOrder.DESC, lower.inclusive);
 
         List<SkippableIterator<Long, Token>> union = new ArrayList<>();
         while (suffixes.hasNext())
         {
             DataSuffix suffix = suffixes.next();
 
-            if (order == IteratorOrder.DESC && upper != null)
-            {
-                ByteBuffer s = suffix.getSuffix();
-                s.limit(s.position() + upper.remaining());
-                int cmp = comparator.compare(s, upper);
+            if (suffix.compareTo(comparator, lower.value, false) == 0 && !lower.inclusive)
+                continue;
 
-                if ((cmp > 0 && upperInclusive) || (cmp >= 0 && !upperInclusive))
+            if (upper != null)
+            {
+                int cmp = suffix.compareTo(comparator, upper.value, false);
+                if ((cmp > 0 && upper.inclusive) || (cmp >= 0 && !upper.inclusive))
                     break;
             }
 
@@ -320,10 +368,7 @@ public class OnDiskSA implements Iterable<OnDiskSA.DataSuffix>, Closeable
     @Override
     public void close() throws IOException
     {
-        if (!FileUtils.isCleanerAvailable())
-            return;
-
-        FileUtils.clean(indexFile);
+        indexFile.unmap();
     }
 
     private PointerSuffix findPointer(ByteBuffer query)
@@ -368,7 +413,7 @@ public class OnDiskSA implements Iterable<OnDiskSA.DataSuffix>, Closeable
         }
 
         @Override
-        protected PointerBlock cast(ByteBuffer block)
+        protected PointerBlock cast(NativeMappedBuffer block)
         {
             return new PointerBlock(block);
         }
@@ -383,12 +428,12 @@ public class OnDiskSA implements Iterable<OnDiskSA.DataSuffix>, Closeable
         {
             super(offset, count);
             long baseOffset = blockOffsets + blockCount * 8;
-            superBlockCnt = indexFile.getInt((int)baseOffset);
+            superBlockCnt = indexFile.getInt(baseOffset);
             superBlocksOffset = baseOffset + 4;
         }
 
         @Override
-        protected DataBlock cast(ByteBuffer block)
+        protected DataBlock cast(NativeMappedBuffer block)
         {
             return new DataBlock(block);
         }
@@ -396,8 +441,8 @@ public class OnDiskSA implements Iterable<OnDiskSA.DataSuffix>, Closeable
         public OnDiskSuperBlock getSuperBlock(int idx)
         {
             assert idx < superBlockCnt : String.format("requested index %d is greater than super block count %d", idx, superBlockCnt);
-            long blockOffset = indexFile.getLong((int) (superBlocksOffset + idx * 8));
-            return new OnDiskSuperBlock((ByteBuffer) indexFile.duplicate().position((int) blockOffset));
+            long blockOffset = indexFile.getLong(superBlocksOffset + idx * 8);
+            return new OnDiskSuperBlock(indexFile.duplicate().position(blockOffset));
         }
     }
 
@@ -405,9 +450,9 @@ public class OnDiskSA implements Iterable<OnDiskSA.DataSuffix>, Closeable
     {
         private final TokenTree tokenTree;
 
-        public OnDiskSuperBlock(ByteBuffer buffer)
+        public OnDiskSuperBlock(NativeMappedBuffer buffer)
         {
-            tokenTree = new TokenTree(buffer);
+            tokenTree = new TokenTree(descriptor, buffer);
         }
 
         public SkippableIterator<Long, Token> iterator()
@@ -433,22 +478,22 @@ public class OnDiskSA implements Iterable<OnDiskSA.DataSuffix>, Closeable
 
             // calculate block offset and move there
             // (long is intentional, we'll just need mmap implementation which supports long positions)
-            long blockOffset = indexFile.getLong((int) (blockOffsets + idx * 8));
-            return cast((ByteBuffer) indexFile.duplicate().position((int) blockOffset));
+            long blockOffset = indexFile.getLong(blockOffsets + idx * 8);
+            return cast(indexFile.duplicate().position(blockOffset));
         }
 
-        protected abstract T cast(ByteBuffer block);
+        protected abstract T cast(NativeMappedBuffer block);
     }
 
     protected class DataBlock extends OnDiskBlock<DataSuffix>
     {
-        public DataBlock(ByteBuffer data)
+        public DataBlock(NativeMappedBuffer data)
         {
             super(data, BlockType.DATA);
         }
 
         @Override
-        protected DataSuffix cast(ByteBuffer data)
+        protected DataSuffix cast(NativeMappedBuffer data)
         {
             return new DataSuffix(data, suffixSize, getBlockIndex());
         }
@@ -492,23 +537,23 @@ public class OnDiskSA implements Iterable<OnDiskSA.DataSuffix>, Closeable
 
     protected class PointerBlock extends OnDiskBlock<PointerSuffix>
     {
-        public PointerBlock(ByteBuffer block)
+        public PointerBlock(NativeMappedBuffer block)
         {
             super(block, BlockType.POINTER);
         }
 
         @Override
-        protected PointerSuffix cast(ByteBuffer data)
+        protected PointerSuffix cast(NativeMappedBuffer data)
         {
             return new PointerSuffix(data, suffixSize);
         }
     }
 
-    public class DataSuffix extends Suffix
+    public class DataSuffix extends Suffix implements Comparable<DataSuffix>
     {
         private final TokenTree perBlockIndex;
 
-        protected DataSuffix(ByteBuffer content, SuffixSize size, TokenTree perBlockIndex)
+        protected DataSuffix(NativeMappedBuffer content, SuffixSize size, TokenTree perBlockIndex)
         {
             super(content, size);
             this.perBlockIndex = perBlockIndex;
@@ -516,13 +561,13 @@ public class OnDiskSA implements Iterable<OnDiskSA.DataSuffix>, Closeable
 
         public SkippableIterator<Long, Token> getTokens()
         {
-            final int blockEnd = (int) FBUtilities.align(content.position(), BLOCK_SIZE);
+            final long blockEnd = FBUtilities.align(content.position(), BLOCK_SIZE);
 
             if (isSparse())
                 return new PrefetchedTokensIterator(getSparseTokens());
 
-            int offset = blockEnd + 4 + content.getInt(getDataOffset() + 1);
-            return new TokenTree((ByteBuffer) indexFile.duplicate().position(offset)).iterator(keyFetcher);
+            long offset = blockEnd + 4 + content.getInt(getDataOffset() + 1);
+            return new TokenTree(descriptor, indexFile.duplicate().position(offset)).iterator(keyFetcher);
         }
 
         public boolean isSparse()
@@ -532,7 +577,7 @@ public class OnDiskSA implements Iterable<OnDiskSA.DataSuffix>, Closeable
 
         public NavigableMap<Long, Token> getSparseTokens()
         {
-            int ptrOffset = getDataOffset();
+            long ptrOffset = getDataOffset();
 
             byte size = content.get(ptrOffset);
 
@@ -549,11 +594,17 @@ public class OnDiskSA implements Iterable<OnDiskSA.DataSuffix>, Closeable
 
             return individualTokens;
         }
+
+        @Override
+        public int compareTo(DataSuffix other)
+        {
+            return other == null ? 1 : compareTo(comparator, other.getSuffix());
+        }
     }
 
     protected static class PointerSuffix extends Suffix
     {
-        public PointerSuffix(ByteBuffer content, SuffixSize size)
+        public PointerSuffix(NativeMappedBuffer content, SuffixSize size)
         {
             super(content, size);
         }
@@ -720,6 +771,11 @@ public class OnDiskSA implements Iterable<OnDiskSA.DataSuffix>, Closeable
         }
 
         out.println(" ***** end of level printout ***** ");
+    }
+
+    public AbstractType<?> getComparator()
+    {
+        return comparator;
     }
 
     public String getIndexPath()
