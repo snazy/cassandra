@@ -37,7 +37,6 @@ import org.apache.cassandra.exceptions.OverloadedException;
 import org.apache.cassandra.service.StorageProxy;
 import org.apache.cassandra.transport.Connection;
 import org.apache.cassandra.transport.Event;
-import org.apache.cassandra.transport.Server;
 import org.apache.cassandra.utils.ByteBufferUtil;
 import org.apache.cassandra.utils.WrappedRunnable;
 import org.apache.cassandra.utils.progress.ProgressEvent;
@@ -136,7 +135,7 @@ public class TraceState implements ProgressEventNotifier
         pushEventIfStopped();
     }
 
-    void pushEventIfStopped()
+    private void pushEventIfStopped()
     {
         if (status == Status.STOPPED && pendingMutations.get() == 0)
         {
@@ -145,8 +144,7 @@ public class TraceState implements ProgressEventNotifier
 
             if (connection != null)
             {
-                ((Server.ConnectionTracker) connection.getTracker()).send(connection,
-                                                                          new Event.TraceFinished(sessionId));
+                connection.send(new Event.TraceFinished(sessionId));
             }
         }
     }
@@ -200,7 +198,7 @@ public class TraceState implements ProgressEventNotifier
         trace(MessageFormatter.arrayFormat(format, args).getMessage());
     }
 
-    public void trace(final String message)
+    public void trace(String message)
     {
         if (notify)
             notifyActivity();

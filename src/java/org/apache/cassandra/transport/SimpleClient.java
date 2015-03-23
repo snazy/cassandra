@@ -226,7 +226,6 @@ public class SimpleClient
     private static class ConnectionTracker implements Connection.Tracker
     {
         public void addConnection(Channel ch, Connection connection) {}
-        public void closeAll() {}
     }
 
     private class Initializer extends ChannelInitializer<Channel>
@@ -270,7 +269,7 @@ public class SimpleClient
     @ChannelHandler.Sharable
     private static class ResponseHandler extends SimpleChannelInboundHandler<Message.Response>
     {
-        public final BlockingQueue<Message.Response> responses = new SynchronousQueue<Message.Response>(true);
+        public final BlockingQueue<Message.Response> responses = new SynchronousQueue<>(true);
         public EventHandler eventHandler;
 
         @Override

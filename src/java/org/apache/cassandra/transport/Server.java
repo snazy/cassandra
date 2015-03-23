@@ -39,7 +39,6 @@ import io.netty.channel.epoll.Epoll;
 import io.netty.channel.epoll.EpollEventLoopGroup;
 import io.netty.channel.epoll.EpollServerSocketChannel;
 import io.netty.channel.group.ChannelGroup;
-import io.netty.channel.group.ChannelMatcher;
 import io.netty.channel.group.DefaultChannelGroup;
 import io.netty.channel.nio.NioEventLoopGroup;
 import io.netty.channel.socket.nio.NioServerSocketChannel;
@@ -239,17 +238,6 @@ public class Server implements CassandraDaemon.Server
             groups.get(event.type).writeAndFlush(new EventMessage(event));
         }
 
-        public void send(final Connection connection, Event event)
-        {
-            groups.get(event.type).writeAndFlush(new EventMessage(event), new ChannelMatcher()
-            {
-                public boolean matches(Channel channel)
-                {
-                    return channel == connection.channel();
-                }
-            });
-        }
-
         public void closeAll()
         {
             allChannels.close().awaitUninterruptibly();
@@ -262,7 +250,7 @@ public class Server implements CassandraDaemon.Server
                 plus one additional channel used for the server's own bootstrap.
                - When server is stopped: the size is 0
             */
-            return !allChannels.isEmpty() ? allChannels.size() - 1 : 0;
+            return allChannels.size() != 0 ? allChannels.size() - 1 : 0;
         }
     }
 

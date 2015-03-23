@@ -43,28 +43,16 @@ public class TracingFinishedTest extends CQLTester
         clientA.connect(false);
         try
         {
-            final SynchronousQueue<Event> eventQueueA = new SynchronousQueue<>();
-            clientA.setEventHandler(new SimpleClient.EventHandler()
-            {
-                public void onEvent(Event event)
-                {
-                    eventQueueA.add(event);
-                }
-            });
+            SimpleEventHandler eventHandlerA = new SimpleEventHandler();
+            clientA.setEventHandler(eventHandlerA);
 
 
             SimpleClient clientB = new SimpleClient(nativeAddr.getHostAddress(), nativePort);
             clientB.connect(false);
             try
             {
-                final SynchronousQueue<Event> eventQueueB = new SynchronousQueue<>();
-                clientB.setEventHandler(new SimpleClient.EventHandler()
-                {
-                    public void onEvent(Event event)
-                    {
-                        eventQueueB.add(event);
-                    }
-                });
+                SimpleEventHandler eventHandlerB = new SimpleEventHandler();
+                clientB.setEventHandler(eventHandlerB);
 
                 Message.Response resp = clientA.execute(new RegisterMessage(Collections.singletonList(Event.Type.TRACE_FINISHED)));
                 Assert.assertSame(Message.Type.READY, resp.type);
@@ -75,11 +63,14 @@ public class TracingFinishedTest extends CQLTester
                 query.setTracingRequested();
                 resp = clientA.execute(query);
 
-                Event event = eventQueueA.poll(1, TimeUnit.SECONDS);
+                // TODO use CassandraDaemon.server.connectionTracker / Tracing.sessions
+                // to simulate a long running trace (defer TraceState.pushEventIfStopped() )
+
+                Event event = eventHandlerA.queue.poll(1, TimeUnit.SECONDS);
                 Assert.assertNotNull(event);
 
                 // assert that only the connection that started the trace receives the trace-finished event
-                Assert.assertNull(eventQueueB.poll(1, TimeUnit.SECONDS));
+                Assert.assertNull(eventHandlerB.queue.poll(1, TimeUnit.SECONDS));
 
                 Assert.assertSame(Event.Type.TRACE_FINISHED, event.type);
                 Assert.assertEquals(resp.getTracingId(), ((Event.TraceFinished) event).traceSessionId);
@@ -92,6 +83,16 @@ public class TracingFinishedTest extends CQLTester
         finally
         {
             clientA.close();
+        }
+    }
+
+    private static class SimpleEventHandler implements SimpleClient.EventHandler
+    {
+        private final SynchronousQueue<Event> queue = new SynchronousQueue<>();
+
+        public void onEvent(Event event)
+        {
+            queue.add(event);
         }
     }
 }
