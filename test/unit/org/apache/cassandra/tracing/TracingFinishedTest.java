@@ -39,38 +39,59 @@ public class TracingFinishedTest extends CQLTester
     {
         sessionNet(3);
 
-        SimpleClient client = new SimpleClient(nativeAddr.getHostAddress(), nativePort);
-        client.connect(false);
+        SimpleClient clientA = new SimpleClient(nativeAddr.getHostAddress(), nativePort);
+        clientA.connect(false);
         try
         {
-            final SynchronousQueue<Event> eventQueue = new SynchronousQueue<>();
-
-            client.setEventHandler(new SimpleClient.EventHandler()
+            final SynchronousQueue<Event> eventQueueA = new SynchronousQueue<>();
+            clientA.setEventHandler(new SimpleClient.EventHandler()
             {
                 public void onEvent(Event event)
                 {
-                    eventQueue.add(event);
+                    eventQueueA.add(event);
                 }
             });
 
-            Message.Response resp = client.execute(new RegisterMessage(Collections.singletonList(Event.Type.TRACE_FINISHED)));
-            Assert.assertSame(Message.Type.READY, resp.type);
 
-            createTable("CREATE TABLE %s (pk int PRIMARY KEY, v text)");
+            SimpleClient clientB = new SimpleClient(nativeAddr.getHostAddress(), nativePort);
+            clientB.connect(false);
+            try
+            {
+                final SynchronousQueue<Event> eventQueueB = new SynchronousQueue<>();
+                clientB.setEventHandler(new SimpleClient.EventHandler()
+                {
+                    public void onEvent(Event event)
+                    {
+                        eventQueueB.add(event);
+                    }
+                });
 
-            QueryMessage query = new QueryMessage("SELECT * FROM " + KEYSPACE + '.' + currentTable(), QueryOptions.DEFAULT);
-            query.setTracingRequested();;
-            resp = client.execute(query);
+                Message.Response resp = clientA.execute(new RegisterMessage(Collections.singletonList(Event.Type.TRACE_FINISHED)));
+                Assert.assertSame(Message.Type.READY, resp.type);
 
-            Event event = eventQueue.poll(1, TimeUnit.SECONDS);
-            Assert.assertNotNull(event);
+                createTable("CREATE TABLE %s (pk int PRIMARY KEY, v text)");
 
-            Assert.assertSame(Event.Type.TRACE_FINISHED, event.type);
-            Assert.assertEquals(resp.getTracingId(), ((Event.TraceFinished) event).traceSessionId);
+                QueryMessage query = new QueryMessage("SELECT * FROM " + KEYSPACE + '.' + currentTable(), QueryOptions.DEFAULT);
+                query.setTracingRequested();
+                resp = clientA.execute(query);
+
+                Event event = eventQueueA.poll(1, TimeUnit.SECONDS);
+                Assert.assertNotNull(event);
+
+                // assert that only the connection that started the trace receives the trace-finished event
+                Assert.assertNull(eventQueueB.poll(1, TimeUnit.SECONDS));
+
+                Assert.assertSame(Event.Type.TRACE_FINISHED, event.type);
+                Assert.assertEquals(resp.getTracingId(), ((Event.TraceFinished) event).traceSessionId);
+            }
+            finally
+            {
+                clientB.close();
+            }
         }
         finally
         {
-            client.close();
+            clientA.close();
         }
     }
 }
