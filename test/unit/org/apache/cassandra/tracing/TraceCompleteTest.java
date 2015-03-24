@@ -32,10 +32,10 @@ import org.apache.cassandra.transport.SimpleClient;
 import org.apache.cassandra.transport.messages.QueryMessage;
 import org.apache.cassandra.transport.messages.RegisterMessage;
 
-public class TracingFinishedTest extends CQLTester
+public class TraceCompleteTest extends CQLTester
 {
     @Test
-    public void testTracingFinished() throws Throwable
+    public void testTraceComplete() throws Throwable
     {
         sessionNet(3);
 
@@ -54,7 +54,7 @@ public class TracingFinishedTest extends CQLTester
                 SimpleEventHandler eventHandlerB = new SimpleEventHandler();
                 clientB.setEventHandler(eventHandlerB);
 
-                Message.Response resp = clientA.execute(new RegisterMessage(Collections.singletonList(Event.Type.TRACE_FINISHED)));
+                Message.Response resp = clientA.execute(new RegisterMessage(Collections.singletonList(Event.Type.TRACE_COMPLETE)));
                 Assert.assertSame(Message.Type.READY, resp.type);
 
                 createTable("CREATE TABLE %s (pk int PRIMARY KEY, v text)");
@@ -69,11 +69,11 @@ public class TracingFinishedTest extends CQLTester
                 Event event = eventHandlerA.queue.poll(1, TimeUnit.SECONDS);
                 Assert.assertNotNull(event);
 
-                // assert that only the connection that started the trace receives the trace-finished event
+                // assert that only the connection that started the trace receives the trace-complete event
                 Assert.assertNull(eventHandlerB.queue.poll(1, TimeUnit.SECONDS));
 
-                Assert.assertSame(Event.Type.TRACE_FINISHED, event.type);
-                Assert.assertEquals(resp.getTracingId(), ((Event.TraceFinished) event).traceSessionId);
+                Assert.assertSame(Event.Type.TRACE_COMPLETE, event.type);
+                Assert.assertEquals(resp.getTracingId(), ((Event.TraceComplete) event).traceSessionId);
             }
             finally
             {

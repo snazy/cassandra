@@ -28,7 +28,7 @@ import io.netty.buffer.ByteBuf;
 
 public abstract class Event
 {
-    public enum Type { TOPOLOGY_CHANGE, STATUS_CHANGE, SCHEMA_CHANGE, TRACE_FINISHED }
+    public enum Type { TOPOLOGY_CHANGE, STATUS_CHANGE, SCHEMA_CHANGE, TRACE_COMPLETE}
 
     public final Type type;
 
@@ -47,8 +47,8 @@ public abstract class Event
                 return StatusChange.deserializeEvent(cb, version);
             case SCHEMA_CHANGE:
                 return SchemaChange.deserializeEvent(cb, version);
-            case TRACE_FINISHED:
-                return TraceFinished.deserializeEvent(cb, version);
+            case TRACE_COMPLETE:
+                return TraceComplete.deserializeEvent(cb, version);
         }
         throw new AssertionError();
     }
@@ -404,13 +404,13 @@ public abstract class Event
     /**
      * @since native protocol v4
      */
-    public static class TraceFinished extends Event
+    public static class TraceComplete extends Event
     {
         public final UUID traceSessionId;
 
-        public TraceFinished(UUID traceSessionId)
+        public TraceComplete(UUID traceSessionId)
         {
-            super(Type.TRACE_FINISHED);
+            super(Type.TRACE_COMPLETE);
             this.traceSessionId = traceSessionId;
         }
 
@@ -418,7 +418,7 @@ public abstract class Event
         {
             UUID traceSessionId = CBUtil.readUUID(cb);
 
-            return new TraceFinished(traceSessionId);
+            return new TraceComplete(traceSessionId);
         }
 
         protected void serializeEvent(ByteBuf dest, int version)
@@ -446,10 +446,10 @@ public abstract class Event
         @Override
         public boolean equals(Object other)
         {
-            if (!(other instanceof TraceFinished))
+            if (!(other instanceof TraceComplete))
                 return false;
 
-            TraceFinished tf = (TraceFinished)other;
+            TraceComplete tf = (TraceComplete)other;
             return Objects.equal(traceSessionId, tf.traceSessionId);
         }
     }

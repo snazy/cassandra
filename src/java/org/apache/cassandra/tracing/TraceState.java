@@ -144,7 +144,7 @@ public class TraceState implements ProgressEventNotifier
 
             if (connection != null)
             {
-                connection.send(new Event.TraceFinished(sessionId));
+                connection.send(new Event.TraceComplete(sessionId));
             }
         }
     }
