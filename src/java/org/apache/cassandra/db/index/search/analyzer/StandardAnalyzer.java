@@ -1,4 +1,4 @@
-package org.apache.cassandra.db.index.search.tokenization;
+package org.apache.cassandra.db.index.search.analyzer;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -8,11 +8,12 @@ import java.nio.ByteBuffer;
 import java.util.HashMap;
 import java.util.Map;
 
-import org.apache.cassandra.db.index.search.tokenization.filter.*;
+import org.apache.cassandra.db.index.search.analyzer.filter.*;
+import org.apache.cassandra.db.marshal.AbstractType;
 import org.apache.cassandra.utils.ByteBufferDataInput;
 import org.apache.cassandra.utils.ByteBufferUtil;
 
-public class StandardTokenizer extends AbstractTokenizer
+public class StandardAnalyzer extends AbstractAnalyzer
 {
     public enum TokenType
     {
@@ -133,7 +134,7 @@ public class StandardTokenizer extends AbstractTokenizer
     }
 
     @Override
-    public void init(Map<String, String> options)
+    public void init(Map<String, String> options, AbstractType validator)
     {
         init(StandardTokenizerOptions.buildFromMap(options));
     }

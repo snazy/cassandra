@@ -1,4 +1,4 @@
-package org.apache.cassandra.db.index.search.tokenization;
+package org.apache.cassandra.db.index.search.analyzer;
 
 /*
  * Licensed to the Apache Software Foundation (ASF) under one or more
@@ -22,7 +22,7 @@ import java.util.Arrays;
 /**
  * This class implements Word Break rules from the Unicode Text Segmentation 
  * algorithm, as specified in 
- * <a href="http://unicode.org/reports/tr29/">Unicode Standard Annex #29</a>. 
+ * <a href="http://unicode.org/reports/tr29/">Unicode Standard Annex #29</a>. ∂
  * <p/>
  * Tokens produced are of the following types:
  * <ul>
@@ -86,10 +86,10 @@ RegionalIndicatorEx = {RegionalIndicator}                                       
 
 %{
   /** Alphanumeric sequences */
-  public static final int WORD_TYPE = StandardTokenizer.TokenType.ALPHANUM.value;
+  public static final int WORD_TYPE = StandardAnalyzer.TokenType.ALPHANUM.value;
   
   /** Numbers */
-  public static final int NUMERIC_TYPE = StandardTokenizer.TokenType.NUM.value;
+  public static final int NUMERIC_TYPE = StandardAnalyzer.TokenType.NUM.value;
   
   /**
    * Chars in class \p{Line_Break = Complex_Context} are from South East Asian
@@ -99,15 +99,15 @@ RegionalIndicatorEx = {RegionalIndicator}                                       
    * <p>
    * See Unicode Line Breaking Algorithm: http://www.unicode.org/reports/tr14/#SA
    */
-  public static final int SOUTH_EAST_ASIAN_TYPE = StandardTokenizer.TokenType.SOUTHEAST_ASIAN.value;
+  public static final int SOUTH_EAST_ASIAN_TYPE = StandardAnalyzer.TokenType.SOUTHEAST_ASIAN.value;
   
-  public static final int IDEOGRAPHIC_TYPE = StandardTokenizer.TokenType.IDEOGRAPHIC.value;
+  public static final int IDEOGRAPHIC_TYPE = StandardAnalyzer.TokenType.IDEOGRAPHIC.value;
   
-  public static final int HIRAGANA_TYPE = StandardTokenizer.TokenType.HIRAGANA.value;
+  public static final int HIRAGANA_TYPE = StandardAnalyzer.TokenType.HIRAGANA.value;
   
-  public static final int KATAKANA_TYPE = StandardTokenizer.TokenType.KATAKANA.value;
+  public static final int KATAKANA_TYPE = StandardAnalyzer.TokenType.KATAKANA.value;
   
-  public static final int HANGUL_TYPE = StandardTokenizer.TokenType.HANGUL.value;
+  public static final int HANGUL_TYPE = StandardAnalyzer.TokenType.HANGUL.value;
 
   public final int yychar()
   {
@@ -136,7 +136,7 @@ RegionalIndicatorEx = {RegionalIndicator}                                       
 // UAX#29 WB1.   sot   ÷
 //        WB2.     ÷   eot
 //
-<<EOF>> { return StandardTokenizer.TokenType.EOF.value; }
+<<EOF>> { return StandardAnalyzer.TokenType.EOF.value; }
 
 // UAX#29 WB8.   Numeric × Numeric
 //        WB11.  Numeric (MidNum | MidNumLet | Single_Quote) × Numeric

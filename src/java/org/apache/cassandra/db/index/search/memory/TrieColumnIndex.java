@@ -11,7 +11,7 @@ import org.apache.cassandra.db.index.SuffixArraySecondaryIndex;
 import org.apache.cassandra.db.index.SuffixArraySecondaryIndex.IndexMode;
 import org.apache.cassandra.db.index.search.plan.Expression;
 import org.apache.cassandra.db.index.search.container.TokenTree.Token;
-import org.apache.cassandra.db.index.search.tokenization.AbstractTokenizer;
+import org.apache.cassandra.db.index.search.analyzer.AbstractAnalyzer;
 import org.apache.cassandra.db.index.utils.LazyMergeSortIterator;
 import org.apache.cassandra.db.index.utils.SkippableIterator;
 import org.apache.cassandra.service.StorageService;
@@ -51,14 +51,14 @@ public class TrieColumnIndex extends ColumnIndex
     {
         final DecoratedKey dk = StorageService.getPartitioner().decorateKey(key);
 
-        AbstractTokenizer tokenizer = SuffixArraySecondaryIndex.getTokenizer(Pair.create(definition, mode));
+        AbstractAnalyzer analyzer = SuffixArraySecondaryIndex.getAnalyzer(Pair.create(definition, mode));
 
-        tokenizer.init(definition.getIndexOptions());
-        tokenizer.reset(value.duplicate());
+        analyzer.init(definition.getIndexOptions(), definition.getValidator());
+        analyzer.reset(value.duplicate());
 
-        while (tokenizer.hasNext())
+        while (analyzer.hasNext())
         {
-            ByteBuffer term = tokenizer.next();
+            ByteBuffer term = analyzer.next();
             index.add(definition.getValidator().getString(term), dk);
         }
     }

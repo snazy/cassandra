@@ -13,7 +13,7 @@ import org.apache.cassandra.db.index.search.SSTableIndex;
 import org.apache.cassandra.db.index.search.SuffixIterator;
 import org.apache.cassandra.db.index.search.container.TokenTree.Token;
 import org.apache.cassandra.db.index.search.memory.IndexMemtable;
-import org.apache.cassandra.db.index.search.tokenization.AbstractTokenizer;
+import org.apache.cassandra.db.index.search.analyzer.AbstractAnalyzer;
 import org.apache.cassandra.db.index.utils.LazyMergeSortIterator;
 import org.apache.cassandra.db.index.utils.LazyMergeSortIterator.OperationType;
 import org.apache.cassandra.db.index.utils.SkippableIterator;
@@ -255,7 +255,7 @@ public class Operation
                     continue;
                 }
 
-                column = Pair.create(nonIndexedColumn, new IndexMode(null, false, 0));
+                column = Pair.create(nonIndexedColumn, new IndexMode(null, false, null, 0));
             }
 
             AbstractType<?> validator = column.left.getValidator();
@@ -266,7 +266,7 @@ public class Operation
                 // becomes text = "Hello" AND text = "WORLD"
                 // because "space" is always interpreted as a split point.
                 case EQ:
-                    Iterator<ByteBuffer> tokens = tokenize(column, e);
+                    Iterator<ByteBuffer> tokens = analyze(column, e);
                     while (tokens.hasNext())
                     {
                         final ByteBuffer token = tokens.next();
@@ -288,7 +288,7 @@ public class Operation
                     else
                         range = Iterators.getLast(perColumn.iterator());
 
-                    tokens = tokenize(column, e);
+                    tokens = analyze(column, e);
                     while (tokens.hasNext())
                         range.add(e.op, tokens.next());
 
@@ -392,13 +392,13 @@ public class Operation
         return new LazyMergeSortIterator<>(op, unions);
     }
 
-    private static Iterator<ByteBuffer> tokenize(Pair<ColumnDefinition, IndexMode> column, final IndexExpression e)
+    private static Iterator<ByteBuffer> analyze(Pair<ColumnDefinition, IndexMode> column, final IndexExpression e)
     {
-        final AbstractTokenizer tokenizer = SuffixArraySecondaryIndex.getTokenizer(column);
+        final AbstractAnalyzer analyze = SuffixArraySecondaryIndex.getAnalyzer(column);
 
-        tokenizer.init(column.left.getIndexOptions());
-        tokenizer.reset(ByteBuffer.wrap(e.getValue()));
+        analyze.init(column.left.getIndexOptions(), column.left.getValidator());
+        analyze.reset(ByteBuffer.wrap(e.getValue()));
 
-        return tokenizer;
+        return analyze;
     }
 }

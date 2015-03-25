@@ -22,9 +22,9 @@ import org.apache.cassandra.db.index.search.SSTableIndex;
 import org.apache.cassandra.db.index.search.container.TokenTreeBuilder;
 import org.apache.cassandra.db.index.search.memory.IndexMemtable;
 import org.apache.cassandra.db.index.search.plan.QueryPlan;
-import org.apache.cassandra.db.index.search.tokenization.AbstractTokenizer;
-import org.apache.cassandra.db.index.search.tokenization.NoOpTokenizer;
-import org.apache.cassandra.db.index.search.tokenization.StandardTokenizer;
+import org.apache.cassandra.db.index.search.analyzer.AbstractAnalyzer;
+import org.apache.cassandra.db.index.search.analyzer.NoOpAnalyzer;
+import org.apache.cassandra.db.index.search.analyzer.StandardAnalyzer;
 import org.apache.cassandra.db.index.search.utils.CombinedTermIterator;
 import org.apache.cassandra.db.index.utils.TypeUtil;
 import org.apache.cassandra.db.marshal.AbstractType;
@@ -64,6 +64,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex
 
     private static final String INDEX_MODE_OPTION = "mode";
     private static final String INDEX_ANALYZED_OPTION = "analyzed";
+    private static final String INDEX_ANALYZER_CLASS_OPTION = "analyzer_class";
     private static final String INDEX_MAX_FLUSH_MEMORY_OPTION = "max_compaction_flush_memory_in_mb";
     private static final double INDEX_MAX_FLUSH_DEFAULT_MULTIPLIER = 0.15;
 
@@ -134,12 +135,35 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex
         Map<String, String> indexOptions = columnDef.getIndexOptions();
 
         Mode mode = indexOptions.get(INDEX_MODE_OPTION) == null ? Mode.ORIGINAL : Mode.mode(indexOptions.get(INDEX_MODE_OPTION));
-        boolean isAnalyzed = indexOptions.get(INDEX_ANALYZED_OPTION) == null ? false : Boolean.valueOf(indexOptions.get(INDEX_ANALYZED_OPTION));
+
+        boolean isAnalyzed = false;
+        Class analyzerClass = null;
+        try
+        {
+            if (indexOptions.get(INDEX_ANALYZER_CLASS_OPTION) != null)
+            {
+
+                analyzerClass = Class.forName(indexOptions.get(INDEX_ANALYZER_CLASS_OPTION));
+                isAnalyzed = (indexOptions.get(INDEX_ANALYZED_OPTION) == null)
+                        ? true : Boolean.valueOf(indexOptions.get(INDEX_ANALYZED_OPTION));
+            }
+            else if (indexOptions.get(INDEX_ANALYZED_OPTION) != null)
+            {
+                isAnalyzed = Boolean.valueOf(indexOptions.get(INDEX_ANALYZED_OPTION));
+            }
+        }
+        catch (ClassNotFoundException e)
+        {
+            // should not happen as we already validated we could instantiate an instance in validateOptions()
+            logger.error("Failed to find specified analyzer class [{}]. Falling back to default " +
+                    "analyzer", indexOptions.get(INDEX_ANALYZER_CLASS_OPTION));
+        }
+
         Long maxMemMb = indexOptions.get(INDEX_MAX_FLUSH_MEMORY_OPTION) == null
                 ? (long) ((DatabaseDescriptor.getTotalMemtableSpaceInMB() * 1048576L) * INDEX_MAX_FLUSH_DEFAULT_MULTIPLIER)
                 : Long.parseLong(indexOptions.get(INDEX_MAX_FLUSH_MEMORY_OPTION));
 
-        indexedColumns.put(columnDef.name, Pair.create(columnDef, new IndexMode(mode, isAnalyzed, maxMemMb)));
+        indexedColumns.put(columnDef.name, Pair.create(columnDef, new IndexMode(mode, isAnalyzed, analyzerClass, maxMemMb)));
         addComponent(Collections.singleton(columnDef));
     }
 
@@ -218,7 +242,23 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex
 
     public void validateOptions() throws ConfigurationException
     {
-        // nop
+        for (ColumnDefinition columnDef : columnDefs)
+        {
+            Map<String, String> indexOptions = columnDef.getIndexOptions();
+            // validate that a valid analyzer class was provided if specified
+            if (indexOptions.containsKey(INDEX_ANALYZER_CLASS_OPTION))
+            {
+                try
+                {
+                    Class.forName(indexOptions.get(INDEX_ANALYZER_CLASS_OPTION));
+                }
+                catch (ClassNotFoundException e)
+                {
+                    throw new ConfigurationException(String.format("Invalid analyzer class option specified [%s]",
+                            indexOptions.get(INDEX_ANALYZER_CLASS_OPTION)));
+                }
+            }
+        }
     }
 
     public String getIndexName()
@@ -571,7 +611,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex
         {
             private final ColumnDefinition column;
             private final String outputFile;
-            private final AbstractTokenizer tokenizer;
+            private final AbstractAnalyzer analyzer;
             private final Map<ByteBuffer, TokenTreeBuilder> keysPerTerm;
             private long estimatedBytes = 0;
 
@@ -582,8 +622,8 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex
             {
                 this.column = column;
                 this.outputFile = outputFile;
-                this.tokenizer = getTokenizer(indexedColumns.get(column.name));
-                this.tokenizer.init(column.getIndexOptions());
+                this.analyzer = getAnalyzer(indexedColumns.get(column.name));
+                this.analyzer.init(column.getIndexOptions(), column.getValidator());
                 this.keysPerTerm = new HashMap<>();
             }
 
@@ -606,10 +646,10 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex
 
                 boolean isAdded = false;
 
-                tokenizer.reset(term);
-                while (tokenizer.hasNext())
+                analyzer.reset(term);
+                while (analyzer.hasNext())
                 {
-                    ByteBuffer token = tokenizer.next();
+                    ByteBuffer token = analyzer.next();
                     int size = token.remaining();
 
                     if (token.remaining() >= OnDiskSABuilder.MAX_TERM_SIZE)
@@ -1110,22 +1150,37 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex
         return definition == null ? null : definition.right.mode;
     }
 
-    public static AbstractTokenizer getTokenizer(Pair<ColumnDefinition, IndexMode> column)
+    public static AbstractAnalyzer getAnalyzer(Pair<ColumnDefinition, IndexMode> column)
     {
         assert column != null;
-        return column.right.isAnalyzed && TOKENIZABLE_TYPES.contains(column.left.getValidator()) ? new StandardTokenizer() : new NoOpTokenizer();
+        try
+        {
+            if (column.right.isAnalyzed)
+                if (column.right.analyzerClass != null)
+                    return (AbstractAnalyzer) column.right.analyzerClass.newInstance();
+                else if (TOKENIZABLE_TYPES.contains(column.left.getValidator()))
+                    return new StandardAnalyzer();
+        }
+        catch (InstantiationException|IllegalAccessException e)
+        {
+            logger.error("Failed to create new instance of analyzer with class [{}]",
+                    column.right.analyzerClass.getName(), e);
+        }
+        return new NoOpAnalyzer();
     }
 
     public static class IndexMode
     {
         public final Mode mode;
         public final boolean isAnalyzed;
+        public final Class analyzerClass;
         public final long maxCompactionFlushMemoryInMb;
 
-        public IndexMode(Mode mode, boolean isAnalyzed, long maxFlushMemMb)
+        public IndexMode(Mode mode, boolean isAnalyzed, Class analyzerClass, long maxFlushMemMb)
         {
             this.mode = mode;
             this.isAnalyzed = isAnalyzed;
+            this.analyzerClass = analyzerClass;
             this.maxCompactionFlushMemoryInMb = maxFlushMemMb;
         }
     }

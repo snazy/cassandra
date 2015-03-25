@@ -1,4 +1,4 @@
-package org.apache.cassandra.db.index.search.tokenization.filter;
+package org.apache.cassandra.db.index.search.analyzer.filter;
 
 /**
  * A single task or set of work to process an input

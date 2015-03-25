@@ -1,4 +1,4 @@
-package org.apache.cassandra.db.index.search.tokenization;
+package org.apache.cassandra.db.index.search.analyzer;
 
 import static org.junit.Assert.assertEquals;
 
@@ -8,17 +8,17 @@ import java.io.InputStream;
 import java.nio.ByteBuffer;
 import java.util.*;
 
-public class BasicTokenizationTest
+public class StandardAnalyzerTest
 {
     @Test
     public void testTokenizationAscii() throws Exception
     {
-        InputStream is = BasicTokenizationTest.class.getClassLoader()
+        InputStream is = StandardAnalyzerTest.class.getClassLoader()
                 .getResourceAsStream("tokenization/apache_license_header.txt");
 
         StandardTokenizerOptions options = new StandardTokenizerOptions.OptionsBuilder()
                 .maxTokenLength(5).build();
-        StandardTokenizer tokenizer = new StandardTokenizer();
+        StandardAnalyzer tokenizer = new StandardAnalyzer();
         tokenizer.init(options);
 
         List<ByteBuffer> tokens = new ArrayList<>();
@@ -32,10 +32,10 @@ public class BasicTokenizationTest
     @Test
     public void testTokenizationLoremIpsum() throws Exception
     {
-        InputStream is = BasicTokenizationTest.class.getClassLoader()
+        InputStream is = StandardAnalyzerTest.class.getClassLoader()
                 .getResourceAsStream("tokenization/lorem_ipsum.txt");
 
-        StandardTokenizer tokenizer = new StandardTokenizer();
+        StandardAnalyzer tokenizer = new StandardAnalyzer();
         tokenizer.init(StandardTokenizerOptions.DEFAULT);
 
         List<ByteBuffer> tokens = new ArrayList<>();
@@ -50,10 +50,10 @@ public class BasicTokenizationTest
     @Test
     public void testTokenizationJaJp1() throws Exception
     {
-        InputStream is = BasicTokenizationTest.class.getClassLoader()
+        InputStream is = StandardAnalyzerTest.class.getClassLoader()
                 .getResourceAsStream("tokenization/ja_jp_1.txt");
 
-        StandardTokenizer tokenizer = new StandardTokenizer();
+        StandardAnalyzer tokenizer = new StandardAnalyzer();
         tokenizer.init(StandardTokenizerOptions.DEFAULT);
 
         tokenizer.reset(is);
@@ -67,12 +67,12 @@ public class BasicTokenizationTest
     @Test
     public void testTokenizationJaJp2() throws Exception
     {
-        InputStream is = BasicTokenizationTest.class.getClassLoader()
+        InputStream is = StandardAnalyzerTest.class.getClassLoader()
                 .getResourceAsStream("tokenization/ja_jp_2.txt");
 
         StandardTokenizerOptions options = new StandardTokenizerOptions.OptionsBuilder().stemTerms(true)
                 .ignoreStopTerms(true).alwaysLowerCaseTerms(true).build();
-        StandardTokenizer tokenizer = new StandardTokenizer();
+        StandardAnalyzer tokenizer = new StandardAnalyzer();
         tokenizer.init(options);
 
         tokenizer.reset(is);
@@ -86,9 +86,9 @@ public class BasicTokenizationTest
     @Test
     public void testTokenizationRuRu1() throws Exception
     {
-        InputStream is = BasicTokenizationTest.class.getClassLoader()
+        InputStream is = StandardAnalyzerTest.class.getClassLoader()
                 .getResourceAsStream("tokenization/ru_ru_1.txt");
-        StandardTokenizer tokenizer = new StandardTokenizer();
+        StandardAnalyzer tokenizer = new StandardAnalyzer();
         tokenizer.init(StandardTokenizerOptions.DEFAULT);
 
         List<ByteBuffer> tokens = new ArrayList<>();
@@ -102,9 +102,9 @@ public class BasicTokenizationTest
     @Test
     public void testTokenizationZnTw1() throws Exception
     {
-        InputStream is = BasicTokenizationTest.class.getClassLoader()
+        InputStream is = StandardAnalyzerTest.class.getClassLoader()
                 .getResourceAsStream("tokenization/zn_tw_1.txt");
-        StandardTokenizer tokenizer = new StandardTokenizer();
+        StandardAnalyzer tokenizer = new StandardAnalyzer();
         tokenizer.init(StandardTokenizerOptions.DEFAULT);
 
         List<ByteBuffer> tokens = new ArrayList<>();
@@ -118,13 +118,13 @@ public class BasicTokenizationTest
     @Test
     public void testTokenizationAdventuresOfHuckFinn() throws Exception
     {
-        InputStream is = BasicTokenizationTest.class.getClassLoader()
+        InputStream is = StandardAnalyzerTest.class.getClassLoader()
                 .getResourceAsStream("tokenization/adventures_of_huckleberry_finn_mark_twain.txt");
 
         StandardTokenizerOptions options = new StandardTokenizerOptions.OptionsBuilder().stemTerms(true)
                 .ignoreStopTerms(true).useLocale(Locale.ENGLISH)
                 .alwaysLowerCaseTerms(true).build();
-        StandardTokenizer tokenizer = new StandardTokenizer();
+        StandardAnalyzer tokenizer = new StandardAnalyzer();
         tokenizer.init(options);
 
         List<ByteBuffer> tokens = new ArrayList<>();
@@ -138,10 +138,10 @@ public class BasicTokenizationTest
     @Test
     public void tokenizeDomainNamesAndUrls() throws Exception
     {
-        InputStream is = BasicTokenizationTest.class.getClassLoader()
+        InputStream is = StandardAnalyzerTest.class.getClassLoader()
                 .getResourceAsStream("tokenization/top_visited_domains.txt");
 
-        StandardTokenizer tokenizer = new StandardTokenizer();
+        StandardAnalyzer tokenizer = new StandardAnalyzer();
         tokenizer.init(StandardTokenizerOptions.DEFAULT);
         tokenizer.reset(is);
 
@@ -162,7 +162,7 @@ public class BasicTokenizationTest
         bbToTokenize.add(ByteBuffer.wrap("The squeaky wheel gets the grease.".getBytes()));
         bbToTokenize.add(ByteBuffer.wrap("The pen is mightier than the sword.".getBytes()));
 
-        StandardTokenizer tokenizer = new StandardTokenizer();
+        StandardAnalyzer tokenizer = new StandardAnalyzer();
         tokenizer.init(StandardTokenizerOptions.DEFAULT);
 
         List<ByteBuffer> tokens = new ArrayList<>();
