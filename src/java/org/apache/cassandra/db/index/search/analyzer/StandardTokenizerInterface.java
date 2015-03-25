@@ -1,4 +1,4 @@
-package org.apache.cassandra.db.index.search.tokenization;
+package org.apache.cassandra.db.index.search.analyzer;
 
 import java.io.IOException;
 import java.io.Reader;

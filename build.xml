@@ -262,7 +262,7 @@
     -->
     <target name="generate-jflex-java" description="Generate Java from jflex grammar">
         <taskdef classname="jflex.anttask.JFlexTask" classpath="${build.lib}/jflex-1.6.0.jar" name="jflex" />
-        <jflex file="${build.src.java}/org/apache/cassandra/db/index/search/tokenization/StandardTokenizerImpl.jflex" destdir="${build.src.gen-java}/" />
+        <jflex file="${build.src.java}/org/apache/cassandra/db/index/search/analyzer/StandardTokenizerImpl.jflex" destdir="${build.src.gen-java}/" />
     </target>
 
     <!--
