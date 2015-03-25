@@ -1,4 +1,6 @@
-package org.apache.cassandra.db.index.search.tokenization;
+package org.apache.cassandra.db.index.search.analyzer;
+
+import org.apache.cassandra.db.marshal.AbstractType;
 
 import java.nio.ByteBuffer;
 import java.util.Map;
@@ -7,13 +9,13 @@ import java.util.Map;
  * Default noOp tokenizer. The iterator will iterate only once
  * returning the unmodified input
  */
-public class NoOpTokenizer extends AbstractTokenizer
+public class NoOpAnalyzer extends AbstractAnalyzer
 {
     private ByteBuffer input;
     private boolean hasNext = false;
 
     @Override
-    public void init(Map<String, String> options)
+    public void init(Map<String, String> options, AbstractType validator)
     {
     }
 

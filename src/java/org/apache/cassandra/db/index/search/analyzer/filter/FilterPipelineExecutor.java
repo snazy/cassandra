@@ -1,4 +1,4 @@
-package org.apache.cassandra.db.index.search.tokenization.filter;
+package org.apache.cassandra.db.index.search.analyzer.filter;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;

@@ -1,4 +1,4 @@
-package org.apache.cassandra.db.index.search.tokenization.filter;
+package org.apache.cassandra.db.index.search.analyzer.filter;
 
 import com.google.common.cache.CacheBuilder;
 import com.google.common.cache.CacheLoader;

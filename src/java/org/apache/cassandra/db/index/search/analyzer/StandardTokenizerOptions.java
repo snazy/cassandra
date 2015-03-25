@@ -1,4 +1,4 @@
-package org.apache.cassandra.db.index.search.tokenization;
+package org.apache.cassandra.db.index.search.analyzer;
 
 import java.util.Locale;
 import java.util.Map;
