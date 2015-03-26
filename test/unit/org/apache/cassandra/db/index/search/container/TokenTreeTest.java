@@ -3,7 +3,6 @@ package org.apache.cassandra.db.index.search.container;
 import java.io.File;
 import java.io.IOException;
 import java.nio.ByteBuffer;
-import java.nio.channels.FileChannel;
 import java.util.*;
 
 import org.apache.cassandra.db.DecoratedKey;

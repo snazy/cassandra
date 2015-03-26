@@ -1,7 +1,6 @@
 package org.apache.cassandra.db.index.search.container;
 
 import java.io.IOException;
-import java.nio.ByteBuffer;
 import java.util.*;
 
 import org.apache.cassandra.db.DecoratedKey;
@@ -15,6 +14,7 @@ import org.apache.cassandra.utils.Pair;
 import com.carrotsearch.hppc.LongOpenHashSet;
 import com.carrotsearch.hppc.LongSet;
 import com.carrotsearch.hppc.cursors.LongCursor;
+import com.google.common.annotations.VisibleForTesting;
 import com.google.common.primitives.Longs;
 import com.google.common.base.Function;
 import com.google.common.collect.AbstractIterator;
@@ -36,7 +36,8 @@ public class TokenTree
     private final long treeMaxToken;
     private final long tokenCount;
 
-    public TokenTree(NativeMappedBuffer tokenTree)
+    @VisibleForTesting
+    protected TokenTree(NativeMappedBuffer tokenTree)
     {
         this(Descriptor.CURRENT, tokenTree);
     }
