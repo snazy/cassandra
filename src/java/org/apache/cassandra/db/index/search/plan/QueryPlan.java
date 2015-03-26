@@ -141,7 +141,7 @@ public class QueryPlan
     {
         AbstractBounds<RowPosition> range = filter.dataRange.keyRange();
 
-        final int maxRows = Math.min(MAX_ROWS, filter.maxRows());
+        final int maxRows = Math.min(filter.maxColumns(), Math.min(MAX_ROWS, filter.maxRows()));
         final Set<Row> rows = new TreeSet<>(new Comparator<Row>()
         {
             @Override
