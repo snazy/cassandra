@@ -28,7 +28,19 @@ import io.netty.buffer.ByteBuf;
 
 public abstract class Event
 {
-    public enum Type { TOPOLOGY_CHANGE, STATUS_CHANGE, SCHEMA_CHANGE, TRACE_COMPLETE}
+    public enum Type {
+        TOPOLOGY_CHANGE(2),
+        STATUS_CHANGE(2),
+        SCHEMA_CHANGE(2),
+        TRACE_COMPLETE(4);
+
+        public final int minimumVersion;
+
+        Type(int minimumVersion)
+        {
+            this.minimumVersion = minimumVersion;
+        }
+    }
 
     public final Type type;
 
@@ -39,7 +51,10 @@ public abstract class Event
 
     public static Event deserialize(ByteBuf cb, int version)
     {
-        switch (CBUtil.readEnumValue(Type.class, cb))
+        Type eventType = CBUtil.readEnumValue(Type.class, cb);
+        if (eventType.minimumVersion > version)
+            throw new ProtocolException("Event " + eventType.name() + " not valid for protocol version " + version);
+        switch (eventType)
         {
             case TOPOLOGY_CHANGE:
                 return TopologyChange.deserializeEvent(cb, version);
@@ -418,16 +433,25 @@ public abstract class Event
         {
             UUID traceSessionId = CBUtil.readUUID(cb);
 
+            if (version < Server.VERSION_4)
+                throw new ProtocolException("Got TRACE_COMPLETE event message for protocol version " + version);
+
             return new TraceComplete(traceSessionId);
         }
 
         protected void serializeEvent(ByteBuf dest, int version)
         {
+            if (version < Server.VERSION_4)
+                throw new ProtocolException("TRACE_COMPLETE event message not defined for protocol version " + version);
+
             CBUtil.writeUUID(traceSessionId, dest);
         }
 
         protected int eventSerializedSize(int version)
         {
+            if (version < Server.VERSION_4)
+                throw new ProtocolException("TRACE_COMPLETE event message not defined for protocol version " + version);
+
             return CBUtil.sizeOfUUID(traceSessionId);
         }
 

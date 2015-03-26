@@ -68,7 +68,11 @@ public class RegisterMessage extends Message.Request
         Connection.Tracker tracker = connection.getTracker();
         assert tracker instanceof Server.ConnectionTracker;
         for (Event.Type type : eventTypes)
-            ((Server.ConnectionTracker)tracker).register(type, connection().channel());
+        {
+            if (type.minimumVersion > connection.getVersion())
+                throw new ProtocolException("Event " + type.name() + " not valid for protocol version " + connection.getVersion());
+            ((Server.ConnectionTracker) tracker).register(type, connection().channel());
+        }
         return new ReadyMessage();
     }
 

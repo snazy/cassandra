@@ -37,6 +37,8 @@ import org.apache.cassandra.exceptions.OverloadedException;
 import org.apache.cassandra.service.StorageProxy;
 import org.apache.cassandra.transport.Connection;
 import org.apache.cassandra.transport.Event;
+import org.apache.cassandra.transport.Server;
+import org.apache.cassandra.transport.ServerConnection;
 import org.apache.cassandra.utils.ByteBufferUtil;
 import org.apache.cassandra.utils.WrappedRunnable;
 import org.apache.cassandra.utils.progress.ProgressEvent;
@@ -142,7 +144,9 @@ public class TraceState implements ProgressEventNotifier
             // poor-man's prevention of duplicate tracing-finished events
             pendingMutations.set(Integer.MIN_VALUE);
 
-            if (connection != null)
+            if (connection != null &&
+                connection.getVersion() >= Server.VERSION_4 &&
+                ((Server.ConnectionTracker)connection.getTracker()).isRegistered(Event.Type.TRACE_COMPLETE, connection.channel()))
             {
                 connection.send(new Event.TraceComplete(sessionId));
             }

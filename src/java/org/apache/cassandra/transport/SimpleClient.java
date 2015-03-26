@@ -73,8 +73,9 @@ public class SimpleClient
 
     protected final ResponseHandler responseHandler = new ResponseHandler();
     protected final Connection.Tracker tracker = new ConnectionTracker();
+    protected final int version;
     // We don't track connection really, so we don't need one Connection per channel
-    protected final Connection connection = new Connection(null, Server.CURRENT_VERSION, tracker);
+    protected Connection connection;
     protected Bootstrap bootstrap;
     protected Channel channel;
     protected ChannelFuture lastWriteFuture;
@@ -83,16 +84,26 @@ public class SimpleClient
     {
         public Connection newConnection(Channel channel, int version)
         {
-            assert version == Server.CURRENT_VERSION;
             return connection;
         }
     };
 
-    public SimpleClient(String host, int port, ClientEncryptionOptions encryptionOptions)
+    public SimpleClient(String host, int port, int version, ClientEncryptionOptions encryptionOptions)
     {
         this.host = host;
         this.port = port;
+        this.version = version;
         this.encryptionOptions = encryptionOptions;
+    }
+
+    public SimpleClient(String host, int port, ClientEncryptionOptions encryptionOptions)
+    {
+        this(host, port, Server.CURRENT_VERSION, encryptionOptions);
+    }
+
+    public SimpleClient(String host, int port, int version)
+    {
+        this(host, port, version, new ClientEncryptionOptions());
     }
 
     public SimpleClient(String host, int port)
@@ -202,7 +213,7 @@ public class SimpleClient
             lastWriteFuture = channel.writeAndFlush(request);
             Message.Response msg = responseHandler.responses.take();
             if (msg instanceof ErrorMessage)
-                throw new RuntimeException((Throwable)((ErrorMessage)msg).error);
+                throw (RuntimeException)((ErrorMessage)msg).error;
             return msg;
         }
         catch (InterruptedException e)
@@ -232,6 +243,9 @@ public class SimpleClient
     {
         protected void initChannel(Channel channel) throws Exception
         {
+            connection = new Connection(channel, version, tracker);
+            channel.attr(Connection.attributeKey).set(connection);
+
             ChannelPipeline pipeline = channel.pipeline();
             pipeline.addLast("frameDecoder", new Frame.Decoder(connectionFactory));
             pipeline.addLast("frameEncoder", frameEncoder);
