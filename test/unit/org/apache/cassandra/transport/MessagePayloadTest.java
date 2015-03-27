@@ -23,6 +23,7 @@ import java.nio.ByteBuffer;
 import java.util.Collections;
 import java.util.Map;
 
+import org.junit.After;
 import org.junit.AfterClass;
 import org.junit.Assert;
 import org.junit.BeforeClass;
@@ -84,13 +85,27 @@ public class MessagePayloadTest extends CQLTester
             Field modifiersField = Field.class.getDeclaredField("modifiers");
             modifiersField.setAccessible(true);
             modifiersField.setInt(cqlQueryHandlerField, cqlQueryHandlerField.getModifiers() | Modifier.FINAL);
-            modifiersField.setAccessible(modifiersAccessible);
 
             cqlQueryHandlerField.setAccessible(false);
+
+            modifiersField.setAccessible(modifiersAccessible);
         }
         catch (IllegalAccessException | NoSuchFieldException e)
         {
             throw new RuntimeException(e);
+        }
+    }
+
+    @After
+    public void dropCreatedTable()
+    {
+        try
+        {
+            QueryProcessor.executeOnceInternal("DROP TABLE " + KEYSPACE + ".atable");
+        }
+        catch (Throwable t)
+        {
+            // ignore
         }
     }
 
@@ -199,6 +214,8 @@ public class MessagePayloadTest extends CQLTester
                 {
                     // that's what we want
                 }
+                queryMessage.setCustomPayload(null);
+                client.execute(queryMessage);
 
                 reqMap = Collections.singletonMap("foo", "43".getBytes());
                 responsePayload = Collections.singletonMap("bar", "43".getBytes());

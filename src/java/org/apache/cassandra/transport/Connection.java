@@ -67,7 +67,13 @@ public class Connection
 
     public void send(Event event)
     {
-        channel.writeAndFlush(new EventMessage(event));
+        if (isRegistered(event.type))
+            channel.writeAndFlush(new EventMessage(event));
+    }
+
+    public boolean isRegistered(Event.Type traceComplete)
+    {
+        return false;
     }
 
     public interface Factory

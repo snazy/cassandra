@@ -25,6 +25,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.SynchronousQueue;
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.SSLEngine;
@@ -225,6 +226,16 @@ public class SimpleClient
     public interface EventHandler
     {
         void onEvent(Event event);
+    }
+
+    public static class SimpleEventHandler implements EventHandler
+    {
+        public final LinkedBlockingQueue<Event> queue = new LinkedBlockingQueue<>();
+
+        public void onEvent(Event event)
+        {
+            queue.add(event);
+        }
     }
 
     // Stateless handlers

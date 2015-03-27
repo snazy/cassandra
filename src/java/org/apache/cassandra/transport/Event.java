@@ -29,10 +29,10 @@ import io.netty.buffer.ByteBuf;
 public abstract class Event
 {
     public enum Type {
-        TOPOLOGY_CHANGE(2),
-        STATUS_CHANGE(2),
-        SCHEMA_CHANGE(2),
-        TRACE_COMPLETE(4);
+        TOPOLOGY_CHANGE(Server.VERSION_2),
+        STATUS_CHANGE(Server.VERSION_2),
+        SCHEMA_CHANGE(Server.VERSION_2),
+        TRACE_COMPLETE(Server.VERSION_4);
 
         public final int minimumVersion;
 
@@ -70,6 +70,8 @@ public abstract class Event
 
     public void serialize(ByteBuf dest, int version)
     {
+        if (type.minimumVersion > version)
+            throw new ProtocolException("Event " + type.name() + " not valid for protocol version " + version);
         CBUtil.writeEnumValue(type, dest);
         serializeEvent(dest, version);
     }
@@ -432,26 +434,16 @@ public abstract class Event
         public static Event deserializeEvent(ByteBuf cb, int version)
         {
             UUID traceSessionId = CBUtil.readUUID(cb);
-
-            if (version < Server.VERSION_4)
-                throw new ProtocolException("Got TRACE_COMPLETE event message for protocol version " + version);
-
             return new TraceComplete(traceSessionId);
         }
 
         protected void serializeEvent(ByteBuf dest, int version)
         {
-            if (version < Server.VERSION_4)
-                throw new ProtocolException("TRACE_COMPLETE event message not defined for protocol version " + version);
-
             CBUtil.writeUUID(traceSessionId, dest);
         }
 
         protected int eventSerializedSize(int version)
         {
-            if (version < Server.VERSION_4)
-                throw new ProtocolException("TRACE_COMPLETE event message not defined for protocol version " + version);
-
             return CBUtil.sizeOfUUID(traceSessionId);
         }
 

@@ -18,7 +18,6 @@
 package org.apache.cassandra.tracing;
 
 import java.util.Collections;
-import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 
 import org.junit.Assert;
@@ -46,14 +45,14 @@ public class TraceCompleteTest extends CQLTester
         clientA.connect(false);
         try
         {
-            SimpleEventHandler eventHandlerA = new SimpleEventHandler();
+            SimpleClient.SimpleEventHandler eventHandlerA = new SimpleClient.SimpleEventHandler();
             clientA.setEventHandler(eventHandlerA);
 
             SimpleClient clientB = new SimpleClient(nativeAddr.getHostAddress(), nativePort);
             clientB.connect(false);
             try
             {
-                SimpleEventHandler eventHandlerB = new SimpleEventHandler();
+                SimpleClient.SimpleEventHandler eventHandlerB = new SimpleClient.SimpleEventHandler();
                 clientB.setEventHandler(eventHandlerB);
 
                 Message.Response resp = clientA.execute(new RegisterMessage(Collections.singletonList(Event.Type.TRACE_COMPLETE)));
@@ -94,42 +93,27 @@ public class TraceCompleteTest extends CQLTester
         clientA.connect(false);
         try
         {
-            SimpleEventHandler eventHandlerA = new SimpleEventHandler();
+            SimpleClient.SimpleEventHandler eventHandlerA = new SimpleClient.SimpleEventHandler();
             clientA.setEventHandler(eventHandlerA);
 
-            SimpleClient clientB = new SimpleClient(nativeAddr.getHostAddress(), nativePort);
-            clientB.connect(false);
             try
             {
-                SimpleEventHandler eventHandlerB = new SimpleEventHandler();
-                clientB.setEventHandler(eventHandlerB);
-
-                try
-                {
-                    clientA.execute(new RegisterMessage(Collections.singletonList(Event.Type.TRACE_COMPLETE)));
-                    Assert.fail();
-                }
-                catch (ProtocolException e)
-                {
-                    // that's what we want
-                }
-
-                createTable("CREATE TABLE %s (pk int PRIMARY KEY, v text)");
-
-                QueryMessage query = new QueryMessage("SELECT * FROM " + KEYSPACE + '.' + currentTable(), QueryOptions.DEFAULT);
-                query.setTracingRequested();
-                clientA.execute(query);
-
-                Event event = eventHandlerA.queue.poll(100, TimeUnit.MILLISECONDS);
-                Assert.assertNull(event);
-
-                // assert that only the connection that started the trace receives the trace-complete event
-                Assert.assertNull(eventHandlerB.queue.poll(100, TimeUnit.MILLISECONDS));
+                clientA.execute(new RegisterMessage(Collections.singletonList(Event.Type.TRACE_COMPLETE)));
+                Assert.fail();
             }
-            finally
+            catch (ProtocolException e)
             {
-                clientB.close();
+                // that's what we want
             }
+
+            createTable("CREATE TABLE %s (pk int PRIMARY KEY, v text)");
+
+            QueryMessage query = new QueryMessage("SELECT * FROM " + KEYSPACE + '.' + currentTable(), QueryOptions.DEFAULT);
+            query.setTracingRequested();
+            clientA.execute(query);
+
+            Event event = eventHandlerA.queue.poll(100, TimeUnit.MILLISECONDS);
+            Assert.assertNull(event);
         }
         finally
         {
@@ -146,37 +130,23 @@ public class TraceCompleteTest extends CQLTester
         clientA.connect(false);
         try
         {
-            SimpleEventHandler eventHandlerA = new SimpleEventHandler();
+            SimpleClient.SimpleEventHandler eventHandlerA = new SimpleClient.SimpleEventHandler();
             clientA.setEventHandler(eventHandlerA);
 
-            SimpleClient clientB = new SimpleClient(nativeAddr.getHostAddress(), nativePort);
-            clientB.connect(false);
-            try
-            {
-                SimpleEventHandler eventHandlerB = new SimpleEventHandler();
-                clientB.setEventHandler(eventHandlerB);
+            createTable("CREATE TABLE %s (pk int PRIMARY KEY, v text)");
 
-                createTable("CREATE TABLE %s (pk int PRIMARY KEY, v text)");
+            // check that we do NOT receive a trace-complete event, since we didn't register for that
 
-                // check that we do NOT receive a trace-complete event, since we didn't register for that
+            // with setTracingRequested()
+            QueryMessage query = new QueryMessage("SELECT * FROM " + KEYSPACE + '.' + currentTable(), QueryOptions.DEFAULT);
+            query.setTracingRequested();
+            clientA.execute(query);
+            // and without setTracingRequested()
+            query = new QueryMessage("SELECT * FROM " + KEYSPACE + '.' + currentTable(), QueryOptions.DEFAULT);
+            clientA.execute(query);
 
-                // with setTracingRequested()
-                QueryMessage query = new QueryMessage("SELECT * FROM " + KEYSPACE + '.' + currentTable(), QueryOptions.DEFAULT);
-                query.setTracingRequested();
-                clientA.execute(query);
-                // and without setTracingRequested()
-                query = new QueryMessage("SELECT * FROM " + KEYSPACE + '.' + currentTable(), QueryOptions.DEFAULT);
-                clientA.execute(query);
-
-                Event event = eventHandlerA.queue.poll(100, TimeUnit.MILLISECONDS);
-                Assert.assertNull(event);
-
-                Assert.assertNull(eventHandlerB.queue.poll(100, TimeUnit.MILLISECONDS));
-            }
-            finally
-            {
-                clientB.close();
-            }
+            Event event = eventHandlerA.queue.poll(100, TimeUnit.MILLISECONDS);
+            Assert.assertNull(event);
         }
         finally
         {
@@ -197,14 +167,14 @@ public class TraceCompleteTest extends CQLTester
         clientA.connect(false);
         try
         {
-            SimpleEventHandler eventHandlerA = new SimpleEventHandler();
+            SimpleClient.SimpleEventHandler eventHandlerA = new SimpleClient.SimpleEventHandler();
             clientA.setEventHandler(eventHandlerA);
 
             SimpleClient clientB = new SimpleClient(nativeAddr.getHostAddress(), nativePort);
             clientB.connect(false);
             try
             {
-                SimpleEventHandler eventHandlerB = new SimpleEventHandler();
+                SimpleClient.SimpleEventHandler eventHandlerB = new SimpleClient.SimpleEventHandler();
                 clientB.setEventHandler(eventHandlerB);
 
                 Message.Response resp = clientA.execute(new RegisterMessage(Collections.singletonList(Event.Type.TRACE_COMPLETE)));
@@ -229,16 +199,6 @@ public class TraceCompleteTest extends CQLTester
         {
             StorageService.instance.setTraceProbability(traceProbability);
             clientA.close();
-        }
-    }
-
-    static class SimpleEventHandler implements SimpleClient.EventHandler
-    {
-        final LinkedBlockingQueue<Event> queue = new LinkedBlockingQueue<>();
-
-        public void onEvent(Event event)
-        {
-            queue.add(event);
         }
     }
 }

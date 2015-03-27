@@ -23,7 +23,6 @@ import java.io.InputStreamReader;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
-import java.util.concurrent.LinkedBlockingQueue;
 
 import com.google.common.base.Splitter;
 
@@ -40,15 +39,14 @@ import org.apache.cassandra.utils.MD5Digest;
 
 import static org.apache.cassandra.config.EncryptionOptions.ClientEncryptionOptions;
 
-public class Client extends SimpleClient implements SimpleClient.EventHandler
+public class Client extends SimpleClient
 {
-
-    private Queue<Event> events = new LinkedBlockingQueue<>();
+    private final SimpleEventHandler eventHandler = new SimpleEventHandler();
 
     public Client(String host, int port, int version, ClientEncryptionOptions encryptionOptions)
     {
         super(host, port, version, encryptionOptions);
-        setEventHandler(this);
+        setEventHandler(eventHandler);
     }
 
     public void run() throws IOException
@@ -63,7 +61,7 @@ public class Client extends SimpleClient implements SimpleClient.EventHandler
         for (;;)
         {
             Event event;
-            while ((event = events.poll()) != null)
+            while ((event = eventHandler.queue.poll()) != null)
             {
                 System.out.println("<< " + event);
             }
@@ -259,10 +257,5 @@ public class Client extends SimpleClient implements SimpleClient.EventHandler
 
         new Client(host, port, version, encryptionOptions).run();
         System.exit(0);
-    }
-
-    public void onEvent(Event event)
-    {
-        events.add(event);
     }
 }

@@ -43,6 +43,11 @@ public class ServerConnection extends Connection
         this.state = State.UNINITIALIZED;
     }
 
+    public boolean isRegistered(Event.Type traceComplete)
+    {
+        return ((Server.ConnectionTracker)getTracker()).isRegistered(Event.Type.TRACE_COMPLETE, channel());
+    }
+
     private QueryState getQueryState(int streamId)
     {
         QueryState qState = queryStates.get(streamId);
