@@ -444,6 +444,20 @@ public class SchemaLoader
                                 UTF8Type.instance.compose(cName),
                                 null, ColumnDefinition.Type.REGULAR));
 
+                        cName = UTF8Type.instance.decompose("address");
+                        put(cName, new ColumnDefinition(cName,
+                                AsciiType.instance,
+                                IndexType.CUSTOM,
+                                new HashMap<String, String>()
+                                {{
+                                        put("analyzer_class", "org.apache.cassandra.db.index.search.analyzer.NonTokenizingAnalyzer");
+                                        put(SecondaryIndex.CUSTOM_INDEX_OPTION_NAME, SuffixArraySecondaryIndex.class.getName());
+                                        put("mode", OnDiskSABuilder.Mode.ORIGINAL.toString());
+                                        put("case_sensitive", "false");
+                                }},
+                                "address",
+                                null, ColumnDefinition.Type.REGULAR));
+
                         cName = UTF8Type.instance.decompose("score");
                         put(cName, new ColumnDefinition(cName,
                                 DoubleType.instance,

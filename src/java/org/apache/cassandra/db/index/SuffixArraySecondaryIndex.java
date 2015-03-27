@@ -199,7 +199,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex
 
     public Pair<ColumnDefinition, IndexMode> getIndexDefinition(ByteBuffer columnName)
     {
-        return indexedColumns.get(columnName);
+        return columnName == null ? null : indexedColumns.get(columnName);
     }
 
     private void addToIntervalTree(Collection<SSTableReader> readers, Collection<ColumnDefinition> defs)
@@ -1152,7 +1152,9 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex
 
     public static AbstractAnalyzer getAnalyzer(Pair<ColumnDefinition, IndexMode> column)
     {
-        assert column != null;
+        if (column == null)
+            return new NoOpAnalyzer();
+
         try
         {
             if (column.right.isAnalyzed)

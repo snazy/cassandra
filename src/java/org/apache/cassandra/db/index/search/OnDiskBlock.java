@@ -22,7 +22,7 @@ public abstract class OnDiskBlock<T extends Suffix>
     protected final boolean hasCombinedIndex;
     protected final TokenTree combinedIndex;
 
-    public OnDiskBlock(NativeMappedBuffer block, BlockType blockType)
+    public OnDiskBlock(Descriptor descriptor, NativeMappedBuffer block, BlockType blockType)
     {
         blockIndex = block;
 
@@ -40,7 +40,7 @@ public abstract class OnDiskBlock<T extends Suffix>
         hasCombinedIndex = (combinedIndexOffset >= 0);
         long blockIndexOffset = blockOffset + BLOCK_SIZE + 4 + combinedIndexOffset;
 
-        combinedIndex = hasCombinedIndex ? new TokenTree(blockIndex.duplicate().position(blockIndexOffset)) : null;
+        combinedIndex = hasCombinedIndex ? new TokenTree(descriptor, blockIndex.duplicate().position(blockIndexOffset)) : null;
         blockIndexSize = block.getInt() * 2;
     }
 

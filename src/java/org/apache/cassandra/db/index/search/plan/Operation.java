@@ -11,6 +11,7 @@ import org.apache.cassandra.db.index.SuffixArraySecondaryIndex.IndexMode;
 import org.apache.cassandra.db.index.SuffixArraySecondaryIndex.SAView;
 import org.apache.cassandra.db.index.search.SSTableIndex;
 import org.apache.cassandra.db.index.search.SuffixIterator;
+import org.apache.cassandra.db.index.search.analyzer.NoOpAnalyzer;
 import org.apache.cassandra.db.index.search.container.TokenTree.Token;
 import org.apache.cassandra.db.index.search.memory.IndexMemtable;
 import org.apache.cassandra.db.index.search.analyzer.AbstractAnalyzer;
@@ -260,18 +261,19 @@ public class Operation
 
             AbstractType<?> validator = column.left.getValidator();
 
+            AbstractAnalyzer analyzer = getAnalyzer(column);
+            analyzer.reset(ByteBuffer.wrap(e.getValue()));
+
             switch (e.getOp())
             {
                 // '=' can have multiple expressions e.g. text = "Hello World",
                 // becomes text = "Hello" AND text = "WORLD"
                 // because "space" is always interpreted as a split point.
                 case EQ:
-                    Iterator<ByteBuffer> tokens = analyze(column, e);
-                    while (tokens.hasNext())
+                    while (analyzer.hasNext())
                     {
-                        final ByteBuffer token = tokens.next();
-
-                        perColumn.add(new Expression(name, comparator, validator, column.right.mode != null)
+                        final ByteBuffer token = analyzer.next();
+                        perColumn.add(new Expression(name, comparator, validator, analyzer, column.right.mode != null)
                         {{
                             add(e.op, token);
                         }});
@@ -284,13 +286,12 @@ public class Operation
                 default:
                     Expression range;
                     if (perColumn.size() == 0 || op != OperationType.AND)
-                        perColumn.add((range = new Expression(name, comparator, validator, column.right.mode != null)));
+                        perColumn.add((range = new Expression(name, comparator, validator, analyzer, column.right.mode != null)));
                     else
                         range = Iterators.getLast(perColumn.iterator());
 
-                    tokens = analyze(column, e);
-                    while (tokens.hasNext())
-                        range.add(e.op, tokens.next());
+                    while (analyzer.hasNext())
+                        range.add(e.op, analyzer.next());
 
                     break;
             }
@@ -392,13 +393,14 @@ public class Operation
         return new LazyMergeSortIterator<>(op, unions);
     }
 
-    private static Iterator<ByteBuffer> analyze(Pair<ColumnDefinition, IndexMode> column, final IndexExpression e)
+    private static AbstractAnalyzer getAnalyzer(Pair<ColumnDefinition, IndexMode> column)
     {
-        final AbstractAnalyzer analyze = SuffixArraySecondaryIndex.getAnalyzer(column);
+        if (column == null || column.right.mode == null)
+            return new NoOpAnalyzer();
 
-        analyze.init(column.left.getIndexOptions(), column.left.getValidator());
-        analyze.reset(ByteBuffer.wrap(e.getValue()));
+        AbstractAnalyzer analyzer = SuffixArraySecondaryIndex.getAnalyzer(column);
+        analyzer.init(column.left.getIndexOptions(), column.left.getValidator());
 
-        return analyze;
+        return analyzer;
     }
 }

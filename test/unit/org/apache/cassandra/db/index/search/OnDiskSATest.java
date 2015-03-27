@@ -523,6 +523,11 @@ public class OnDiskSATest
         OnDiskSA onDisk1 = new OnDiskSA(index1, Int32Type.instance, new KeyConverter());
         OnDiskSA onDisk2 = new OnDiskSA(index2, Int32Type.instance, new KeyConverter());
 
+        ByteBuffer number = Int32Type.instance.decompose(5);
+
+        Assert.assertEquals(convert(data.get(number)), convert(onDisk1.search(expressionFor(number))));
+        Assert.assertEquals(convert(data.get(number)), convert(onDisk2.search(expressionFor(number))));
+
         Assert.assertEquals(onDisk1.descriptor.version.version, Descriptor.CURRENT_VERSION);
         Assert.assertEquals(onDisk2.descriptor.version.version, Descriptor.VERSION_AA);
     }
