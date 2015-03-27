@@ -1500,6 +1500,89 @@ public class SuffixArraySecondaryIndexTest extends SchemaLoader
         }
     }
 
+    @Test
+    public void testLowerCaseAnalyzer()
+    {
+        testLowerCaseAnalyzer(false);
+        cleanupData();
+        testLowerCaseAnalyzer(true);
+    }
+
+    public void testLowerCaseAnalyzer(boolean forceFlush)
+    {
+        ColumnFamilyStore store = Keyspace.open(KS_NAME).getColumnFamilyStore(CF_NAME);
+
+        final ByteBuffer comment = UTF8Type.instance.decompose("address");
+
+        RowMutation rm = new RowMutation(KS_NAME, AsciiType.instance.decompose("key1"));
+        rm.add(CF_NAME, comment, UTF8Type.instance.decompose("577 Rogahn Valleys Apt. 178"), System.currentTimeMillis());
+        rm.apply();
+
+        rm = new RowMutation(KS_NAME, AsciiType.instance.decompose("key2"));
+        rm.add(CF_NAME, comment, UTF8Type.instance.decompose("89809 Beverly Course Suite 089"), System.currentTimeMillis());
+        rm.apply();
+
+        rm = new RowMutation(KS_NAME, AsciiType.instance.decompose("key3"));
+        rm.add(CF_NAME, comment, UTF8Type.instance.decompose("165 clydie oval apt. 399"), System.currentTimeMillis());
+        rm.apply();
+
+        if (forceFlush)
+            store.forceBlockingFlush();
+
+        Set<String> rows;
+
+        rows = getIndexed(store, 10, new IndexExpression(comment, IndexOperator.EQ, UTF8Type.instance.decompose("577 Rogahn Valleys")));
+        Assert.assertTrue(rows.toString(), Arrays.equals(new String[] { "key1" }, rows.toArray(new String[rows.size()])));
+
+        rows = getIndexed(store, 10, new IndexExpression(comment, IndexOperator.EQ, UTF8Type.instance.decompose("577 ROgAhn VallEYs")));
+        Assert.assertTrue(rows.toString(), Arrays.equals(new String[] { "key1" }, rows.toArray(new String[rows.size()])));
+
+        rows = getIndexed(store, 10, new IndexExpression(comment, IndexOperator.EQ, UTF8Type.instance.decompose("577 rogahn valleys")));
+        Assert.assertTrue(rows.toString(), Arrays.equals(new String[] { "key1" }, rows.toArray(new String[rows.size()])));
+
+        rows = getIndexed(store, 10, new IndexExpression(comment, IndexOperator.EQ, UTF8Type.instance.decompose("577 rogahn")));
+        Assert.assertTrue(rows.toString(), Arrays.equals(new String[] { "key1" }, rows.toArray(new String[rows.size()])));
+
+        rows = getIndexed(store, 10, new IndexExpression(comment, IndexOperator.EQ, UTF8Type.instance.decompose("57")));
+        Assert.assertTrue(rows.toString(), Arrays.equals(new String[] { "key1" }, rows.toArray(new String[rows.size()])));
+
+        rows = getIndexed(store, 10, new IndexExpression(comment, IndexOperator.EQ, UTF8Type.instance.decompose("89809 Beverly Course")));
+        Assert.assertTrue(rows.toString(), Arrays.equals(new String[] { "key2" }, rows.toArray(new String[rows.size()])));
+
+        rows = getIndexed(store, 10, new IndexExpression(comment, IndexOperator.EQ, UTF8Type.instance.decompose("89809 BEVERly COURSE")));
+        Assert.assertTrue(rows.toString(), Arrays.equals(new String[] { "key2" }, rows.toArray(new String[rows.size()])));
+
+        rows = getIndexed(store, 10, new IndexExpression(comment, IndexOperator.EQ, UTF8Type.instance.decompose("89809 beverly course")));
+        Assert.assertTrue(rows.toString(), Arrays.equals(new String[] { "key2" }, rows.toArray(new String[rows.size()])));
+
+        rows = getIndexed(store, 10, new IndexExpression(comment, IndexOperator.EQ, UTF8Type.instance.decompose("89809 Beverly")));
+        Assert.assertTrue(rows.toString(), Arrays.equals(new String[] { "key2" }, rows.toArray(new String[rows.size()])));
+
+        rows = getIndexed(store, 10, new IndexExpression(comment, IndexOperator.EQ, UTF8Type.instance.decompose("8980")));
+        Assert.assertTrue(rows.toString(), Arrays.equals(new String[] { "key2" }, rows.toArray(new String[rows.size()])));
+
+        rows = getIndexed(store, 10, new IndexExpression(comment, IndexOperator.EQ, UTF8Type.instance.decompose("165 ClYdie OvAl APT. 399")));
+        Assert.assertTrue(rows.toString(), Arrays.equals(new String[] { "key3" }, rows.toArray(new String[rows.size()])));
+
+        rows = getIndexed(store, 10, new IndexExpression(comment, IndexOperator.EQ, UTF8Type.instance.decompose("165 Clydie Oval Apt. 399")));
+        Assert.assertTrue(rows.toString(), Arrays.equals(new String[] { "key3" }, rows.toArray(new String[rows.size()])));
+
+        rows = getIndexed(store, 10, new IndexExpression(comment, IndexOperator.EQ, UTF8Type.instance.decompose("165 clydie oval apt. 399")));
+        Assert.assertTrue(rows.toString(), Arrays.equals(new String[] { "key3" }, rows.toArray(new String[rows.size()])));
+
+        rows = getIndexed(store, 10, new IndexExpression(comment, IndexOperator.EQ, UTF8Type.instance.decompose("165 ClYdie OvA")));
+        Assert.assertTrue(rows.toString(), Arrays.equals(new String[] { "key3" }, rows.toArray(new String[rows.size()])));
+
+        rows = getIndexed(store, 10, new IndexExpression(comment, IndexOperator.EQ, UTF8Type.instance.decompose("165 ClYdi")));
+        Assert.assertTrue(rows.toString(), Arrays.equals(new String[] { "key3" }, rows.toArray(new String[rows.size()])));
+
+        rows = getIndexed(store, 10, new IndexExpression(comment, IndexOperator.EQ, UTF8Type.instance.decompose("165")));
+        Assert.assertTrue(rows.toString(), Arrays.equals(new String[] { "key3" }, rows.toArray(new String[rows.size()])));
+
+
+
+    }
+
     private static IndexExpression[] getExpressions(String cqlQuery) throws Exception
     {
         ParsedStatement parsedStatement = QueryProcessor.parseStatement(String.format(cqlQuery, KS_NAME, CF_NAME));

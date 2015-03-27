@@ -26,11 +26,16 @@ import org.junit.Test;
 
 public class OperationTest extends SchemaLoader
 {
+    private static SuffixArraySecondaryIndex BACKEND;
+
     @BeforeClass
     public static void loadSchema() throws IOException, ConfigurationException
     {
         System.setProperty("cassandra.config", "cassandra-murmur.yaml");
         loadSchema(false);
+
+        ColumnFamilyStore store = Keyspace.open("sasecondaryindex").getColumnFamilyStore("saindexed1");
+        BACKEND = (SuffixArraySecondaryIndex) store.indexManager.getIndexForColumn(UTF8Type.instance.decompose("first_name"));
     }
 
     @Test
@@ -39,12 +44,8 @@ public class OperationTest extends SchemaLoader
         final ByteBuffer firstName = UTF8Type.instance.decompose("first_name");
         final ByteBuffer age = UTF8Type.instance.decompose("age");
 
-        ColumnFamilyStore store = Keyspace.open("sasecondaryindex").getColumnFamilyStore("saindexed1");
-
-        SuffixArraySecondaryIndex index = (SuffixArraySecondaryIndex) store.indexManager.getIndexForColumn(UTF8Type.instance.decompose("first_name"));
-
         // age != 5 AND age > 1 AND age != 6 AND age <= 10
-        Map<Expression.Op, Expression> expressions = convert(Operation.analyzeGroup(index, UTF8Type.instance, OperationType.AND,
+        Map<Expression.Op, Expression> expressions = convert(Operation.analyzeGroup(BACKEND, UTF8Type.instance, OperationType.AND,
                                                                                 Arrays.asList(new IndexExpression(age, IndexOperator.NOT_EQ, Int32Type.instance.decompose(5)),
                                                                                               new IndexExpression(age, IndexOperator.GT, Int32Type.instance.decompose(1)),
                                                                                               new IndexExpression(age, IndexOperator.NOT_EQ, Int32Type.instance.decompose(6)),
@@ -64,7 +65,7 @@ public class OperationTest extends SchemaLoader
         Assert.assertEquals(expected, expressions.get(Expression.Op.RANGE));
 
         // age != 5 OR age >= 7
-        expressions = convert(Operation.analyzeGroup(index, UTF8Type.instance, OperationType.OR,
+        expressions = convert(Operation.analyzeGroup(BACKEND, UTF8Type.instance, OperationType.OR,
                         Arrays.asList(new IndexExpression(age, IndexOperator.NOT_EQ, Int32Type.instance.decompose(5)),
                                       new IndexExpression(age, IndexOperator.GTE, Int32Type.instance.decompose(7)))));
         Assert.assertEquals(2, expressions.size());
@@ -82,7 +83,7 @@ public class OperationTest extends SchemaLoader
                             }}, expressions.get(Expression.Op.RANGE));
 
         // age != 5 OR age < 7
-        expressions = convert(Operation.analyzeGroup(index, UTF8Type.instance, OperationType.OR,
+        expressions = convert(Operation.analyzeGroup(BACKEND, UTF8Type.instance, OperationType.OR,
                         Arrays.asList(new IndexExpression(age, IndexOperator.NOT_EQ, Int32Type.instance.decompose(5)),
                                       new IndexExpression(age, IndexOperator.LT, Int32Type.instance.decompose(7)))));
 
@@ -99,7 +100,7 @@ public class OperationTest extends SchemaLoader
                             }}, expressions.get(Expression.Op.NOT_EQ));
 
         // age > 1 AND age < 7
-        expressions = convert(Operation.analyzeGroup(index, UTF8Type.instance, OperationType.AND,
+        expressions = convert(Operation.analyzeGroup(BACKEND, UTF8Type.instance, OperationType.AND,
                         Arrays.asList(new IndexExpression(age, IndexOperator.GT, Int32Type.instance.decompose(1)),
                                       new IndexExpression(age, IndexOperator.LT, Int32Type.instance.decompose(7)))));
 
@@ -112,7 +113,7 @@ public class OperationTest extends SchemaLoader
                             }}, expressions.get(Expression.Op.RANGE));
 
         // first_name = 'a' OR first_name != 'b'
-        expressions = convert(Operation.analyzeGroup(index, UTF8Type.instance, OperationType.OR,
+        expressions = convert(Operation.analyzeGroup(BACKEND, UTF8Type.instance, OperationType.OR,
                         Arrays.asList(new IndexExpression(firstName, IndexOperator.EQ, UTF8Type.instance.decompose("a")),
                                       new IndexExpression(firstName, IndexOperator.NOT_EQ, UTF8Type.instance.decompose("b")))));
 
@@ -311,13 +312,9 @@ public class OperationTest extends SchemaLoader
         final ByteBuffer height = UTF8Type.instance.decompose("height");
         final ByteBuffer notDefined = UTF8Type.instance.decompose("not-defined");
 
-        ColumnFamilyStore store = Keyspace.open("sasecondaryindex").getColumnFamilyStore("saindexed1");
-
-        SuffixArraySecondaryIndex index = (SuffixArraySecondaryIndex) store.indexManager.getIndexForColumn(UTF8Type.instance.decompose("first_name"));
-
         // first_name = 'a' AND height != 10
         Map<Expression.Op, Expression> expressions;
-        expressions = convert(Operation.analyzeGroup(index, UTF8Type.instance, OperationType.AND,
+        expressions = convert(Operation.analyzeGroup(BACKEND, UTF8Type.instance, OperationType.AND,
                 Arrays.asList(new IndexExpression(firstName, IndexOperator.EQ, UTF8Type.instance.decompose("a")),
                               new IndexExpression(height, IndexOperator.NOT_EQ, Int32Type.instance.decompose(5)))));
 
@@ -329,7 +326,7 @@ public class OperationTest extends SchemaLoader
                 exclusions.add(Int32Type.instance.decompose(5));
         }}, expressions.get(Expression.Op.NOT_EQ));
 
-        expressions = convert(Operation.analyzeGroup(index, UTF8Type.instance, OperationType.AND,
+        expressions = convert(Operation.analyzeGroup(BACKEND, UTF8Type.instance, OperationType.AND,
                 Arrays.asList(new IndexExpression(firstName, IndexOperator.EQ, UTF8Type.instance.decompose("a")),
                               new IndexExpression(height, IndexOperator.GT, Int32Type.instance.decompose(0)),
                               new IndexExpression(height, IndexOperator.NOT_EQ, Int32Type.instance.decompose(5)))));
@@ -343,7 +340,7 @@ public class OperationTest extends SchemaLoader
                 exclusions.add(Int32Type.instance.decompose(5));
         }}, expressions.get(Expression.Op.RANGE));
 
-        expressions = convert(Operation.analyzeGroup(index, UTF8Type.instance, OperationType.AND,
+        expressions = convert(Operation.analyzeGroup(BACKEND, UTF8Type.instance, OperationType.AND,
                 Arrays.asList(new IndexExpression(firstName, IndexOperator.EQ, UTF8Type.instance.decompose("a")),
                               new IndexExpression(height, IndexOperator.NOT_EQ, Int32Type.instance.decompose(5)),
                               new IndexExpression(height, IndexOperator.GTE, Int32Type.instance.decompose(0)),
@@ -360,7 +357,7 @@ public class OperationTest extends SchemaLoader
         }}, expressions.get(Expression.Op.RANGE));
 
 
-        expressions = convert(Operation.analyzeGroup(index, UTF8Type.instance, OperationType.AND,
+        expressions = convert(Operation.analyzeGroup(BACKEND, UTF8Type.instance, OperationType.AND,
                 Arrays.asList(new IndexExpression(notDefined, IndexOperator.EQ, UTF8Type.instance.decompose("a")))));
 
         Assert.assertEquals(0, expressions.size());

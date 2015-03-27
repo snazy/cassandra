@@ -5,6 +5,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 
+import org.apache.cassandra.db.index.search.analyzer.AbstractAnalyzer;
+import org.apache.cassandra.db.index.search.analyzer.NoOpAnalyzer;
 import org.apache.cassandra.db.index.utils.TypeUtil;
 import org.apache.cassandra.db.marshal.AbstractType;
 import org.apache.cassandra.db.marshal.AsciiType;
@@ -29,9 +31,11 @@ public class Expression
         EQ, NOT_EQ, RANGE
     }
 
+    public final AbstractAnalyzer analyzer;
+
     public final ByteBuffer name;
     public final AbstractType<?> comparator, validator;
-    public final boolean isSuffix;
+    public final boolean isString;
     public final boolean isIndexed;
 
     @VisibleForTesting
@@ -40,24 +44,32 @@ public class Expression
     public Bound lower, upper;
     public List<ByteBuffer> exclusions = new ArrayList<>();
 
-    public Expression(ByteBuffer name, AbstractType<?> comparator, AbstractType<?> validator)
+    public Expression(Expression other)
     {
-        this(name, comparator, validator, true);
+        this(other.name, other.comparator, other.validator, other.analyzer, other.isIndexed);
+        operation = other.operation;
     }
 
-    public Expression(ByteBuffer name, AbstractType<?> comparator, AbstractType<?> validator, boolean isIndexed)
+    public Expression(ByteBuffer name, AbstractType<?> comparator, AbstractType<?> validator, AbstractAnalyzer analyzer, boolean isIndexed)
     {
+        this.analyzer = analyzer;
         this.name = name;
         this.comparator = comparator;
         this.validator = validator;
-        this.isSuffix = validator instanceof AsciiType || validator instanceof UTF8Type;
+        this.isString = validator instanceof AsciiType || validator instanceof UTF8Type;
         this.isIndexed = isIndexed;
     }
 
-    public Expression(Expression other)
+    @VisibleForTesting
+    public Expression(ByteBuffer name, AbstractType<?> comparator, AbstractType<?> validator)
     {
-        this(other.name, other.comparator, other.validator);
-        operation = other.operation;
+        this(name, comparator, validator, new NoOpAnalyzer(), true);
+    }
+
+    @VisibleForTesting
+    public Expression(ByteBuffer name, AbstractType<?> comparator, AbstractType<?> validator, boolean isIndexed)
+    {
+        this(name, comparator, validator, new NoOpAnalyzer(), isIndexed);
     }
 
     public Expression setLower(Bound newLower)
@@ -138,9 +150,9 @@ public class Expression
         if (lower != null)
         {
             // suffix check
-            if (isSuffix)
+            if (isString)
             {
-                if (!ByteBufferUtil.contains(value, lower.value))
+                if (!validateStringValue(value, lower.value))
                     return false;
             }
             else
@@ -162,10 +174,10 @@ public class Expression
 
         if (upper != null && lower != upper)
         {
-            // suffix check
-            if (isSuffix)
+            // string (prefix or suffix) check
+            if (isString)
             {
-                if (!ByteBufferUtil.contains(value, upper.value))
+                if (!validateStringValue(value, upper.value))
                     return false;
             }
             else
@@ -181,13 +193,26 @@ public class Expression
         // this covers both cases - a. NOT_EQ operation and b. RANGE with exclusions
         for (ByteBuffer term : exclusions)
         {
-            if (isSuffix && ByteBufferUtil.contains(value, term))
+            if (isString && validateStringValue(value, term))
                 return false;
             else if (validator.compare(term, value) == 0)
                 return false;
         }
 
         return true;
+    }
+
+    private boolean validateStringValue(ByteBuffer columnValue, ByteBuffer requestedValue)
+    {
+        analyzer.reset(columnValue.duplicate());
+        while (analyzer.hasNext())
+        {
+            ByteBuffer term = analyzer.next();
+            if (ByteBufferUtil.contains(term, requestedValue))
+                return true;
+        }
+
+        return false;
     }
 
     public Op getOp()
