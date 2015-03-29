@@ -248,6 +248,11 @@ public class SimpleClient
     private static class ConnectionTracker implements Connection.Tracker
     {
         public void addConnection(Channel ch, Connection connection) {}
+
+        public boolean isRegistered(Event.Type type, Channel ch)
+        {
+            return false;
+        }
     }
 
     private class Initializer extends ChannelInitializer<Channel>

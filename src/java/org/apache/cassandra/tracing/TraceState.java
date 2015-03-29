@@ -37,7 +37,6 @@ import org.apache.cassandra.exceptions.OverloadedException;
 import org.apache.cassandra.service.StorageProxy;
 import org.apache.cassandra.transport.Connection;
 import org.apache.cassandra.transport.Event;
-import org.apache.cassandra.transport.Server;
 import org.apache.cassandra.utils.ByteBufferUtil;
 import org.apache.cassandra.utils.WrappedRunnable;
 import org.apache.cassandra.utils.progress.ProgressEvent;
@@ -61,6 +60,7 @@ public class TraceState implements ProgressEventNotifier
     private final List<ProgressListener> listeners = new CopyOnWriteArrayList<>();
     private String tag;
 
+    private final boolean withFinishEvent;
     private final AtomicInteger pendingMutations = new AtomicInteger();
     private final Connection connection;
 
@@ -77,12 +77,12 @@ public class TraceState implements ProgressEventNotifier
     // See CASSANDRA-7626 for more details.
     private final AtomicInteger references = new AtomicInteger(1);
 
-    public TraceState(InetAddress coordinator, UUID sessionId)
+    public TraceState(InetAddress coordinator, UUID sessionId, Tracing.TraceType traceType)
     {
-        this(coordinator, null, sessionId, Tracing.TraceType.QUERY);
+        this(coordinator, null, sessionId, traceType, false);
     }
 
-    public TraceState(InetAddress coordinator, Connection connection, UUID sessionId, Tracing.TraceType traceType)
+    public TraceState(InetAddress coordinator, Connection connection, UUID sessionId, Tracing.TraceType traceType, boolean withFinishEvent)
     {
         assert coordinator != null;
         assert sessionId != null;
@@ -95,6 +95,7 @@ public class TraceState implements ProgressEventNotifier
         this.ttl = traceType.getTTL();
         watch = Stopwatch.createStarted();
         this.status = Status.IDLE;
+        this.withFinishEvent = withFinishEvent;
     }
 
     /**
@@ -143,8 +144,8 @@ public class TraceState implements ProgressEventNotifier
             // poor-man's prevention of duplicate tracing-finished events
             pendingMutations.set(Integer.MIN_VALUE);
 
-            if (connection != null)
-                connection.send(new Event.TraceComplete(sessionId));
+            if (connection != null && withFinishEvent)
+                connection.sendIfRegistered(new Event.TraceComplete(sessionId));
         }
     }
 

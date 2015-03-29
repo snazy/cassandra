@@ -65,15 +65,10 @@ public class Connection
         return channel;
     }
 
-    public void send(Event event)
+    public void sendIfRegistered(Event event)
     {
-        if (isRegistered(event.type))
+        if (getTracker().isRegistered(event.type, channel))
             channel.writeAndFlush(new EventMessage(event));
-    }
-
-    public boolean isRegistered(Event.Type traceComplete)
-    {
-        return false;
     }
 
     public interface Factory
@@ -84,5 +79,7 @@ public class Connection
     public interface Tracker
     {
         void addConnection(Channel ch, Connection connection);
+
+        boolean isRegistered(Event.Type type, Channel ch);
     }
 }

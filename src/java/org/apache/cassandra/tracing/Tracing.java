@@ -125,19 +125,19 @@ public class Tracing
 
     public UUID newSession(Connection connection, TraceType traceType)
     {
-        return newSession(connection, TimeUUIDType.instance.compose(ByteBuffer.wrap(UUIDGen.getTimeUUIDBytes())), traceType);
+        return newSession(connection, TimeUUIDType.instance.compose(ByteBuffer.wrap(UUIDGen.getTimeUUIDBytes())), traceType, false);
     }
 
     public UUID newSession(Connection connection, UUID sessionId)
     {
-        return newSession(connection, sessionId, TraceType.QUERY);
+        return newSession(connection, sessionId, TraceType.QUERY, true);
     }
 
-    private UUID newSession(Connection connection, UUID sessionId, TraceType traceType)
+    private UUID newSession(Connection connection, UUID sessionId, TraceType traceType, boolean withFinishEvent)
     {
         assert state.get() == null;
 
-        TraceState ts = new TraceState(localAddress, connection, sessionId, traceType);
+        TraceState ts = new TraceState(localAddress, connection, sessionId, traceType, withFinishEvent);
         state.set(ts);
         sessions.put(sessionId, ts);
 
@@ -239,7 +239,7 @@ public class Tracing
         }
         else
         {
-            ts = new TraceState(message.from, null, sessionId, traceType);
+            ts = new TraceState(message.from, sessionId, traceType);
             sessions.put(sessionId, ts);
             return ts;
         }
