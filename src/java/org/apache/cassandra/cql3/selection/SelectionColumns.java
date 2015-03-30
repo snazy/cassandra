@@ -1,5 +1,6 @@
 package org.apache.cassandra.cql3.selection;
 
+import java.util.Collection;
 import java.util.List;
 
 import com.google.common.collect.Multimap;
@@ -15,4 +16,11 @@ public interface SelectionColumns
 {
     List<ColumnSpecification> getColumnSpecifications();
     Multimap<ColumnSpecification, ColumnDefinition> getMappings();
+
+    /**
+     * Get the selection restrictions for a column.
+     *
+     * @return collection of restrictions, possibly empty, but never {@code null}
+     */
+    Collection<SelectionRestriction> getSelectionRestrictions(ColumnDefinition def);
 }

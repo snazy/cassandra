@@ -281,9 +281,19 @@ selector returns [RawSelector s]
     ;
 
 unaliasedSelector returns [Selectable.Raw s]
-    @init { Selectable.Raw tmp = null; }
-    :  ( c=cident                                  { tmp = c; }
-       | K_COUNT '(' countArgument ')'             { tmp = Selectable.WithFunction.Raw.newCountRowsFunction();}
+    @init {
+        Selectable.Raw tmp = null;
+        boolean collSlice = false;
+    }
+    :  ( c=cident                                ( { tmp = c; }
+                                                 | '['
+                                                     (   ki1=term ('..' { collSlice=true; } (ki2=term)?)?
+                                                       | '..' ki2=term { collSlice=true; }
+                                                     )
+                                                   ']'
+                                                   { tmp = new CollectionSelectable.Raw(c, collSlice, ki1, ki2); }
+                                                 )
+       | K_COUNT '(' countArgument ')'             { tmp = Selectable.WithFunction.Raw.newCountRowsFunction(); }
        | K_WRITETIME '(' c=cident ')'              { tmp = new Selectable.WritetimeOrTTL.Raw(c, true); }
        | K_TTL       '(' c=cident ')'              { tmp = new Selectable.WritetimeOrTTL.Raw(c, false); }
        | K_CAST      '(' sn=unaliasedSelector K_AS t=native_type ')' {tmp = new Selectable.WithCast.Raw(sn, t);}
@@ -1366,6 +1376,7 @@ udtColumnOperation[List<Pair<ColumnIdentifier.Raw, Operation.RawUpdate>> operati
     ;
 
 columnCondition[List<Pair<ColumnIdentifier.Raw, ColumnCondition.Raw>> conditions]
+    @init { boolean slice=false; }
     // Note: we'll reject duplicates later
     : key=cident
         ( op=relationType t=term { conditions.add(Pair.create(key, ColumnCondition.Raw.simpleCondition(t, op))); }
@@ -1373,11 +1384,32 @@ columnCondition[List<Pair<ColumnIdentifier.Raw, ColumnCondition.Raw>> conditions
             ( values=singleColumnInValues { conditions.add(Pair.create(key, ColumnCondition.Raw.simpleInCondition(values))); }
             | marker=inMarker { conditions.add(Pair.create(key, ColumnCondition.Raw.simpleInCondition(marker))); }
             )
-        | '[' element=term ']'
-            ( op=relationType t=term { conditions.add(Pair.create(key, ColumnCondition.Raw.collectionCondition(t, element, op))); }
+        | '[' element=term ( '..' { slice=true; } (to=term)? )? ']'
+            ( op=relationType t=term {
+                    conditions.add(Pair.create(key,
+                                               slice
+                                                 ? ColumnCondition.Raw.collectionSliceCondition(t, element, to, op)
+                                                 : ColumnCondition.Raw.collectionCondition(t, element, op))); }
             | K_IN
-                ( values=singleColumnInValues { conditions.add(Pair.create(key, ColumnCondition.Raw.collectionInCondition(element, values))); }
-                | marker=inMarker { conditions.add(Pair.create(key, ColumnCondition.Raw.collectionInCondition(element, marker))); }
+                ( values=singleColumnInValues {
+                    conditions.add(Pair.create(key,
+                                               slice
+                                                 ? ColumnCondition.Raw.collectionSliceInCondition(element, to, values)
+                                                 : ColumnCondition.Raw.collectionInCondition(element, values)));
+                  }
+                | marker=inMarker {
+                    conditions.add(Pair.create(key,
+                                               slice
+                                                 ? ColumnCondition.Raw.collectionSliceInCondition(element, to, marker)
+                                                 : ColumnCondition.Raw.collectionInCondition(element, marker)));
+                  }
+                )
+            )
+        | '[' '..' (to=term)? ']'
+            ( op=relationType t=term { conditions.add(Pair.create(key, ColumnCondition.Raw.collectionSliceCondition(t, null, to, op))); }
+            | K_IN
+                ( values=singleColumnInValues { conditions.add(Pair.create(key, ColumnCondition.Raw.collectionSliceInCondition(null, to, values))); }
+                | marker=inMarker { conditions.add(Pair.create(key, ColumnCondition.Raw.collectionSliceInCondition(null, to, marker))); }
                 )
             )
         | '.' field=cident

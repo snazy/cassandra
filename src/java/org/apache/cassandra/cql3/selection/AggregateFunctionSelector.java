@@ -20,6 +20,7 @@ package org.apache.cassandra.cql3.selection;
 import java.nio.ByteBuffer;
 import java.util.List;
 
+import org.apache.cassandra.cql3.QueryOptions;
 import org.apache.cassandra.cql3.functions.AggregateFunction;
 import org.apache.cassandra.cql3.functions.Function;
 import org.apache.cassandra.cql3.selection.Selection.ResultSetBuilder;
@@ -34,17 +35,17 @@ final class AggregateFunctionSelector extends AbstractFunctionSelector<Aggregate
         return true;
     }
 
-    public void addInput(int protocolVersion, ResultSetBuilder rs) throws InvalidRequestException
+    public void addInput(QueryOptions options, ResultSetBuilder rs) throws InvalidRequestException
     {
         // Aggregation of aggregation is not supported
         for (int i = 0, m = argSelectors.size(); i < m; i++)
         {
             Selector s = argSelectors.get(i);
-            s.addInput(protocolVersion, rs);
-            args.set(i, s.getOutput(protocolVersion));
+            s.addInput(options, rs);
+            args.set(i, s.getOutput(options.getProtocolVersion()));
             s.reset();
         }
-        this.aggregate.addInput(protocolVersion, args);
+        this.aggregate.addInput(options.getProtocolVersion(), args);
     }
 
     public ByteBuffer getOutput(int protocolVersion) throws InvalidRequestException

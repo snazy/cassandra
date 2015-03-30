@@ -94,6 +94,11 @@ public abstract class AbstractMarker extends Term.NonTerminal
             return AssignmentTestable.TestResult.WEAKLY_ASSIGNABLE;
         }
 
+        public boolean isConstant()
+        {
+            return false;
+        }
+
         @Override
         public String getText()
         {
@@ -125,6 +130,11 @@ public abstract class AbstractMarker extends Term.NonTerminal
         public String getText()
         {
             return "?";
+        }
+
+        public boolean isConstant()
+        {
+            return false;
         }
     }
 

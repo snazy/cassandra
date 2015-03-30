@@ -133,6 +133,15 @@ public abstract class Maps
                     .map(entry -> String.format("%s: %s", entry.left.getText(), entry.right.getText()))
                     .collect(Collectors.joining(", ", "{", "}"));
         }
+
+        @Override
+        public boolean isConstant()
+        {
+            for (Pair<Term.Raw, Term.Raw> entry : entries)
+                if (!entry.left.isConstant() || !entry.right.isConstant())
+                    return false;
+            return true;
+        }
     }
 
     public static class Value extends Term.Terminal

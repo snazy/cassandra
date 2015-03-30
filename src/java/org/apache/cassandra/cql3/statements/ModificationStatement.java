@@ -552,7 +552,7 @@ public abstract class ModificationStatement implements CQLStatement
         Selection.ResultSetBuilder builder = selection.resultSetBuilder(false);
         SelectStatement.forSelection(cfm, selection).processPartition(partition, options, builder, FBUtilities.nowInSeconds());
 
-        return builder.build(options.getProtocolVersion());
+        return builder.build(options);
     }
 
     public ResultMessage executeInternal(QueryState queryState, QueryOptions options) throws RequestValidationException, RequestExecutionException

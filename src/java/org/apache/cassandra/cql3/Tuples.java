@@ -140,6 +140,15 @@ public class Tuples
         {
             return elements.stream().map(Term.Raw::getText).collect(Collectors.joining(", ", "(", ")"));
         }
+
+        @Override
+        public boolean isConstant()
+        {
+            for (Term.Raw element : elements)
+                if (!element.isConstant())
+                    return false;
+            return true;
+        }
     }
 
     /**
@@ -329,6 +338,12 @@ public class Tuples
         public AbstractMarker prepare(String keyspace, List<? extends ColumnSpecification> receivers) throws InvalidRequestException
         {
             return new Tuples.Marker(bindIndex, makeReceiver(receivers));
+        }
+
+        @Override
+        public boolean isConstant()
+        {
+            return false;
         }
     }
 

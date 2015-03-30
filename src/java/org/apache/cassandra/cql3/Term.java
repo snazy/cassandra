@@ -100,6 +100,12 @@ public interface Term
          */
         public abstract String getText();
 
+        /**
+         * Bound or computed values are non-constant terms. For example, bound values and function results
+         * are non-constant terms. Literals are constant terms.
+         */
+        public abstract boolean isConstant();
+
         @Override
         public String toString()
         {

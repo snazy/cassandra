@@ -30,9 +30,12 @@ import org.apache.cassandra.config.CFMetaData;
 import org.apache.cassandra.config.ColumnDefinition;
 import org.apache.cassandra.cql3.*;
 import org.apache.cassandra.cql3.functions.Function;
+import org.apache.cassandra.db.marshal.AbstractType;
+import org.apache.cassandra.db.marshal.CollectionType;
 import org.apache.cassandra.db.rows.Cell;
 import org.apache.cassandra.db.context.CounterContext;
 import org.apache.cassandra.db.marshal.UTF8Type;
+import org.apache.cassandra.db.rows.ComplexColumnData;
 import org.apache.cassandra.exceptions.InvalidRequestException;
 import org.apache.cassandra.utils.ByteBufferUtil;
 
@@ -173,9 +176,17 @@ public abstract class Selection
     {
         List<ColumnDefinition> defs = new ArrayList<>();
 
+        List<Selectable> selectables = RawSelector.toSelectables(rawSelectors, cfm);
         SelectorFactories factories =
-                SelectorFactories.createFactoriesAndCollectColumnDefinitions(RawSelector.toSelectables(rawSelectors, cfm), cfm, defs);
+                SelectorFactories.createFactoriesAndCollectColumnDefinitions(selectables, cfm, defs);
         SelectionColumnMapping mapping = collectColumnMappings(cfm, rawSelectors, factories);
+        for (Selectable selectable : selectables)
+        {
+            SelectionRestriction restr = selectable.newSelectionRestriction(cfm);
+            ColumnDefinition refCol = restr.referencedColumn();
+            if (refCol != null)
+                mapping.addSelectionRestriction(restr);
+        }
 
         return (processesSelection(rawSelectors) || rawSelectors.size() != defs.size())
                ? new SelectionWithProcessing(cfm, defs, mapping, factories)
@@ -301,8 +312,12 @@ public abstract class Selection
          * ttl functions are used. Note that we might collect timestamp and/or ttls
          * we don't care about, but since the array below are allocated just once,
          * it doesn't matter performance wise.
+         *
+         * IMPORTANT!
+         * 'current' can contain both ComplexColumnData, which needs to be processed,
+         * and ByteBuffer instances.
          */
-        List<ByteBuffer> current;
+        private List<Object> current;
         final long[] timestamps;
         final int[] ttls;
 
@@ -321,6 +336,45 @@ public abstract class Selection
                 Arrays.fill(timestamps, Long.MIN_VALUE);
             if (ttls != null)
                 Arrays.fill(ttls, -1);
+        }
+
+        public ComplexColumnData currentComplex(int index)
+        {
+            return (ComplexColumnData)current.get(index);
+        }
+
+        public List<ByteBuffer> current(List<ColumnDefinition> columns, QueryOptions options)
+        {
+            List l = null;
+            for (int i = 0; i < current.size(); i++)
+            {
+                Object o = current.get(i);
+                if (o instanceof ComplexColumnData)
+                {
+                    if (l == null)
+                        l = new ArrayList(current);
+                    l.set(i, current(i, columns.get(i).type, options));
+                }
+            }
+            return l != null ? l : (List)current;
+        }
+
+        public ByteBuffer current(int index, AbstractType<?> type, QueryOptions options)
+        {
+            Object curr = current.get(index);
+            if (curr == null || curr instanceof ByteBuffer)
+                return (ByteBuffer) curr;
+            ComplexColumnData complex = (ComplexColumnData) curr;
+            return type.serializeForNativeProtocol(complex.iterator(), options.getProtocolVersion(),
+                                                   true, null, null);
+        }
+
+        public void add(ComplexColumnData complex)
+        {
+            if (complex == null)
+                current.add(null);
+            else
+                current.add(complex);
         }
 
         public void add(ByteBuffer v)
@@ -361,32 +415,32 @@ public abstract class Selection
                  : c.value();
         }
 
-        public void newRow(int protocolVersion) throws InvalidRequestException
+        public void newRow(QueryOptions options) throws InvalidRequestException
         {
             if (current != null)
             {
-                selectors.addInputRow(protocolVersion, this);
+                selectors.addInputRow(options, this);
                 if (!selectors.isAggregate())
                 {
-                    resultSet.addRow(getOutputRow(protocolVersion));
+                    resultSet.addRow(getOutputRow(options.getProtocolVersion()));
                     selectors.reset();
                 }
             }
             current = new ArrayList<>(columns.size());
         }
 
-        public ResultSet build(int protocolVersion) throws InvalidRequestException
+        public ResultSet build(QueryOptions options) throws InvalidRequestException
         {
             if (current != null)
             {
-                selectors.addInputRow(protocolVersion, this);
-                resultSet.addRow(getOutputRow(protocolVersion));
+                selectors.addInputRow(options, this);
+                resultSet.addRow(getOutputRow(options.getProtocolVersion()));
                 selectors.reset();
                 current = null;
             }
 
             if (resultSet.isEmpty() && selectors.isAggregate())
-                resultSet.addRow(getOutputRow(protocolVersion));
+                resultSet.addRow(getOutputRow(options.getProtocolVersion()));
             return resultSet;
         }
 
@@ -405,10 +459,11 @@ public abstract class Selection
         /**
          * Adds the current row of the specified <code>ResultSetBuilder</code>.
          *
+         * @param options query options of the current request
          * @param rs the <code>ResultSetBuilder</code>
          * @throws InvalidRequestException
          */
-        public void addInputRow(int protocolVersion, ResultSetBuilder rs) throws InvalidRequestException;
+        public void addInputRow(QueryOptions options, ResultSetBuilder rs) throws InvalidRequestException;
 
         public List<ByteBuffer> getOutputRow(int protocolVersion) throws InvalidRequestException;
 
@@ -466,9 +521,9 @@ public abstract class Selection
                     return current;
                 }
 
-                public void addInputRow(int protocolVersion, ResultSetBuilder rs) throws InvalidRequestException
+                public void addInputRow(QueryOptions options, ResultSetBuilder rs) throws InvalidRequestException
                 {
-                    current = rs.current;
+                    current = rs.current(getColumns(), options);
                 }
 
                 public boolean isAggregate()
@@ -558,10 +613,10 @@ public abstract class Selection
                     return outputRow;
                 }
 
-                public void addInputRow(int protocolVersion, ResultSetBuilder rs) throws InvalidRequestException
+                public void addInputRow(QueryOptions options, ResultSetBuilder rs) throws InvalidRequestException
                 {
                     for (Selector selector : selectors)
-                        selector.addInput(protocolVersion, rs);
+                        selector.addInput(options, rs);
                 }
             };
         }

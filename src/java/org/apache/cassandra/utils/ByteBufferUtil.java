@@ -620,6 +620,12 @@ public class ByteBufferUtil
     }
 
     // changes bb position
+    public static void skipBytes(ByteBuffer bb, int length)
+    {
+        bb.position(bb.position() + length);
+    }
+
+    // changes bb position
     public static ByteBuffer readBytesWithShortLength(ByteBuffer bb)
     {
         int length = readShortLength(bb);

@@ -806,7 +806,7 @@ public class InsertUpdateIfConditionTest extends CQLTester
             check_invalid_list("l CONTAINS KEY 123", SyntaxException.class);
 
             // not supported yet
-            check_invalid_list("m CONTAINS 'bar'", SyntaxException.class);
+            check_invalid_list("l CONTAINS 'bar'", SyntaxException.class);
         }
     }
 
@@ -959,11 +959,105 @@ public class InsertUpdateIfConditionTest extends CQLTester
             check_invalid_set("s IN 367", SyntaxException.class);
             check_invalid_set("s CONTAINS KEY 123", SyntaxException.class);
 
-            // element access is not allow for sets
-            check_invalid_set("s['foo'] = 'foobar'", InvalidRequestException.class);
+            // not supported yet
+            check_invalid_set("s CONTAINS 'bar'", SyntaxException.class);
+        }
+    }
+
+    @Test
+    public void testSetItem() throws Throwable
+    {
+        for (boolean frozen : new boolean[] {false, true})
+        {
+            createTable(String.format("CREATE TABLE %%s (k int PRIMARY KEY, s %s)",
+                                      frozen
+                                      ? "frozen<set<text>>"
+                                      : "set<text>"));
+
+            execute("INSERT INTO %s (k, s) VALUES (0, {'bar', 'foo'})");
+
+            check_applies_set("s['bar'] = 'bar'");
+            check_applies_set("s['bar'] != 'baz'");
+            check_applies_set("s['bar'] > 'a'");
+            check_applies_set("s['bar'] >= 'a'");
+            check_applies_set("s['bar'] < 'z'");
+            check_applies_set("s['bar'] <= 'z'");
+            check_applies_set("s['bar'] IN (null, 'bar', 'a')");
+
+            // multiple conditions
+            check_applies_set("s['bar'] > 'a' AND s['foo'] < 'z'");
+            check_applies_set("s['bar'] IN (null, 'bar', 'a') AND s['foo'] IN ('a', 'foo', null)");
+
+            // should not apply
+            check_does_not_apply_set("s['bar'] = 'baz'");
+            check_does_not_apply_set("s['bar'] != 'bar'");
+            check_does_not_apply_set("s['bar'] > 'z'");
+            check_does_not_apply_set("s['bar'] >= 'z'");
+            check_does_not_apply_set("s['bar'] < 'a'");
+            check_does_not_apply_set("s['bar'] <= 'a'");
+            check_does_not_apply_set("s['bar'] IN ('a', null)");
+            check_does_not_apply_set("s['bar'] IN ()");
+            check_does_not_apply_set("s['bar'] != null AND s IN ()");
+
+            check_invalid_set("s['bar'] < null", InvalidRequestException.class);
+            check_invalid_set("s['bar'] <= null", InvalidRequestException.class);
+            check_invalid_set("s['bar'] > null", InvalidRequestException.class);
+            check_invalid_set("s['bar'] >= null", InvalidRequestException.class);
+            check_invalid_set("s['bar'] IN null", SyntaxException.class);
+            check_invalid_set("s['bar'] IN 367", SyntaxException.class);
+            check_invalid_set("s['bar'] CONTAINS KEY 123", SyntaxException.class);
 
             // not supported yet
-            check_invalid_set("m CONTAINS 'bar'", SyntaxException.class);
+            check_invalid_set("s['bar'] CONTAINS 'bar'", SyntaxException.class);
+        }
+    }
+
+    @Test
+    public void testSetSlice() throws Throwable
+    {
+        for (boolean frozen : new boolean[] {false, true})
+        {
+            createTable(String.format("CREATE TABLE %%s (k int PRIMARY KEY, s %s)",
+                                      frozen
+                                      ? "frozen<set<text>>"
+                                      : "set<text>"));
+
+            execute("INSERT INTO %s (k, s) VALUES (0, {'bar', 'foo'})");
+
+            check_applies_set("s['bar' .. 'foo'] = {'bar', 'foo'}");
+            check_applies_set("s['bar' .. 'foo'] = {'foo', 'bar'}");
+            check_applies_set("s['bar' .. 'foo'] != {'baz', 'foo'}");
+            check_applies_set("s['bar' .. 'foo'] > {'bar', 'a'}");
+            check_applies_set("s['bar' .. 'foo'] >= {'a'}");
+            check_applies_set("s['bar' .. 'foo'] < {'z'}");
+            check_applies_set("s['bar' .. 'foo'] <= {'z'}");
+            check_applies_set("s['bar' .. 'foo'] IN (null, {'bar', 'foo'}, {'a'})");
+
+            // multiple conditions
+            check_applies_set("s['bar' .. 'foo'] > {'a'} AND s['bar' .. 'foo'] < {'z'}");
+            check_applies_set("s['bar' .. 'foo'] IN (null, {'bar', 'foo'}, {'a'}) AND s['bar' .. 'foo'] IN ({'a'}, {'bar', 'foo'}, null)");
+
+            // should not apply
+            check_does_not_apply_set("s['bar' .. 'foo'] = {'baz', 'foo'}");
+            check_does_not_apply_set("s['bar' .. 'foo'] != {'bar', 'foo'}");
+            check_does_not_apply_set("s['bar' .. 'foo'] > {'z'}");
+            check_does_not_apply_set("s['bar' .. 'foo'] >= {'z'}");
+            check_does_not_apply_set("s['bar' .. 'foo'] < {'a'}");
+            check_does_not_apply_set("s['bar' .. 'foo'] <= {'a'}");
+            check_does_not_apply_set("s['bar' .. 'foo'] IN ({'a'}, null)");
+            check_does_not_apply_set("s['bar' .. 'foo'] IN ()");
+            check_does_not_apply_set("s['bar' .. 'foo'] != null AND s IN ()");
+
+            check_invalid_set("s['bar' .. 'foo'] < null", InvalidRequestException.class);
+            check_invalid_set("s['bar' .. 'foo'] <= null", InvalidRequestException.class);
+            check_invalid_set("s['bar' .. 'foo'] > null", InvalidRequestException.class);
+            check_invalid_set("s['bar' .. 'foo'] >= null", InvalidRequestException.class);
+            check_invalid_set("s['bar' .. 'foo'] IN null", SyntaxException.class);
+            check_invalid_set("s['bar' .. 'foo'] IN 367", SyntaxException.class);
+            check_invalid_set("s['bar' .. 'foo'] CONTAINS KEY 123", SyntaxException.class);
+
+            // not supported yet
+            check_invalid_set("s['bar' .. 'foo'] CONTAINS 'bar'", SyntaxException.class);
         }
     }
 
@@ -998,19 +1092,19 @@ public class InsertUpdateIfConditionTest extends CQLTester
                                       ? "frozen<map<text, text>>"
                                       : "map<text, text>"));
 
-            execute("INSERT INTO %s (k, m) VALUES (0, {'foo' : 'bar'})");
+            execute("INSERT INTO %s (k, m) VALUES (0, {'foo' : 'bar', 'zab' : 'baz'})");
 
-            check_applies_map("m = {'foo': 'bar'}");
+            check_applies_map("m = {'foo': 'bar', 'zab' : 'baz'}");
             check_applies_map("m > {'a': 'a'}");
             check_applies_map("m >= {'a': 'a'}");
             check_applies_map("m < {'z': 'z'}");
             check_applies_map("m <= {'z': 'z'}");
             check_applies_map("m != {'a': 'a'}");
-            check_applies_map("m IN (null, {'a': 'a'}, {'foo': 'bar'})");
+            check_applies_map("m IN (null, {'a': 'a'}, {'foo': 'bar', 'zab' : 'baz'})");
 
             // multiple conditions
             check_applies_map("m > {'a': 'a'} AND m < {'z': 'z'}");
-            check_applies_map("m != null AND m IN (null, {'a': 'a'}, {'foo': 'bar'})");
+            check_applies_map("m != null AND m IN (null, {'a': 'a'}, {'foo': 'bar', 'zab' : 'baz'})");
 
             // should not apply
             check_does_not_apply_map("m = {'a': 'a'}");
@@ -1018,7 +1112,7 @@ public class InsertUpdateIfConditionTest extends CQLTester
             check_does_not_apply_map("m >= {'z': 'z'}");
             check_does_not_apply_map("m < {'a': 'a'}");
             check_does_not_apply_map("m <= {'a': 'a'}");
-            check_does_not_apply_map("m != {'foo': 'bar'}");
+            check_does_not_apply_map("m != {'foo': 'bar', 'zab' : 'baz'}");
             check_does_not_apply_map("m IN ({'a': 'a'}, null)");
             check_does_not_apply_map("m IN ()");
             check_does_not_apply_map("m = null AND m != null");
@@ -1034,6 +1128,54 @@ public class InsertUpdateIfConditionTest extends CQLTester
             check_invalid_map("m CONTAINS KEY 'foo'", SyntaxException.class);
             check_invalid_map("m CONTAINS null", SyntaxException.class);
             check_invalid_map("m CONTAINS KEY null", SyntaxException.class);
+        }
+    }
+    @Test
+    public void testMapSlice() throws Throwable
+    {
+        for (boolean frozen : new boolean[] {false, true})
+        {
+            createTable(String.format("CREATE TABLE %%s (k int PRIMARY KEY, m %s)",
+                                      frozen
+                                      ? "frozen<map<text, text>>"
+                                      : "map<text, text>"));
+
+            execute("INSERT INTO %s (k, m) VALUES (0, {'foo' : 'bar', 'zab' : 'baz'})");
+
+            check_applies_map("m['foo'..'zab'] = {'foo': 'bar', 'zab': 'baz'}");
+            check_applies_map("m['foo'..'zab'] > {'foo': 'bar', 'a': 'a'}");
+            check_applies_map("m['foo'..'zab'] >= {'foo': 'bar', 'a': 'a'}");
+            check_applies_map("m['foo'..'zab'] < {'z': 'z'}");
+            check_applies_map("m['foo'..'zab'] <= {'foo': 'bar', 'zz': 'z'}");
+            check_applies_map("m['foo'..'zab'] != {'foo': 'bar', 'a': 'a'}");
+            check_applies_map("m['foo'..'zab'] IN (null, {'a': 'a'}, {'foo': 'bar', 'zab': 'baz'})");
+
+            // multiple conditions
+            check_applies_map("m['foo'..'zab'] > {'a': 'a'} AND m < {'z': 'z'}");
+            check_applies_map("m['foo'..'zab'] != null AND m['foo'..'zab'] IN (null, {'a': 'a'}, {'foo': 'bar', 'zab': 'baz'})");
+
+            // should not apply
+            check_does_not_apply_map("m['foo'..'zab'] = {'a': 'a'}");
+            check_does_not_apply_map("m['foo'..'zab'] > {'zz': 'z'}");
+            check_does_not_apply_map("m['foo'..'zab'] >= {'zz': 'z'}");
+            check_does_not_apply_map("m['foo'..'zab'] < {'a': 'a'}");
+            check_does_not_apply_map("m['foo'..'zab'] <= {'a': 'a'}");
+            check_does_not_apply_map("m['foo'..'zab'] != {'foo': 'bar', 'zab' : 'baz'}");
+            check_does_not_apply_map("m['foo'..'zab'] IN ({'a': 'a'}, null)");
+            check_does_not_apply_map("m['foo'..'zab'] IN ()");
+            check_does_not_apply_map("m['foo'..'zab'] = null AND m['foo'..'zab'] != null");
+
+            check_invalid_map("m['foo'..'zab'] = {null: null}", InvalidRequestException.class);
+            check_invalid_map("m['foo'..'zab'] = {'a': null}", InvalidRequestException.class);
+            check_invalid_map("m['foo'..'zab'] = {null: 'a'}", InvalidRequestException.class);
+            check_invalid_map("m['foo'..'zab'] < null", InvalidRequestException.class);
+            check_invalid_map("m['foo'..'zab'] IN null", SyntaxException.class);
+
+            // not supported yet
+            check_invalid_map("m['foo'] CONTAINS 'bar'", SyntaxException.class);
+            check_invalid_map("m['foo'] CONTAINS KEY 'foo'", SyntaxException.class);
+            check_invalid_map("m['foo'] CONTAINS null", SyntaxException.class);
+            check_invalid_map("m['foo'] CONTAINS KEY null", SyntaxException.class);
         }
     }
 
@@ -1121,20 +1263,20 @@ public class InsertUpdateIfConditionTest extends CQLTester
 
     void check_applies_map(String condition) throws Throwable
     {
-        assertRows(execute("UPDATE %s SET m = {'foo': 'bar'} WHERE k=0 IF " + condition), row(true));
-        assertRows(execute("SELECT * FROM %s"), row(0, map("foo", "bar")));
+        assertRows(execute("UPDATE %s SET m = {'foo': 'bar', 'zab' : 'baz'} WHERE k=0 IF " + condition), row(true));
+        assertRows(execute("SELECT * FROM %s"), row(0, map("foo", "bar", "zab", "baz")));
     }
 
     void check_does_not_apply_map(String condition) throws Throwable
     {
-        assertRows(execute("UPDATE %s SET m = {'foo': 'bar'} WHERE k=0 IF " + condition), row(false, map("foo", "bar")));
-        assertRows(execute("SELECT * FROM %s"), row(0, map("foo", "bar")));
+        assertRows(execute("UPDATE %s SET m = {'foo': 'bar', 'zab' : 'baz'} WHERE k=0 IF " + condition), row(false, map("foo", "bar", "zab", "baz")));
+        assertRows(execute("SELECT * FROM %s"), row(0, map("foo", "bar", "zab", "baz")));
     }
 
     void check_invalid_map(String condition, Class<? extends Throwable> expected) throws Throwable
     {
-        assertInvalidThrow(expected, "UPDATE %s SET m = {'foo': 'bar'} WHERE k=0 IF " + condition);
-        assertRows(execute("SELECT * FROM %s"), row(0, map("foo", "bar")));
+        assertInvalidThrow(expected, "UPDATE %s SET m = {'foo': 'bar', 'zab' : 'baz'} WHERE k=0 IF " + condition);
+        assertRows(execute("SELECT * FROM %s"), row(0, map("foo", "bar", "zab", "baz")));
     }
 
     /**

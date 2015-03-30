@@ -874,8 +874,10 @@ bc(syntax)..
 
 <condition> ::= <identifier> <op> <term>
               | <identifier> IN <in-values>
-              | <identifier> '[' <term> ']' <op> <term>
-              | <identifier> '[' <term> ']' IN <in-values>
+              | <identifier> '[' <term> ( '..' ( <term> )? )? ']' <op> <term>
+              | <identifier> '[' '..' ( <term> )? ']' <op> <term>
+              | <identifier> '[' <term> ( '..' ( <term> )? )? ']' IN <in-values>
+              | <identifier> '[' '..' ( <term> )? ']' IN <in-values>
               | <identifier> '.' <field> <op> <term>
               | <identifier> '.' <field> IN <in-values>
 
@@ -955,8 +957,10 @@ bc(syntax)..
 
 <condition> ::= <identifier> (<op> | '!=') <term>
               | <identifier> IN <in-values>
-              | <identifier> '[' <term> ']' (<op> | '!=') <term>
-              | <identifier> '[' <term> ']' IN <in-values>
+              | <identifier> '[' <term> ( '..' ( <term> )? )? ']' (<op> | '!=') <term>
+              | <identifier> '[' '..' ( <term> )? ']' (<op> | '!=') <term>
+              | <identifier> '[' <term> ( '..' ( <term> )? )? ']' IN <in-values>
+              | <identifier> '[' '..' ( <term> )? ']' IN <in-values>
               | <identifier> '.' <field> (<op> | '!=') <term>
               | <identifier> '.' <field> IN <in-values>
 
@@ -1051,6 +1055,10 @@ bc(syntax)..
                    | '*'
 
 <selector> ::= <identifier>
+             | <collection-identified> '[' <collection-element> ']'
+             | <collection-identified> '[' (   <collection-from> '..' <collection-to>
+                                             | <collection-from> '..'
+                                             | '..' <collection-to> ) ']'
              | WRITETIME '(' <identifier> ')'
              | TTL '(' <identifier> ')'
              | CAST '(' <selector> AS <type> ')'
@@ -1200,6 +1208,22 @@ because Cassandra cannot guarantee that it won't have to scan large amount of da
 
 bc(sample). 
 SELECT firstname, lastname FROM users WHERE birth_year = 1981 AND country = 'FR' ALLOW FILTERING;
+
+h4(#collectionSlices). Collection element or slice selection
+
+Selection of an individual element of a collection is possible by appending @[ <element> ]@ to the collection column name. The returned value is the type of the value - i.e. the element type for sets and the value type for maps. Collection element and slice selections are not supported for lists.
+
+bc(sample). 
+CREATE TABLE users (username text PRIMARY KEY, attributes map<text, text>);
+SELECT attributes['gender'] FROM users WHERE username = 'ursus';
+
+Selection of a slice of a collection is possible by appending @[ <from> .. <to> ]@ to the collection column name. Either the _from_ or _to_ part can be omitted to make the lower resp. upper restriction unbounded. The returned value is the type of the referenced collection.
+
+bc(sample). 
+CREATE TABLE sensor_data (ts timestamp PRIMARY KEY, readouts map<int, text>);
+SELECT readouts[1..100] FROM users WHERE ts = ?;
+
+_element_, _from_ and _to_ can be all kinds of allowed terms: literals, bind marker, functions.
 
 h2(#databaseRoles). Database Roles
 
@@ -2390,6 +2414,8 @@ The following describes the changes in each version of CQL.
 
 h3. 3.4.2
 
+* "@SELECT@":#selectStmt now allows selecting a single element or a slice of elements from maps and sets
+* LWT now allow conditions on slices of collection elements
 * "@INSERT/UPDATE options@":#updateOptions for tables having a default_time_to_live specifying a TTL of 0 will remove the TTL from the inserted or updated values
 * "@ALTER TABLE@":#alterTableStmt @ADD@ and @DROP@ now allow mutiple columns to be added/removed
 * New "@PER PARTITION LIMIT@":#selectLimit option (see "CASSANDRA-7017":https://issues.apache.org/jira/browse/CASSANDRA-7017).

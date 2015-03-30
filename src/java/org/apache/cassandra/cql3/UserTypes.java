@@ -144,6 +144,15 @@ public abstract class UserTypes
             sb.append("}");
             return sb.toString();
         }
+
+        @Override
+        public boolean isConstant()
+        {
+            for (Term.Raw entry : entries.values())
+            if (!entry.isConstant())
+                    return false;
+            return true;
+        }
     }
 
     public static class Value extends Term.MultiItemTerminal

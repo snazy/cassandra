@@ -117,6 +117,15 @@ public abstract class Lists
         {
             return elements.stream().map(Term.Raw::getText).collect(Collectors.joining(", ", "[", "]"));
         }
+
+        @Override
+        public boolean isConstant()
+        {
+            for (Term.Raw element : elements)
+                if (!element.isConstant())
+                    return false;
+            return true;
+        }
     }
 
     public static class Value extends Term.MultiItemTerminal
@@ -483,7 +492,7 @@ public abstract class Lists
 
         public void execute(DecoratedKey partitionKey, UpdateParameters params) throws InvalidRequestException
         {
-            assert column.type.isMultiCell() : "Attempted to delete an item by index from a frozen list";
+            assert column.type.isMultiCell() : "Attempted to delete an item or slice by index from a frozen list";
             Term.Terminal index = t.bind(params.options);
             if (index == null)
                 throw new InvalidRequestException("Invalid null value for list index");

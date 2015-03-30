@@ -682,7 +682,7 @@ syntax_rules += r'''
                  ;
 <udtSubfieldSelection> ::= <identifier> "." <identifier>
                          ;
-<selector> ::= [colname]=<cident>
+<selector> ::= [colname]=<cident> ( "[" ( <term> ( ".." <term> "]" )? | <term> ".." ) )?
              | <udtSubfieldSelection>
              | "WRITETIME" "(" [colname]=<cident> ")"
              | "TTL" "(" [colname]=<cident> ")"
@@ -899,7 +899,7 @@ syntax_rules += r'''
                            | ("IN" "(" <term> ( "," <term> )* ")" )
                          ;
 <condition> ::= conditioncol=<cident>
-                    ( (( indexbracket="[" <term> "]" )
+                    ( (( indexbracket="[" ( <term> ( ".." <term> "]" )? | <term> ".." "]" )
                       |( udt_field_dot="." udt_field=<identifier> )) )?
                     <condition_op_and_rhs>
               ;

@@ -34,8 +34,22 @@ import org.apache.cassandra.utils.memory.AbstractAllocator;
  */
 public abstract class CellPath
 {
-    public static final CellPath BOTTOM = new EmptyCellPath();
-    public static final CellPath TOP = new EmptyCellPath();
+    public static final CellPath BOTTOM = new EmptyCellPath()
+    {
+        @Override
+        public String toString()
+        {
+            return "CellPath.BOTTOM";
+        }
+    };
+    public static final CellPath TOP = new EmptyCellPath()
+    {
+        @Override
+        public String toString()
+        {
+            return "CellPath.BOTTOM";
+        }
+    };
 
     public abstract int size();
     public abstract ByteBuffer get(int i);
@@ -129,6 +143,12 @@ public abstract class CellPath
         public long unsharedHeapSizeExcludingData()
         {
             return EMPTY_SIZE + ObjectSizes.sizeOnHeapExcludingData(value);
+        }
+
+        @Override
+        public String toString()
+        {
+            return "CollectionCellPath(" + value + ')';
         }
     }
 

@@ -47,6 +47,11 @@ public abstract class Selectable
         return idx;
     }
 
+    public SelectionRestriction newSelectionRestriction(CFMetaData cfm)
+    {
+        return SelectionRestriction.FULL;
+    }
+
     public static interface Raw
     {
         public Selectable prepare(CFMetaData cfm);

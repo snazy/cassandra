@@ -42,6 +42,14 @@ New features
      to resolve the situation.
    - Filtering expressions are made more pluggable and can be added programatically via
      a QueryHandler implementation. See CASSANDRA-11295 for more details.
+   - Selection of a single element or slice of set and map columns is now supported.
+     This includes support in LWT conditions and range deletions.
+     Caveats:
+       - Slice deletions require a read-before-write whereas single element deletions
+         do not require a read-before-write.
+       - Slice and single element selections on sets and maps can directly filter
+         on the storage level.
+
 
 3.4
 =====

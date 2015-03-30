@@ -21,7 +21,6 @@ import java.nio.ByteBuffer;
 import java.util.*;
 
 import com.google.common.base.MoreObjects;
-import com.google.common.base.Objects;
 import com.google.common.base.Predicate;
 import com.google.common.collect.Iterables;
 import org.slf4j.Logger;
@@ -35,12 +34,11 @@ import org.apache.cassandra.cql3.functions.Function;
 import org.apache.cassandra.cql3.restrictions.StatementRestrictions;
 import org.apache.cassandra.cql3.selection.RawSelector;
 import org.apache.cassandra.cql3.selection.Selection;
+import org.apache.cassandra.cql3.selection.SelectionRestriction;
 import org.apache.cassandra.db.*;
 import org.apache.cassandra.db.filter.*;
-import org.apache.cassandra.db.marshal.CollectionType;
 import org.apache.cassandra.db.marshal.CompositeType;
 import org.apache.cassandra.db.marshal.Int32Type;
-import org.apache.cassandra.db.marshal.UserType;
 import org.apache.cassandra.db.partitions.PartitionIterator;
 import org.apache.cassandra.db.rows.ComplexColumnData;
 import org.apache.cassandra.db.rows.Row;
@@ -97,7 +95,7 @@ public class SelectStatement implements CQLStatement
      */
     private final Comparator<List<ByteBuffer>> orderingComparator;
 
-    private final ColumnFilter queriedColumns;
+    private final ColumnFilter staticQueriedColumns;
 
     // Used by forSelection below
     private static final Parameters defaultParameters = new Parameters(Collections.<ColumnIdentifier.Raw, Boolean>emptyMap(), false, false, false);
@@ -121,7 +119,7 @@ public class SelectStatement implements CQLStatement
         this.parameters = parameters;
         this.limit = limit;
         this.perPartitionLimit = perPartitionLimit;
-        this.queriedColumns = gatherQueriedColumns();
+        this.staticQueriedColumns = selection.isWildcard() ? ColumnFilter.all(cfm) : queriedColumns(null);
     }
 
     public Iterable<Function> getFunctions()
@@ -145,19 +143,68 @@ public class SelectStatement implements CQLStatement
 
     // Note that the queried columns internally is different from the one selected by the
     // user as it also include any column for which we have a restriction on.
-    private ColumnFilter gatherQueriedColumns()
+    //
+    // ColumnFilter instances can depend on the actual query parameters - for example the actual
+    // collection columns element/slice restrictions. In this case, we have to construct the
+    // ColumnFilter instance for each statement executon.
+    // Otherwise we can create the ColumnFilter instance for all executions in advance.
+    private ColumnFilter queriedColumns(QueryOptions options)
     {
-        if (selection.isWildcard())
-            return ColumnFilter.all(cfm);
+        if (staticQueriedColumns != null)
+            // a ColumnFilter instance for unrestricted column selections which has been calculated
+            // using prepareQueriedColumns() during instantiation
+            return staticQueriedColumns;
 
         ColumnFilter.Builder builder = ColumnFilter.allColumnsBuilder(cfm);
         // Adds all selected columns
         for (ColumnDefinition def : selection.getColumns())
-            if (!def.isPrimaryKeyColumn())
+        {
+            if (def.isPrimaryKeyColumn())
+                continue;
+
+            Collection<SelectionRestriction> selectionRestrictions = selection.getColumnMapping().getSelectionRestrictions(def);
+            if (anyUnrestricted(selectionRestrictions))
+            {
                 builder.add(def);
+                continue;
+            }
+
+            // options is only null when this method is called from the constructor
+            if (options == null && anyDynamic(selectionRestrictions))
+                // column selection is restricted by a bound parameter
+                return null;
+
+            for (SelectionRestriction restriction : selectionRestrictions)
+            {
+                if (restriction.slice())
+                    builder.slice(def, restriction.from(options), restriction.to(options));
+                else
+                    builder.select(def, restriction.from(options));
+            }
+        }
+
         // as well as any restricted column (so we can actually apply the restriction)
         builder.addAll(restrictions.nonPKRestrictedColumns(true));
+
         return builder.build();
+    }
+
+    private static boolean anyDynamic(Collection<SelectionRestriction> selectionRestrictions)
+    {
+        for (SelectionRestriction r : selectionRestrictions)
+            if (r.dynamic())
+                return true;
+        return false;
+    }
+
+    private static boolean anyUnrestricted(Collection<SelectionRestriction> selectionRestrictions)
+    {
+        if (selectionRestrictions.isEmpty())
+            return true;
+        for (SelectionRestriction r : selectionRestrictions)
+            if (!r.restricted())
+                return true;
+        return false;
     }
 
     /**
@@ -166,7 +213,7 @@ public class SelectStatement implements CQLStatement
      */
     public ColumnFilter queriedColumns()
     {
-        return queriedColumns;
+        return queriedColumns(null);
     }
 
     // Creates a simple select based on the given selection.
@@ -400,7 +447,7 @@ public class SelectStatement implements CQLStatement
                 }
             }
         }
-        return new ResultMessage.Rows(result.build(options.getProtocolVersion()));
+        return new ResultMessage.Rows(result.build(options));
     }
 
     private ResultMessage.Rows processResults(PartitionIterator partitions,
@@ -487,7 +534,7 @@ public class SelectStatement implements CQLStatement
         {
             QueryProcessor.validateKey(key);
             DecoratedKey dk = cfm.decorateKey(ByteBufferUtil.clone(key));
-            commands.add(SinglePartitionReadCommand.create(cfm, nowInSec, queriedColumns, rowFilter, limit, dk, filter));
+            commands.add(SinglePartitionReadCommand.create(cfm, nowInSec, queriedColumns(options), rowFilter, limit, dk, filter));
         }
 
         return new SinglePartitionReadCommand.Group(commands, limit);
@@ -523,7 +570,7 @@ public class SelectStatement implements CQLStatement
         QueryOptions options = QueryOptions.forInternalCalls(Collections.emptyList());
         ClusteringIndexFilter filter = makeClusteringIndexFilter(options);
         RowFilter rowFilter = getRowFilter(options);
-        return SinglePartitionReadCommand.create(cfm, nowInSec, queriedColumns, rowFilter, DataLimits.NONE, key, filter);
+        return SinglePartitionReadCommand.create(cfm, nowInSec, queriedColumns(options), rowFilter, DataLimits.NONE, key, filter);
     }
 
     /**
@@ -550,7 +597,7 @@ public class SelectStatement implements CQLStatement
 
         PartitionRangeReadCommand command = new PartitionRangeReadCommand(cfm,
                                                                           nowInSec,
-                                                                          queriedColumns,
+                                                                          queriedColumns(options),
                                                                           rowFilter,
                                                                           limit,
                                                                           new DataRange(keyBounds, clusteringIndexFilter),
@@ -594,7 +641,7 @@ public class SelectStatement implements CQLStatement
             // We can have no clusterings if either we're only selecting the static columns, or if we have
             // a 'IN ()' for clusterings. In that case, we still want to query if some static columns are
             // queried. But we're fine otherwise.
-            if (clusterings.isEmpty() && queriedColumns.fetchedColumns().statics.isEmpty())
+            if (clusterings.isEmpty() && queriedColumns(options).fetchedColumns().statics.isEmpty())
                 return null;
 
             return new ClusteringIndexNamesFilter(clusterings, isReversed);
@@ -741,7 +788,7 @@ public class SelectStatement implements CQLStatement
             }
         }
 
-        ResultSet cqlRows = result.build(options.getProtocolVersion());
+        ResultSet cqlRows = result.build(options);
 
         orderResults(cqlRows);
 
@@ -767,8 +814,6 @@ public class SelectStatement implements CQLStatement
     void processPartition(RowIterator partition, QueryOptions options, Selection.ResultSetBuilder result, int nowInSec)
     throws InvalidRequestException
     {
-        int protocolVersion = options.getProtocolVersion();
-
         ByteBuffer[] keyComponents = getComponents(cfm, partition.partitionKey());
 
         Row staticRow = partition.staticRow();
@@ -779,7 +824,7 @@ public class SelectStatement implements CQLStatement
         {
             if (!staticRow.isEmpty() && (!restrictions.hasClusteringColumnsRestriction() || cfm.isStaticCompactTable()))
             {
-                result.newRow(protocolVersion);
+                result.newRow(options);
                 for (ColumnDefinition def : selection.getColumns())
                 {
                     switch (def.kind)
@@ -788,7 +833,7 @@ public class SelectStatement implements CQLStatement
                             result.add(keyComponents[def.position()]);
                             break;
                         case STATIC:
-                            addValue(result, def, staticRow, nowInSec, protocolVersion);
+                            addValue(result, def, staticRow, nowInSec);
                             break;
                         default:
                             result.add((ByteBuffer)null);
@@ -801,7 +846,7 @@ public class SelectStatement implements CQLStatement
         while (partition.hasNext())
         {
             Row row = partition.next();
-            result.newRow(protocolVersion);
+            result.newRow(options);
             // Respect selection order
             for (ColumnDefinition def : selection.getColumns())
             {
@@ -814,28 +859,23 @@ public class SelectStatement implements CQLStatement
                         result.add(row.clustering().get(def.position()));
                         break;
                     case REGULAR:
-                        addValue(result, def, row, nowInSec, protocolVersion);
+                        addValue(result, def, row, nowInSec);
                         break;
                     case STATIC:
-                        addValue(result, def, staticRow, nowInSec, protocolVersion);
+                        addValue(result, def, staticRow, nowInSec);
                         break;
                 }
             }
         }
     }
 
-    private static void addValue(Selection.ResultSetBuilder result, ColumnDefinition def, Row row, int nowInSec, int protocolVersion)
+    private void addValue(Selection.ResultSetBuilder result, ColumnDefinition def, Row row, int nowInSec)
     {
         if (def.isComplex())
         {
             assert def.type.isMultiCell();
             ComplexColumnData complexData = row.getComplexColumnData(def);
-            if (complexData == null)
-                result.add(null);
-            else if (def.type.isCollection())
-                result.add(((CollectionType) def.type).serializeForNativeProtocol(complexData.iterator(), protocolVersion));
-            else
-                result.add(((UserType) def.type).serializeForNativeProtocol(complexData.iterator(), protocolVersion));
+            result.add(complexData);
         }
         else
         {
@@ -897,6 +937,17 @@ public class SelectStatement implements CQLStatement
                                   : Selection.fromSelectors(cfm, selectClause);
 
             StatementRestrictions restrictions = prepareRestrictions(cfm, boundNames, selection, forView);
+
+            // fill all unprocessed bound variables - i.e. bound variables used in select-clause or as function arguments
+            List<ColumnSpecification> specs = boundNames.getSpecifications();
+            for (int i = 0; i < specs.size(); i++)
+            {
+                ColumnSpecification spec = specs.get(i);
+                if (spec != null)
+                    continue;
+
+                boundNames.add(i, new ColumnSpecification(cfm.ksName, cfm.cfName, null, null));
+            }
 
             if (parameters.isDistinct)
             {

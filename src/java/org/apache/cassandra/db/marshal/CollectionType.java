@@ -19,7 +19,6 @@ package org.apache.cassandra.db.marshal;
 
 import java.nio.ByteBuffer;
 import java.io.IOException;
-import java.util.List;
 import java.util.Iterator;
 
 import org.apache.cassandra.cql3.CQL3Type;
@@ -82,8 +81,6 @@ public abstract class CollectionType<T> extends AbstractType<T>
     public abstract AbstractType<?> nameComparator();
     public abstract AbstractType<?> valueComparator();
 
-    protected abstract List<ByteBuffer> serializedValues(Iterator<Cell> cells);
-
     @Override
     public abstract CollectionSerializer<T> getSerializer();
 
@@ -136,20 +133,6 @@ public abstract class CollectionType<T> extends AbstractType<T>
     public boolean isFreezable()
     {
         return true;
-    }
-
-    // Overrided by maps
-    protected int collectionSize(List<ByteBuffer> values)
-    {
-        return values.size();
-    }
-
-    public ByteBuffer serializeForNativeProtocol(Iterator<Cell> cells, int version)
-    {
-        assert isMultiCell();
-        List<ByteBuffer> values = serializedValues(cells);
-        int size = collectionSize(values);
-        return CollectionSerializer.pack(values, size, version);
     }
 
     @Override

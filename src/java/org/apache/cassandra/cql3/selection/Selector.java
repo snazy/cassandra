@@ -24,6 +24,7 @@ import org.apache.cassandra.config.CFMetaData;
 import org.apache.cassandra.cql3.AssignmentTestable;
 import org.apache.cassandra.cql3.ColumnIdentifier;
 import org.apache.cassandra.cql3.ColumnSpecification;
+import org.apache.cassandra.cql3.QueryOptions;
 import org.apache.cassandra.cql3.functions.Function;
 import org.apache.cassandra.cql3.selection.Selection.ResultSetBuilder;
 import org.apache.cassandra.db.marshal.AbstractType;
@@ -135,10 +136,8 @@ public abstract class Selector implements AssignmentTestable
          * returned with a query. In most cases, this is likely to be a 1:1 mapping,
          * but some selector instances may utilise multiple columns (or none at all)
          * to produce a value (i.e. functions).
-         *
          * @param mapping the instance of the column mapping belonging to the current query's Selection
          * @param resultsColumn the column in the ResultSet.Metadata to which the ColumnDefinitions used
-         *                      by the Selector are to be mapped
          */
         protected abstract void addColumnMapping(SelectionColumnMapping mapping, ColumnSpecification resultsColumn);
     }
@@ -146,11 +145,11 @@ public abstract class Selector implements AssignmentTestable
     /**
      * Add the current value from the specified <code>ResultSetBuilder</code>.
      *
-     * @param protocolVersion protocol version used for serialization
+     * @param options query options including protocol version used for serialization
      * @param rs the <code>ResultSetBuilder</code>
      * @throws InvalidRequestException if a problem occurs while add the input value
      */
-    public abstract void addInput(int protocolVersion, ResultSetBuilder rs) throws InvalidRequestException;
+    public abstract void addInput(QueryOptions options, ResultSetBuilder rs) throws InvalidRequestException;
 
     /**
      * Returns the selector output.

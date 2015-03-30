@@ -193,5 +193,11 @@ public class FunctionCall extends Term.NonTerminal
         {
             return name + terms.stream().map(Term.Raw::getText).collect(Collectors.joining(", ", "(", ")"));
         }
+
+        @Override
+        public boolean isConstant()
+        {
+            return false;
+        }
     }
 }

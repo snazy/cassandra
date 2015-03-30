@@ -105,6 +105,15 @@ public abstract class CollectionSerializer<T> implements TypeSerializer<T>
         return ByteBufferUtil.readBytes(input, size);
     }
 
+    public static void skipValue(ByteBuffer input, int version)
+    {
+        int size = input.getInt();
+        if (size <= 0)
+            return;
+
+        ByteBufferUtil.skipBytes(input, size);
+    }
+
     public static int sizeOfValue(ByteBuffer value, int version)
     {
         return value == null ? 4 : 4 + value.remaining();

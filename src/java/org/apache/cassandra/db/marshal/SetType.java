@@ -17,6 +17,7 @@
  */
 package org.apache.cassandra.db.marshal;
 
+import java.nio.BufferUnderflowException;
 import java.nio.ByteBuffer;
 import java.util.*;
 
@@ -26,6 +27,7 @@ import org.apache.cassandra.cql3.Term;
 import org.apache.cassandra.db.rows.Cell;
 import org.apache.cassandra.exceptions.ConfigurationException;
 import org.apache.cassandra.exceptions.SyntaxException;
+import org.apache.cassandra.serializers.CollectionSerializer;
 import org.apache.cassandra.serializers.MarshalException;
 import org.apache.cassandra.serializers.SetSerializer;
 
@@ -153,14 +155,6 @@ public class SetType<T> extends CollectionType<Set<T>>
         return sb.toString();
     }
 
-    public List<ByteBuffer> serializedValues(Iterator<Cell> cells)
-    {
-        List<ByteBuffer> bbs = new ArrayList<ByteBuffer>();
-        while (cells.hasNext())
-            bbs.add(cells.next().path().get(0));
-        return bbs;
-    }
-
     @Override
     public Term fromJSONObject(Object parsed) throws MarshalException
     {
@@ -187,5 +181,84 @@ public class SetType<T> extends CollectionType<Set<T>>
     public String toJSONString(ByteBuffer buffer, int protocolVersion)
     {
         return ListType.setOrListToJsonString(buffer, elements, protocolVersion);
+    }
+
+    public ByteBuffer serializeForNativeProtocol(Iterator<Cell> cells, int version, boolean slice, ByteBuffer from, ByteBuffer to)
+    {
+        List<ByteBuffer> bbs = null;
+        while (cells.hasNext())
+        {
+            ByteBuffer val = cells.next().path().get(0);
+
+            if (slice)
+            {
+                if (from != null && getElementsType().compareForCQL(from, val) > 0)
+                    continue;
+                if (to != null && getElementsType().compareForCQL(to, val) < 0)
+                    continue;
+            }
+            else
+            {
+                if (from != null && !from.equals(val))
+                    continue;
+            }
+
+            if (!slice)
+                return val;
+
+            if (bbs == null)
+                bbs = new ArrayList<>();
+            bbs.add(val);
+        }
+
+        return slice ? pack(version, bbs) : null;
+    }
+
+    public ByteBuffer reserializeForNativeProtocol(ByteBuffer bytes, int version, boolean slice, ByteBuffer from, ByteBuffer to)
+    {
+        try
+        {
+            List<ByteBuffer> buffers = null;
+
+            if (!slice)
+                to = from;
+
+            ByteBuffer input = bytes.duplicate();
+            int n = CollectionSerializer.readCollectionSize(input, version);
+            for (int i = 0; i < n; i++)
+            {
+                ByteBuffer databb = CollectionSerializer.readValue(input, version);
+                elements.validate(databb);
+
+                int toCmp = to != null ? getElementsType().compareForCQL(databb, to) : -1;
+
+                if (toCmp > 0)
+                    break;
+
+                if ((from == null || databb.compareTo(from) >= 0) &&
+                    toCmp <= 0)
+                {
+                    if (!slice)
+                        return databb;
+
+                    if (buffers == null)
+                        buffers = new ArrayList<>();
+                    buffers.add(databb);
+                }
+            }
+
+            return slice ? pack(version, buffers) : null;
+        }
+        catch (BufferUnderflowException e)
+        {
+            throw new MarshalException("Not enough bytes to read a map");
+        }
+    }
+
+    private static ByteBuffer pack(int version, List<ByteBuffer> buffers)
+    {
+        return buffers != null
+               ? CollectionSerializer.pack(buffers, buffers.size(), version)
+               : CollectionSerializer.pack(Collections.emptyList(), 0, version);
     }
 }

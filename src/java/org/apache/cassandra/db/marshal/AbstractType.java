@@ -24,15 +24,14 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
-
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import org.apache.cassandra.cql3.CQL3Type;
 import org.apache.cassandra.cql3.Term;
 import org.apache.cassandra.db.TypeSizes;
+import org.apache.cassandra.db.rows.Cell;
 import org.apache.cassandra.exceptions.SyntaxException;
 import org.apache.cassandra.serializers.TypeSerializer;
 import org.apache.cassandra.serializers.MarshalException;
@@ -41,11 +40,9 @@ import org.apache.cassandra.utils.FastByteOperations;
 import org.github.jamm.Unmetered;
 import org.apache.cassandra.io.util.DataOutputPlus;
 import org.apache.cassandra.io.util.DataInputPlus;
-import org.apache.cassandra.io.util.FileUtils;
 import org.apache.cassandra.utils.ByteBufferUtil;
 
 import static org.apache.cassandra.db.marshal.AbstractType.ComparisonType.CUSTOM;
-import static org.apache.cassandra.db.marshal.AbstractType.ComparisonType.NOT_COMPARABLE;
 
 /**
  * Specifies a Comparator for a specific type of ByteBuffer.
@@ -58,8 +55,6 @@ import static org.apache.cassandra.db.marshal.AbstractType.ComparisonType.NOT_CO
 @Unmetered
 public abstract class AbstractType<T> implements Comparator<ByteBuffer>
 {
-    private static final Logger logger = LoggerFactory.getLogger(AbstractType.class);
-
     public final Comparator<ByteBuffer> reverseComparator;
 
     public static enum ComparisonType
@@ -459,5 +454,35 @@ public abstract class AbstractType<T> implements Comparator<ByteBuffer>
             case NOT_COMPARABLE:
                 throw new IllegalArgumentException(this + " cannot be used in comparisons, so cannot be used as a clustering column");
         }
+    }
+
+    /**
+     * Takes the "raw" cells of a mulit-cell (non-frozen) collection, and returns the same collection type
+     * just containing the requested slice.
+     * Note: passing {@code slice=true, from=null, to=null} will return the full collection.
+     *
+     * @param cells  cells of the source collection - must not be {@code null}
+     * @param slice  flag whether {@code from} and {@code to} represent a slice
+     * @param from   the lower slice bound or {@code null}, must be non-{@code null} for single-element selections ({@code slice==false})
+     * @param to     the upper slice bound or {@code null}, ignored for single-element selections ({@code slice==false})
+     */
+    public ByteBuffer serializeForNativeProtocol(Iterator<Cell> cells, int version, boolean slice, ByteBuffer from, ByteBuffer to)
+    {
+        throw new UnsupportedOperationException("only available for freezable types but not for " + this);
+    }
+
+    /**
+     * Takes an already serialized collection (for example a frozen one), and returns the same collection type
+     * just containing the requested slice.
+     * Note: passing {@code slice=true, from=null, to=null} will return the full collection.
+     *
+     * @param bytes buffer containing the source collection - must not be {@code null}
+     * @param slice  flag whether {@code from} and {@code to} represent a slice
+     * @param from   the lower slice bound or {@code null}, must be non-{@code null} for single-element selections ({@code slice==false})
+     * @param to     the upper slice bound or {@code null}, ignored for single-element selections ({@code slice==false})
+     */
+    public ByteBuffer reserializeForNativeProtocol(ByteBuffer bytes, int version, boolean slice, ByteBuffer from, ByteBuffer to)
+    {
+        throw new UnsupportedOperationException("only available for freezable types but not for " + this);
     }
 }

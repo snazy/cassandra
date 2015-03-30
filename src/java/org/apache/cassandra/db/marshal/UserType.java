@@ -162,7 +162,7 @@ public class UserType extends TupleType
         return ShortType.instance;
     }
 
-    public ByteBuffer serializeForNativeProtocol(Iterator<Cell> cells, int protocolVersion)
+    public ByteBuffer serializeForNativeProtocol(Iterator<Cell> cells, int version, boolean slice, ByteBuffer from, ByteBuffer to)
     {
         assert isMultiCell;
 
@@ -185,6 +185,11 @@ public class UserType extends TupleType
             components[fieldPosition++] = null;
 
         return TupleType.buildValue(components);
+    }
+
+    public ByteBuffer reserializeForNativeProtocol(ByteBuffer bytes, int version, boolean slice, ByteBuffer from, ByteBuffer to)
+    {
+        throw new UnsupportedOperationException("not available for user types");
     }
 
     // Note: the only reason we override this is to provide nicer error message, but since that's not that much code...

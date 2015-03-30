@@ -20,6 +20,7 @@ package org.apache.cassandra.cql3.selection;
 import java.nio.ByteBuffer;
 
 import org.apache.cassandra.cql3.ColumnSpecification;
+import org.apache.cassandra.cql3.QueryOptions;
 import org.apache.cassandra.cql3.selection.Selection.ResultSetBuilder;
 import org.apache.cassandra.db.marshal.AbstractType;
 import org.apache.cassandra.db.marshal.UTF8Type;
@@ -65,9 +66,9 @@ final class FieldSelector extends Selector
         };
     }
 
-    public void addInput(int protocolVersion, ResultSetBuilder rs) throws InvalidRequestException
+    public void addInput(QueryOptions options, ResultSetBuilder rs) throws InvalidRequestException
     {
-        selected.addInput(protocolVersion, rs);
+        selected.addInput(options, rs);
     }
 
     public ByteBuffer getOutput(int protocolVersion) throws InvalidRequestException

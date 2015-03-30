@@ -62,4 +62,10 @@ public class TypeCast extends Term.Raw
     {
         return "(" + type + ")" + term;
     }
+
+    @Override
+    public boolean isConstant()
+    {
+        return term.isConstant();
+    }
 }

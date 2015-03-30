@@ -3,8 +3,6 @@ package org.apache.cassandra.cql3.selection;
 import java.util.*;
 import java.util.stream.Collectors;
 
-import com.google.common.base.Function;
-import com.google.common.base.Joiner;
 import com.google.common.base.Objects;
 import com.google.common.collect.*;
 
@@ -21,6 +19,7 @@ public class SelectionColumnMapping implements SelectionColumns
 {
     private final ArrayList<ColumnSpecification> columnSpecifications;
     private final HashMultimap<ColumnSpecification, ColumnDefinition> columnMappings;
+    private Multimap<ColumnDefinition, SelectionRestriction> selectionRestrictions;
 
     private SelectionColumnMapping()
     {
@@ -41,6 +40,13 @@ public class SelectionColumnMapping implements SelectionColumns
         return mapping;
     }
 
+    protected void addSelectionRestriction(SelectionRestriction selectionRestriction)
+    {
+        if (selectionRestrictions == null)
+            selectionRestrictions = ArrayListMultimap.create(4, 4);
+        selectionRestrictions.put(selectionRestriction.referencedColumn(), selectionRestriction);
+    }
+
     protected SelectionColumnMapping addMapping(ColumnSpecification colSpec, ColumnDefinition column)
     {
         columnSpecifications.add(colSpec);
@@ -48,6 +54,7 @@ public class SelectionColumnMapping implements SelectionColumns
         // record any mapping in that case
         if (column != null)
             columnMappings.put(colSpec, column);
+
         return this;
     }
 
@@ -67,7 +74,12 @@ public class SelectionColumnMapping implements SelectionColumns
 
     public Multimap<ColumnSpecification, ColumnDefinition> getMappings()
     {
-        return Multimaps.unmodifiableMultimap(columnMappings);
+        return columnMappings;
+    }
+
+    public Collection<SelectionRestriction> getSelectionRestrictions(ColumnDefinition def)
+    {
+        return selectionRestrictions != null ? selectionRestrictions.get(def) : Collections.emptyList();
     }
 
     public boolean equals(Object obj)

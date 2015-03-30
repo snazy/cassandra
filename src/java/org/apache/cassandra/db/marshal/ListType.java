@@ -17,6 +17,7 @@
  */
 package org.apache.cassandra.db.marshal;
 
+import java.nio.BufferUnderflowException;
 import java.nio.ByteBuffer;
 import java.util.*;
 
@@ -25,18 +26,15 @@ import org.apache.cassandra.cql3.Lists;
 import org.apache.cassandra.cql3.Term;
 import org.apache.cassandra.db.rows.Cell;
 import org.apache.cassandra.exceptions.ConfigurationException;
+import org.apache.cassandra.exceptions.InvalidRequestException;
 import org.apache.cassandra.exceptions.SyntaxException;
 import org.apache.cassandra.serializers.CollectionSerializer;
+import org.apache.cassandra.serializers.Int32Serializer;
 import org.apache.cassandra.serializers.MarshalException;
 import org.apache.cassandra.serializers.ListSerializer;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 public class ListType<T> extends CollectionType<List<T>>
 {
-    private static final Logger logger = LoggerFactory.getLogger(ListType.class);
-
     // interning instances
     private static final Map<AbstractType<?>, ListType> instances = new HashMap<>();
     private static final Map<AbstractType<?>, ListType> frozenInstances = new HashMap<>();
@@ -183,15 +181,6 @@ public class ListType<T> extends CollectionType<List<T>>
         return sb.toString();
     }
 
-    public List<ByteBuffer> serializedValues(Iterator<Cell> cells)
-    {
-        assert isMultiCell;
-        List<ByteBuffer> bbs = new ArrayList<ByteBuffer>();
-        while (cells.hasNext())
-            bbs.add(cells.next().value());
-        return bbs;
-    }
-
     @Override
     public Term fromJSONObject(Object parsed) throws MarshalException
     {
@@ -231,5 +220,83 @@ public class ListType<T> extends CollectionType<List<T>>
     public String toJSONString(ByteBuffer buffer, int protocolVersion)
     {
         return setOrListToJsonString(buffer, elements, protocolVersion);
+    }
+
+    public ByteBuffer serializeForNativeProtocol(Iterator<Cell> cells, int version, boolean slice, ByteBuffer from, ByteBuffer to)
+    {
+        if (slice && (from != null || to != null))
+            throw new InvalidRequestException("Slice operations on lists are not supported");
+
+        int fromIndex = from != null ? Int32Serializer.instance.deserialize(from) : 0;
+
+        if (fromIndex < 0)
+            throw new InvalidRequestException(String.format("Invalid negative list index %d", fromIndex));
+
+        List<ByteBuffer> bbs = null;
+        for (int n = 0; cells.hasNext(); n++)
+        {
+            Cell cell = cells.next();
+            if (n >= fromIndex)
+            {
+                if (!slice)
+                    return cell.value();
+
+                if (bbs == null)
+                    bbs = new ArrayList<>();
+                bbs.add(cell.value());
+            }
+        }
+
+        return slice ? pack(version, bbs) : null;
+    }
+
+    public ByteBuffer reserializeForNativeProtocol(ByteBuffer bytes, int version, boolean slice, ByteBuffer from, ByteBuffer to)
+    {
+        if (slice && (from != null || to != null))
+            throw new InvalidRequestException("Slice operations on lists are not supported");
+
+        try
+        {
+            int fromIndex = from != null ? Int32Serializer.instance.deserialize(from) : 0;
+
+            if (fromIndex < 0)
+                throw new InvalidRequestException(String.format("Invalid negative list index %d", fromIndex));
+
+            ByteBuffer input = bytes.duplicate();
+            int n = CollectionSerializer.readCollectionSize(input, version);
+            List<ByteBuffer> buffers = null;
+            for (int i = 0; i < n; i++)
+            {
+                if (i >= fromIndex)
+                {
+                    ByteBuffer databb = CollectionSerializer.readValue(input, version);
+                    elements.validate(databb);
+
+                    if (!slice)
+                        return databb;
+
+                    if (buffers == null)
+                        buffers = new ArrayList<>();
+                    buffers.add(databb);
+                }
+                else
+                {
+                    CollectionSerializer.skipValue(input, version);
+                }
+            }
+
+            return slice ? pack(version, buffers) : null;
+        }
+        catch (BufferUnderflowException e)
+        {
+            throw new MarshalException("Not enough bytes to read a list");
+        }
+    }
+
+    private static ByteBuffer pack(int version, List<ByteBuffer> buffers)
+    {
+        return buffers != null
+               ? CollectionSerializer.pack(buffers, buffers.size(), version)
+               : CollectionSerializer.pack(Collections.emptyList(), 0, version);
     }
 }

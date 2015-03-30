@@ -17,6 +17,7 @@
  */
 package org.apache.cassandra.db.marshal;
 
+import java.nio.BufferUnderflowException;
 import java.nio.ByteBuffer;
 import java.util.*;
 
@@ -188,12 +189,6 @@ public class MapType<K, V> extends CollectionType<Map<K, V>>
         return serializer;
     }
 
-    @Override
-    protected int collectionSize(List<ByteBuffer> values)
-    {
-        return values.size() / 2;
-    }
-
     public String toString(boolean ignoreFreezing)
     {
         boolean includeFrozenType = !ignoreFreezing && !isMultiCell();
@@ -205,19 +200,6 @@ public class MapType<K, V> extends CollectionType<Map<K, V>>
         if (includeFrozenType)
             sb.append(")");
         return sb.toString();
-    }
-
-    public List<ByteBuffer> serializedValues(Iterator<Cell> cells)
-    {
-        assert isMultiCell;
-        List<ByteBuffer> bbs = new ArrayList<ByteBuffer>();
-        while (cells.hasNext())
-        {
-            Cell c = cells.next();
-            bbs.add(c.path().get(0));
-            bbs.add(c.value());
-        }
-        return bbs;
     }
 
     @Override
@@ -266,5 +248,95 @@ public class MapType<K, V> extends CollectionType<Map<K, V>>
             sb.append(values.toJSONString(CollectionSerializer.readValue(buffer, protocolVersion), protocolVersion));
         }
         return sb.append("}").toString();
+    }
+
+    public ByteBuffer serializeForNativeProtocol(Iterator<Cell> cells, int version, boolean slice, ByteBuffer from, ByteBuffer to)
+    {
+        List<ByteBuffer> bbs = null;
+        while (cells.hasNext())
+        {
+            Cell c = cells.next();
+            ByteBuffer key = c.path().get(0);
+
+            if (slice)
+            {
+                if (from != null && getKeysType().compareForCQL(from, key) > 0)
+                    continue;
+                if (to != null && getKeysType().compareForCQL(to, key) < 0)
+                    continue;
+            }
+            else
+            {
+                if (from != null && !from.equals(key))
+                    continue;
+            }
+
+            if (!slice)
+                return c.value();
+
+            if (bbs == null)
+                bbs = new ArrayList<>();
+            bbs.add(key);
+            bbs.add(c.value());
+        }
+
+        return slice ? pack(version, bbs) : null;
+    }
+
+    public ByteBuffer reserializeForNativeProtocol(ByteBuffer bytes, int version, boolean slice, ByteBuffer from, ByteBuffer to)
+    {
+        try
+        {
+            List<ByteBuffer> buffers = null;
+
+            if (!slice)
+                to = from;
+
+            ByteBuffer input = bytes.duplicate();
+            int n = CollectionSerializer.readCollectionSize(input, version);
+            for (int i = 0; i < n; i++)
+            {
+                ByteBuffer kbb = CollectionSerializer.readValue(input, version);
+                keys.validate(kbb);
+
+                int fromCmp = from != null ? getKeysType().compareForCQL(kbb, from) : 1;
+
+                int toCmp = to != null ? getKeysType().compareForCQL(kbb, to) : -1;
+
+                if (toCmp > 0)
+                    break;
+
+                if (fromCmp >= 0 && toCmp <= 0)
+                {
+                    ByteBuffer vbb = CollectionSerializer.readValue(input, version);
+                    values.validate(vbb);
+
+                    if (!slice)
+                        return vbb;
+
+                    if (buffers == null)
+                        buffers = new ArrayList<>();
+                    buffers.add(kbb);
+                    buffers.add(vbb);
+                }
+                else
+                {
+                    CollectionSerializer.skipValue(input, version);
+                }
+            }
+
+            return slice ? pack(version, buffers) : null;
+        }
+        catch (BufferUnderflowException e)
+        {
+            throw new MarshalException("Not enough bytes to read a map");
+        }
+    }
+
+    private static ByteBuffer pack(int version, List<ByteBuffer> buffers)
+    {
+        return buffers != null
+               ? CollectionSerializer.pack(buffers, buffers.size() / 2, version)
+               : CollectionSerializer.pack(Collections.emptyList(), 0, version);
     }
 }

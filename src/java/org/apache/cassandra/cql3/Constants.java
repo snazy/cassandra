@@ -67,6 +67,12 @@ public abstract class Constants
         {
             return "NULL";
         }
+
+        @Override
+        public boolean isConstant()
+        {
+            return true;
+        }
     }
 
     public static final NullLiteral NULL_LITERAL = new NullLiteral();
@@ -245,6 +251,12 @@ public abstract class Constants
         public String getText()
         {
             return type == Type.STRING ? String.format("'%s'", text) : text;
+        }
+
+        @Override
+        public boolean isConstant()
+        {
+            return true;
         }
     }
 

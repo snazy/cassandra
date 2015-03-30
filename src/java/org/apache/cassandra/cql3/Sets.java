@@ -26,6 +26,7 @@ import java.util.stream.Collectors;
 import org.apache.cassandra.config.ColumnDefinition;
 import org.apache.cassandra.cql3.functions.Function;
 import org.apache.cassandra.db.DecoratedKey;
+import org.apache.cassandra.db.Slice;
 import org.apache.cassandra.db.rows.*;
 import org.apache.cassandra.db.marshal.*;
 import org.apache.cassandra.exceptions.InvalidRequestException;
@@ -125,6 +126,15 @@ public abstract class Sets
         public String getText()
         {
             return elements.stream().map(Term.Raw::getText).collect(Collectors.joining(", ", "{", "}"));
+        }
+
+        @Override
+        public boolean isConstant()
+        {
+            for (Term.Raw element : elements)
+                if (!element.isConstant())
+                    return false;
+            return true;
         }
     }
 

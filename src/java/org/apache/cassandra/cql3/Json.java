@@ -184,6 +184,13 @@ public class Json
         {
             return term.toString();
         }
+
+        @Override
+        public boolean isConstant()
+        {
+            // could be improved by checking whether 'term' is a constant
+            return false;
+        }
     }
 
     /**
@@ -215,6 +222,12 @@ public class Json
         public String getText()
         {
             return marker.toString();
+        }
+
+        @Override
+        public boolean isConstant()
+        {
+            return false;
         }
     }
 
