@@ -101,9 +101,9 @@ public class TraceCompleteTest extends CQLTester
                 clientA.execute(new RegisterMessage(Collections.singletonList(Event.Type.TRACE_COMPLETE)));
                 Assert.fail();
             }
-            catch (ProtocolException e)
+            catch (RuntimeException e)
             {
-                // that's what we want
+                Assert.assertTrue(e.getCause() instanceof ProtocolException); // that's what we want
             }
 
             createTable("CREATE TABLE %s (pk int PRIMARY KEY, v text)");

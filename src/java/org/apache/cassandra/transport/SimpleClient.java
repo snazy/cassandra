@@ -214,7 +214,7 @@ public class SimpleClient
             lastWriteFuture = channel.writeAndFlush(request);
             Message.Response msg = responseHandler.responses.take();
             if (msg instanceof ErrorMessage)
-                throw (RuntimeException)((ErrorMessage)msg).error;
+                throw new RuntimeException((Throwable)((ErrorMessage)msg).error);
             return msg;
         }
         catch (InterruptedException e)

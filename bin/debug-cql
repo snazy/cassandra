@@ -44,10 +44,9 @@ if [ -z "$CASSANDRA_CONF" -o -z "$CLASSPATH" ]; then
     exit 1
 fi
 
-# requires some more handling (JMX port and some more server related settings in cassandra-env.sh)
-#if [ -f "$CASSANDRA_CONF/cassandra-env.sh" ]; then
-#    . "$CASSANDRA_CONF/cassandra-env.sh"
-#fi
+if [ -f "$CASSANDRA_CONF/cassandra-env.sh" ]; then
+    . "$CASSANDRA_CONF/cassandra-env.sh"
+fi
 
 # Special-case path variables.
 case "`uname`" in
