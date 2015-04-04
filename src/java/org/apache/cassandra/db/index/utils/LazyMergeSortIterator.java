@@ -13,7 +13,7 @@ import org.apache.cassandra.utils.Pair;
  */
 public class LazyMergeSortIterator<K extends Comparable<K>, T extends CombinedValue<K>> implements SkippableIterator<K, T>
 {
-    public static enum OperationType
+    public enum OperationType
     {
         AND, OR;
 
@@ -33,12 +33,14 @@ public class LazyMergeSortIterator<K extends Comparable<K>, T extends CombinedVa
         }
     }
 
-    private OperationType opType;
-    private List<SkippableIterator<K, T>> iterators;
+    private final OperationType opType;
+    private final List<SkippableIterator<K, T>> iterators;
+    private final K min;
+    private final long count;
 
     // buffer of elements already taken from an iterator
     // that maybe used in the next iteration
-    private List<T> currentPerIterator;
+    private final List<T> currentPerIterator;
     private T next = null;
     private T lookahead = null;
     private T nextLookahead = null;
@@ -48,11 +50,34 @@ public class LazyMergeSortIterator<K extends Comparable<K>, T extends CombinedVa
     {
         this.opType = opType;
         this.iterators = iterators;
+
+        K minToken = null;
+        long tokenCount = 0;
         this.currentPerIterator = new ArrayList<>(iterators.size());
         {
-            for (int i = 0; i < iterators.size(); i++)
+            for (SkippableIterator<K, T> iter : iterators)
+            {
                 currentPerIterator.add(null);
+
+                tokenCount += iter.getCount();
+
+                K currentMin = iter.getMinimum();
+                if (currentMin == null)
+                    continue;
+
+                if (minToken == null || minToken.compareTo(currentMin) > 0)
+                    minToken = currentMin;
+            }
         }
+
+        this.min = minToken;
+        this.count = tokenCount;
+    }
+
+    @Override
+    public K getMinimum()
+    {
+        return min;
     }
 
     @Override
@@ -219,6 +244,24 @@ public class LazyMergeSortIterator<K extends Comparable<K>, T extends CombinedVa
     {
         for (SkippableIterator<K, T> itr : iterators)
             itr.skipTo(next);
+    }
+
+    @Override
+    public boolean intersect(T element)
+    {
+        for (SkippableIterator<K, T> itr : iterators)
+        {
+            if (itr.intersect(element))
+                return true;
+        }
+
+        return false;
+    }
+
+    @Override
+    public long getCount()
+    {
+        return count;
     }
 
     private Element findNextElement()

@@ -5,15 +5,11 @@ import java.util.*;
 import org.apache.cassandra.db.*;
 import org.apache.cassandra.db.filter.ExtendedFilter;
 import org.apache.cassandra.db.index.SuffixArraySecondaryIndex;
-import org.apache.cassandra.db.index.search.container.TokenTree;
 import org.apache.cassandra.db.index.utils.LazyMergeSortIterator.OperationType;
-import org.apache.cassandra.db.index.utils.SkippableIterator;
 import org.apache.cassandra.db.marshal.AbstractType;
 import org.apache.cassandra.dht.AbstractBounds;
 import org.apache.cassandra.dht.LongToken;
 import org.apache.cassandra.thrift.IndexExpression;
-
-import com.google.common.collect.Lists;
 
 public class QueryPlan
 {
@@ -25,15 +21,13 @@ public class QueryPlan
     private final SuffixArraySecondaryIndex backend;
     private final ExtendedFilter filter;
 
-    private final Operation expressions;
-    private final SkippableIterator<Long, TokenTree.Token> joiner;
+    private final Operation operationTree;
 
     public QueryPlan(SuffixArraySecondaryIndex backend, ExtendedFilter filter)
     {
         this.backend = backend;
         this.filter = filter;
-        this.expressions = analyze();
-        this.joiner = expressions.complete(backend);
+        this.operationTree = analyze();
     }
 
     /**
@@ -69,7 +63,27 @@ public class QueryPlan
                         sideR = operations.pop();
 
                         Operation operation = new Operation(op, comparator);
-                        operation.setLeft(sideL).setRight(sideR);
+
+                        /**
+                         * If both underlying operations are the same we can improve performance
+                         * and decrease work set size by combining operations under one AND/OR
+                         * instead of making a tree, example:
+                         *
+                         *         AND                                 AND
+                         *       /     \                            /   |   \
+                         *     AND     AND              =>      name  age   height
+                         *    /   \       \
+                         * name:p  age:20  height:180
+                         */
+                        if (sideL.op == sideR.op)
+                        {
+                            operation.add(sideL.expressions);
+                            operation.add(sideR.expressions);
+                        }
+                        else
+                        {
+                            operation.setLeft(sideL).setRight(sideR);
+                        }
 
                         operations.push(operation);
                         break;
@@ -134,7 +148,10 @@ public class QueryPlan
             operations.push(operation);
         }
 
-        return operations.pop();
+        Operation root = operations.pop();
+        root.complete(backend);
+
+        return root;
     }
 
     public List<Row> execute()
@@ -142,32 +159,25 @@ public class QueryPlan
         AbstractBounds<RowPosition> range = filter.dataRange.keyRange();
 
         final int maxRows = Math.min(filter.maxColumns(), Math.min(MAX_ROWS, filter.maxRows()));
-        final Set<Row> rows = new TreeSet<>(new Comparator<Row>()
-        {
-            @Override
-            public int compare(Row a, Row b)
-            {
-                return a.key.compareTo(b.key);
-            }
-        });
+        final List<Row> rows = new ArrayList<>(maxRows);
 
-        joiner.skipTo(((LongToken) range.left.getToken()).token);
+        operationTree.skipTo(((LongToken) range.left.getToken()).token);
 
         intersection:
-        while (joiner.hasNext())
+        while (operationTree.hasNext())
         {
-            for (DecoratedKey key : joiner.next())
+            for (DecoratedKey key : operationTree.next())
             {
                 if (!range.contains(key) || rows.size() >= maxRows)
                     break intersection;
 
                 Row row = getRow(key, filter);
-                if (row != null && expressions.satisfiedBy(row))
+                if (row != null && operationTree.satisfiedBy(row))
                     rows.add(row);
             }
         }
 
-        return Lists.newArrayList(rows);
+        return rows;
     }
 
     private Row getRow(DecoratedKey key, ExtendedFilter filter)

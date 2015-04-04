@@ -1,5 +1,6 @@
 package org.apache.cassandra.db.index.search.plan;
 
+import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.*;
 
@@ -15,22 +16,23 @@ import org.apache.cassandra.db.index.search.analyzer.NoOpAnalyzer;
 import org.apache.cassandra.db.index.search.container.TokenTree.Token;
 import org.apache.cassandra.db.index.search.memory.IndexMemtable;
 import org.apache.cassandra.db.index.search.analyzer.AbstractAnalyzer;
+import org.apache.cassandra.db.index.utils.CombinedValue;
 import org.apache.cassandra.db.index.utils.LazyMergeSortIterator;
 import org.apache.cassandra.db.index.utils.LazyMergeSortIterator.OperationType;
 import org.apache.cassandra.db.index.utils.SkippableIterator;
 import org.apache.cassandra.db.marshal.AbstractType;
+import org.apache.cassandra.io.util.FileUtils;
 import org.apache.cassandra.thrift.IndexExpression;
 import org.apache.cassandra.utils.Pair;
 
 import com.google.common.annotations.VisibleForTesting;
-import com.google.common.collect.HashMultimap;
-import com.google.common.collect.Iterators;
-import com.google.common.collect.Multimap;
+import com.google.common.collect.*;
+import com.google.common.primitives.Longs;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-public class Operation
+public class Operation extends AbstractIterator<Token> implements SkippableIterator<Long, Token>
 {
     private static final Logger logger = LoggerFactory.getLogger(Operation.class);
 
@@ -39,6 +41,9 @@ public class Operation
     protected final List<IndexExpression> expressions;
 
     protected List<Expression> analyzed;
+    protected List<SkippableIterator<Long, Token>> indexes;
+    protected Long rangeStart;
+    protected long tokenCount;
 
     protected Operation left, right;
 
@@ -65,6 +70,12 @@ public class Operation
     public void add(IndexExpression e)
     {
         expressions.add(e);
+    }
+
+    public void add(Collection<IndexExpression> newExpressions)
+    {
+        if (expressions != null)
+            expressions.addAll(newExpressions);
     }
 
     /**
@@ -207,28 +218,39 @@ public class Operation
         return result;
     }
 
-    public SkippableIterator<Long, Token> complete(SuffixArraySecondaryIndex backend)
+    public void complete(SuffixArraySecondaryIndex backend)
     {
-        List<SkippableIterator<Long, Token>> iterators = new ArrayList<>(2);
-
         if (!expressions.isEmpty())
         {
             analyzed = analyzeGroup(backend, comparator, op, expressions);
+            indexes = getIndexes(backend, analyzed);
 
-            iterators.add(getMergeIterator(backend, op, analyzed));
             if (right != null)
-                iterators.add(right.complete(backend));
+            {
+                right.complete(backend);
+
+                List<SkippableIterator<Long, Token>> local = Lists.newArrayList(indexes);
+                local.add(right);
+
+                indexes = op == OperationType.OR
+                            ? Collections.<SkippableIterator<Long, Token>>singletonList(new LazyMergeSortIterator<>(op, local))
+                            : local;
+
+                tokenCount += right.getCount();
+            }
         }
         else
         {
             if (left != null)
-                iterators.add(left.complete(backend));
+                left.complete(backend);
 
             if (right != null)
-                iterators.add(right.complete(backend));
-        }
+                right.complete(backend);
 
-        return new LazyMergeSortIterator<>(op, iterators);
+            SkippableIterator<Long, Token> join = new OperationJoin(op, left, right);
+            tokenCount = join.getCount();
+            indexes = Collections.singletonList(join);
+        }
     }
 
     @VisibleForTesting
@@ -331,14 +353,18 @@ public class Operation
     }
 
     /**
-     * Get merge iterator for given set of the pre-analyzed expressions.
+     * Get an iterator per expression for current Operation in a form of list and order
+     * a list according to total element count in every iterator.
      *
-     * @param op The operation to join expressions on.
-     * @param expressions The expression group to join.
+     * Sorting is done because for AND operation we are going to do merge join with "hash"-like
+     * lookup (using {@link SkippableIterator#intersect(CombinedValue)} into the iterators,
+     * so we want to have expression with the smallest number of tokens to be in the outer-loop.
      *
-     * @return The joined iterator over data collected from given expressions.
+     * @param expressions The expression to get iterators for.
+     *
+     * @return A collection of iterators, one per expression, sorted based on token count.
      */
-    private SkippableIterator<Long, Token> getMergeIterator(SuffixArraySecondaryIndex backend, OperationType op, List<Expression> expressions)
+    private List<SkippableIterator<Long, Token>> getIndexes(SuffixArraySecondaryIndex backend, List<Expression> expressions)
     {
         Expression primaryExpression;
         Set<SSTableIndex> primaryIndexes;
@@ -368,9 +394,15 @@ public class Operation
 
             if (primaryExpression != null && primaryExpression.equals(e))
             {
-                unions.add(new SuffixIterator(primaryExpression,
-                                              currentMemtable.search(primaryExpression),
-                                              primaryIndexes));
+                SkippableIterator<Long, Token> primaryIndex = new SuffixIterator(primaryExpression,
+                                                                                 currentMemtable.search(primaryExpression),
+                                                                                 primaryIndexes);
+                unions.add(primaryIndex);
+                tokenCount += primaryIndex.getCount();
+
+                if (rangeStart == null || rangeStart.compareTo(primaryIndex.getMinimum()) < 0)
+                    rangeStart = primaryIndex.getMinimum();
+
                 continue;
             }
 
@@ -387,10 +419,34 @@ public class Operation
                 readers.addAll(view.match(e));
             }
 
-            unions.add(new SuffixIterator(e, currentMemtable.search(e), readers));
+            SkippableIterator<Long, Token> index = new SuffixIterator(e, currentMemtable.search(e), readers);
+
+            unions.add(index);
+            tokenCount += index.getCount();
+
+            Long currentMin = index.getMinimum();
+            if (currentMin == null)
+                continue;
+
+            if (rangeStart == null || rangeStart.compareTo(index.getMinimum()) < 0)
+                rangeStart = index.getMinimum();
         }
 
-        return new LazyMergeSortIterator<>(op, unions);
+        // OR case doesn't require merging between expressions,
+        // so we can simply return a single OR iterator.
+        if (op == OperationType.OR)
+            return Collections.<SkippableIterator<Long, Token>>singletonList(new LazyMergeSortIterator<>(op, unions));
+
+        Collections.sort(unions, new Comparator<SkippableIterator<Long, Token>>()
+        {
+            @Override
+            public int compare(SkippableIterator<Long, Token> a, SkippableIterator<Long, Token> b)
+            {
+                return Longs.compare(a.getCount(), b.getCount());
+            }
+        });
+
+        return unions;
     }
 
     private static AbstractAnalyzer getAnalyzer(Pair<ColumnDefinition, IndexMode> column)
@@ -402,5 +458,230 @@ public class Operation
         analyzer.init(column.left.getIndexOptions(), column.left.getValidator());
 
         return analyzer;
+    }
+
+    @Override
+    public Long getMinimum()
+    {
+        return indexes.get(0).getMinimum();
+    }
+
+    @Override
+    protected Token computeNext()
+    {
+        if (indexes == null)
+            throw new AssertionError();
+
+        switch (indexes.size())
+        {
+            case 0:
+                throw new AssertionError();
+
+            case 1:
+            {
+                SkippableIterator<Long, Token> iter = indexes.get(0);
+                return iter.hasNext() ? iter.next() : endOfData();
+            }
+
+            default:
+            {
+                // OR should *always* be a single iterator
+                assert op != OperationType.OR;
+
+                SkippableIterator<Long, Token> primary = indexes.get(0);
+
+                while (primary.hasNext())
+                {
+                    Token currentToken = primary.next();
+
+                    boolean intersectsAll = true;
+                    for (int i = 1; i < indexes.size(); i++)
+                    {
+                        SkippableIterator<Long, Token> current = indexes.get(i);
+                        if (!current.intersect(currentToken))
+                        {
+                            intersectsAll = false;
+                            break;
+                        }
+                    }
+
+                    if (intersectsAll)
+                        return currentToken;
+                }
+            }
+        }
+
+        return endOfData();
+    }
+
+    @Override
+    public void skipTo(Long next)
+    {
+        if (indexes == null || indexes.size() == 0)
+            return;
+
+        SkippableIterator<Long, Token> primary = indexes.get(0);
+        if (op == OperationType.OR)
+        {
+            primary.skipTo(next);
+            return;
+        }
+
+        Long startToken = (rangeStart == null || next.compareTo(rangeStart) > 0) ? next : rangeStart;
+
+        // (AND operation only) let's see if we can skip over to the maximum of the minimum tokens,
+        // that's usual in the situation when primary starts too far up from secondaries
+        // e.g. primary tokens [2, 5, 6, 7, 9, 22, 100, 101, ...] and secondary is [89, 90, 100, 101, ...]
+        // knowing that min for primary would be 2 and min from secondary would be 89 we can skip
+        // directory to 89 in primary to avoid iterating over [2, 5, 6, ...] tokens which wouldn't produce anything.
+        Long primaryMin = primary.getMinimum();
+        if (primaryMin != null && primaryMin.compareTo(startToken) < 0)
+            primary.skipTo(startToken);
+    }
+
+    @Override
+    public boolean intersect(Token token)
+    {
+        for (SkippableIterator<Long, Token> index : indexes)
+        {
+            if (index.intersect(token))
+                return true;
+        }
+
+        return false;
+    }
+
+    @Override
+    public long getCount()
+    {
+        return tokenCount;
+    }
+
+    @Override
+    public void close() throws IOException
+    {}
+
+    private static class OperationJoin extends AbstractIterator<Token> implements SkippableIterator<Long, Token>
+    {
+        private final SkippableIterator<Long, Token> iterator;
+
+        public OperationJoin(OperationType op, Operation sideL, Operation sideR)
+        {
+            switch (op)
+            {
+                case OR:
+                    iterator = new LazyMergeSortIterator<>(OperationType.OR, Arrays.<SkippableIterator<Long, Token>>asList(sideL, sideR));
+                    break;
+
+                case AND:
+                    iterator = new AndIterator(sideL, sideR);
+                    break;
+
+                default:
+                    throw new AssertionError();
+            }
+        }
+
+        @Override
+        public Long getMinimum()
+        {
+            return iterator.getMinimum();
+        }
+
+        @Override
+        protected Token computeNext()
+        {
+            return iterator.hasNext() ? iterator.next() : endOfData();
+        }
+
+        @Override
+        public void skipTo(Long next)
+        {
+            iterator.skipTo(next);
+        }
+
+        @Override
+        public boolean intersect(Token token)
+        {
+            return iterator.intersect(token);
+        }
+
+        @Override
+        public long getCount()
+        {
+            return iterator.getCount();
+        }
+
+
+        @Override
+        public void close() throws IOException
+        {
+            FileUtils.closeQuietly(iterator);
+        }
+    }
+
+    private static class AndIterator extends AbstractIterator<Token> implements SkippableIterator<Long, Token>
+    {
+        private final Operation a, b;
+        private final Long minA, minB;
+
+        public AndIterator(Operation sideL, Operation sideR)
+        {
+            // arrange a and b in such a way query that iterator would get the smaller term outside
+            a = sideL.getCount() > sideR.getCount() ? sideR : sideL;
+            b = a == sideL ? sideR : sideL;
+
+            minA = a.getMinimum();
+            minB = b.getMinimum();
+
+            if (minA != null && minB != null && minA.compareTo(minB) < 0)
+                a.skipTo(minB);
+        }
+
+        @Override
+        public Long getMinimum()
+        {
+            if (minA == null)
+                return minB;
+            else if (minB == null)
+                return minA;
+
+            return Math.min(minA, minB);
+        }
+
+        @Override
+        protected Token computeNext()
+        {
+            while (a.hasNext())
+            {
+                Token current = a.next();
+                if (b.intersect(current))
+                    return current;
+            }
+
+            return endOfData();
+        }
+
+        @Override
+        public void skipTo(Long next)
+        {
+            a.skipTo(next);
+        }
+
+        @Override
+        public boolean intersect(Token token)
+        {
+            return a.intersect(token) && b.intersect(token);
+        }
+
+        @Override
+        public long getCount()
+        {
+            return a.getCount() + b.getCount();
+        }
+
+        @Override
+        public void close() throws IOException
+        {}
     }
 }

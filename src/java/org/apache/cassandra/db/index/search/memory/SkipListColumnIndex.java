@@ -71,7 +71,7 @@ public class SkipListColumnIndex extends ColumnIndex
         }
 
         for (Map.Entry<ByteBuffer, ConcurrentSkipListSet<DecoratedKey>> keys : search.entrySet())
-            union.add(new KeySkippableIterator(keys.getValue().iterator()));
+            union.add(new KeySkippableIterator(keys.getValue()));
 
         return new LazyMergeSortIterator<>(LazyMergeSortIterator.OperationType.OR, union);
     }

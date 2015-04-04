@@ -242,7 +242,7 @@ public class TokenTreeTest
         final TokenTree tokenTree = new TokenTree(new NativeMappedBuffer(reader.getFD(), 0, reader.length()));
 
         final SkippableIterator<Long, Token> treeIterator = tokenTree.iterator(KEY_CONVERTER);
-        final SkippableIterator<Long, TokenWithOffsets> listIterator = new EntrySetSkippableIterator(tokens.entrySet().iterator());
+        final SkippableIterator<Long, TokenWithOffsets> listIterator = new EntrySetSkippableIterator(tokens);
 
         long lastToken = 0L;
         while (treeIterator.hasNext() && lastToken < 12)
@@ -295,11 +295,19 @@ public class TokenTreeTest
     private static class EntrySetSkippableIterator extends AbstractIterator<TokenWithOffsets>
             implements SkippableIterator<Long, TokenWithOffsets>
     {
+        private final SortedMap<Long, LongSet> tokens;
         private final Iterator<Map.Entry<Long, LongSet>> elements;
 
-        EntrySetSkippableIterator(Iterator<Map.Entry<Long, LongSet>> elms)
+        EntrySetSkippableIterator(SortedMap<Long, LongSet> elms)
         {
-            elements = elms;
+            tokens = elms;
+            elements = elms.entrySet().iterator();
+        }
+
+        @Override
+        public Long getMinimum()
+        {
+            return tokens.isEmpty() ? null : tokens.firstKey();
         }
 
         @Override
@@ -323,6 +331,23 @@ public class TokenTreeTest
                 next();
             }
 
+        }
+
+        @Override
+        public boolean intersect(TokenWithOffsets token)
+        {
+            LongSet existing = tokens.get(token.get());
+            if (existing == null)
+                return false;
+
+            token.merge(new TokenWithOffsets(token.get(), existing));
+            return true;
+        }
+
+        @Override
+        public long getCount()
+        {
+            return tokens.size();
         }
 
         @Override
