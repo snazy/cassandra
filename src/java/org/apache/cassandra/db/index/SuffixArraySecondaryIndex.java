@@ -779,7 +779,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex
                         ? new QueryPlan(SuffixArraySecondaryIndex.this, filter).execute()
                         : Collections.<Row>emptyList();
             }
-            catch(Exception e)
+            catch (Exception e)
             {
                 logger.info("error occurred while searching suffix array indexes; ignoring", e);
                 return Collections.emptyList();

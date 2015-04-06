@@ -15,8 +15,6 @@ public class StandardTokenizerOptions
     public static final String TOKENIZATION_NORMALIZE_LOWERCASE = "tokenization_normalize_lowercase";
     public static final String TOKENIZATION_NORMALIZE_UPPERCASE = "tokenization_normalize_uppercase";
 
-    public static final StandardTokenizerOptions DEFAULT = defaultOptions();
-
     public static final int DEFAULT_MAX_TOKEN_LENGTH = 255;
     public static final int DEFAULT_MIN_TOKEN_LENGTH = 0;
 
@@ -248,7 +246,7 @@ public class StandardTokenizerOptions
         return optionsBuilder.build();
     }
 
-    private static StandardTokenizerOptions defaultOptions()
+    public static StandardTokenizerOptions getDefaultOptions()
     {
         return new OptionsBuilder()
                 .ignoreStopTerms(true).alwaysLowerCaseTerms(true)

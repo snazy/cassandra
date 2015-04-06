@@ -8,8 +8,6 @@ public class NonTokenizingOptions
     public static final String NORMALIZE_UPPERCASE = "normalize_uppercase";
     public static final String CASE_SENSITIVE = "case_sensitive";
 
-    public static final NonTokenizingOptions DEFAULT = defaultOptions();
-
     private boolean caseSensitive;
     private boolean upperCaseOutput;
     private boolean lowerCaseOutput;
@@ -125,7 +123,7 @@ public class NonTokenizingOptions
         return optionsBuilder.build();
     }
 
-    private static NonTokenizingOptions defaultOptions()
+    public static NonTokenizingOptions getDefaultOptions()
     {
         return new OptionsBuilder()
                 .caseSensitive(true).lowerCaseOutput(false)

@@ -34,6 +34,12 @@ public class OnDiskSAIterator extends AbstractIterator<CombinedTerm> implements 
     }
 
     @Override
+    public DataSuffix getMinimum()
+    {
+        return null;
+    }
+
+    @Override
     protected CombinedTerm computeNext()
     {
         return terms.hasNext() ? new CombinedTerm(comparator, terms.next()) : endOfData();
@@ -43,6 +49,18 @@ public class OnDiskSAIterator extends AbstractIterator<CombinedTerm> implements 
     public void skipTo(DataSuffix next)
     {
         throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public boolean intersect(CombinedTerm term)
+    {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public long getCount()
+    {
+        return Integer.MAX_VALUE;
     }
 
     @Override

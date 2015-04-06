@@ -59,6 +59,11 @@ public class TokenTree
         treeMaxToken = file.getLong();
     }
 
+    public long getCount()
+    {
+        return tokenCount;
+    }
+
     public SkippableIterator<Long, Token> iterator(Function<Long, DecoratedKey> keyFetcher)
     {
         return new TokenTreeIterator(file.duplicate(), keyFetcher);
@@ -74,11 +79,30 @@ public class TokenTree
         short tokenIndex = searchLeaf(searchToken, leafSize);
 
         file.position(leafStart + TokenTreeBuilder.BLOCK_HEADER_BYTES);
-        Token tok = Token.getTokenAt(tokenIndex, leafSize, file, kf);
-        if (tok.get().compareTo(searchToken) == 0)
-            return tok;
-        else
+        long position = Token.getEntryPosition(tokenIndex, file);
+
+        long token = file.getLong(position + (2 * SHORT_BYTES));
+
+        if (token != searchToken)
             return null;
+
+        short info = file.getShort(position);
+        short offsetShort = file.getShort(position + SHORT_BYTES);
+        long[] offsets = Token.reconstructOffset(info, offsetShort, file.getInt(position + (2 * SHORT_BYTES) + LONG_BYTES), file, leafSize);
+
+        return new Token(token, Pair.create(kf, offsets));
+    }
+
+    public boolean intersect(final Token candidate, Function<Long, DecoratedKey> keyFetcher)
+    {
+        final long candidateToken = candidate.get();
+
+        Token token = get(candidateToken, keyFetcher);
+        if (token == null)
+            return false;
+
+        candidate.merge(token);
+        return true;
     }
 
     private boolean validateMagic()
@@ -215,6 +239,12 @@ public class TokenTree
         }
 
         @Override
+        public Long getMinimum()
+        {
+            return TokenTree.this.treeMinToken;
+        }
+
+        @Override
         public boolean hasNext()
         {
             return (!lastLeaf || currentTokenIndex < leafSize);
@@ -258,6 +288,18 @@ public class TokenTree
         public void skipTo(Long token)
         {
             skipToToken = token;
+        }
+
+        @Override
+        public boolean intersect(Token token)
+        {
+            return TokenTree.this.intersect(token, keyFetcher);
+        }
+
+        @Override
+        public long getCount()
+        {
+            return tokenCount;
         }
 
         public void performSkipTo(Long token)
