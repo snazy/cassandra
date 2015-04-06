@@ -185,7 +185,7 @@ JUNK ::= /([ \t\r\f\v]+|(--|[/][/])[^\n\r]*([\n\r]|$)|[/][*].*?[*][/])/ ;
 <star> ::=          "*" ;
 <endtoken> ::=      ";" ;
 <op> ::=            /[-+=,().]/ ;
-<cmp> ::=           /[<>]=?/ ;
+<cmp> ::=           /([<>]=?|!=)/ ;
 <brackets> ::=      /[][{}]/ ;
 
 <integer> ::= "-"? <wholenumber> ;
@@ -579,7 +579,7 @@ syntax_rules += r'''
                     ;
 <whereClause> ::= <relation> ( "AND" <relation> )*
                 ;
-<relation> ::= [rel_lhs]=<cident> ( "=" | "<" | ">" | "<=" | ">=" ) <term>
+<relation> ::= [rel_lhs]=<cident> ( "=" | "<" | ">" | "<=" | ">=" | "!=") <term>
              | token="TOKEN" "(" [rel_tokname]=<cident>
                                  ( "," [rel_tokname]=<cident> )*
                              ")" ("=" | "<" | ">" | "<=" | ">=") <tokenDefinition>

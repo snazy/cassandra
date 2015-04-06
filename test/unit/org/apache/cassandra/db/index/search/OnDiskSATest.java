@@ -752,6 +752,9 @@ public class OnDiskSATest
 
     private static Set<DecoratedKey> convert(SkippableIterator<Long, TokenTree.Token> results)
     {
+        if (results == null)
+            return Collections.emptySet();
+
         Set<DecoratedKey> keys = new TreeSet<>(DecoratedKey.comparator);
 
         while (results.hasNext())

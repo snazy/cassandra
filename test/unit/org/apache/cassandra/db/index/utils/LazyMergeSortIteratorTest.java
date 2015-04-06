@@ -72,7 +72,7 @@ public class LazyMergeSortIteratorTest
     {
         List<LongValue> input = convert(1L, 2L, 4L, 9L);
         SkippableIterator<Long, LongValue> it = new TestSkippableIterator<>(input);
-        List<SkippableIterator<Long, LongValue>> iterators = Arrays.asList(it);
+        List<SkippableIterator<Long, LongValue>> iterators = Collections.singletonList(it);
 
         List<LongValue> actual = new ArrayList<>();
         SkippableIterator<Long, LongValue> itRes = new LazyMergeSortIterator<>(OperationType.AND, iterators);
@@ -85,8 +85,8 @@ public class LazyMergeSortIteratorTest
     @Test
     public void orWithTwoIteratorsWithSingleValues()
     {
-        SkippableIterator<Long, LongValue> i1 = new TestSkippableIterator(convert(1L));
-        SkippableIterator<Long, LongValue> i2 = new TestSkippableIterator(convert(1L));
+        SkippableIterator<Long, LongValue> i1 = new TestSkippableIterator<>(convert(1L));
+        SkippableIterator<Long, LongValue> i2 = new TestSkippableIterator<>(convert(1L));
         List<SkippableIterator<Long, LongValue>> union = Arrays.asList(i1, i2);
 
         List<LongValue> found = new ArrayList<>();
@@ -525,17 +525,25 @@ public class LazyMergeSortIteratorTest
     public class TestSkippableIterator<K extends Comparable<K>, T extends CombinedValue<K>> extends AbstractIterator<T>
             implements SkippableIterator<K, T>
     {
-        private Iterator<T> elms;
+        private final List<T> elements;
+        private final Iterator<T> elmsIterator;
 
         public TestSkippableIterator(List<T> elms)
         {
-            this.elms = elms.iterator();
+            this.elements = elms;
+            this.elmsIterator = elms.iterator();
+        }
+
+        @Override
+        public K getMinimum()
+        {
+            return elements.isEmpty() ? null : elements.get(0).get();
         }
 
         @Override
         public T computeNext()
         {
-            return elms.hasNext() ? elms.next() : endOfData();
+            return elmsIterator.hasNext() ? elmsIterator.next() : endOfData();
         }
 
         @Override
@@ -548,6 +556,27 @@ public class LazyMergeSortIteratorTest
 
                 next();
             }
+        }
+
+        @Override
+        public boolean intersect(T element)
+        {
+            for (T existing : elements)
+            {
+                if (existing.get().equals(element.get()))
+                {
+                    element.merge(existing);
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        @Override
+        public long getCount()
+        {
+            return elements.size();
         }
 
         @Override

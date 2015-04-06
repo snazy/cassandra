@@ -4,6 +4,7 @@ import java.io.IOException;
 import java.util.Iterator;
 import java.util.SortedSet;
 import java.util.TreeSet;
+import java.util.concurrent.ConcurrentSkipListSet;
 
 import org.apache.cassandra.db.DecoratedKey;
 import org.apache.cassandra.db.index.search.container.TokenTree.Token;
@@ -15,31 +16,59 @@ import com.google.common.collect.PeekingIterator;
 
 public class KeySkippableIterator extends AbstractIterator<Token> implements SkippableIterator<Long, Token>
 {
-    private final DKIterator keys;
+    private final DKIterator iterator;
+    private final ConcurrentSkipListSet<DecoratedKey> keys;
 
-    public KeySkippableIterator(Iterator<DecoratedKey> keys)
+    public KeySkippableIterator(ConcurrentSkipListSet<DecoratedKey> keys)
     {
-        this.keys = new DKIterator(keys);
+        this.keys = keys;
+        this.iterator = new DKIterator(keys.iterator());
+    }
+
+    @Override
+    public Long getMinimum()
+    {
+        return keys.isEmpty() ? null : (Long) keys.first().getToken().token;
     }
 
     @Override
     protected Token computeNext()
     {
-        return keys.hasNext() ? new DKToken(keys.next()) : endOfData();
+        return iterator.hasNext() ? new DKToken(iterator.next()) : endOfData();
     }
 
     @Override
     public void skipTo(Long next)
     {
-        while (keys.hasNext())
+        while (iterator.hasNext())
         {
-            DecoratedKey key = keys.peek();
+            DecoratedKey key = iterator.peek();
             if (Long.compare((long) key.token.token, next) >= 0)
                 break;
 
             // consume smaller key
-            keys.next();
+            iterator.next();
         }
+    }
+
+    @Override
+    public boolean intersect(Token token)
+    {
+        final long searchToken = token.get();
+
+        for (DecoratedKey key : keys)
+        {
+            if (key.getToken().token.equals(searchToken))
+                return true;
+        }
+
+        return false;
+    }
+
+    @Override
+    public long getCount()
+    {
+        return keys.size();
     }
 
     @Override

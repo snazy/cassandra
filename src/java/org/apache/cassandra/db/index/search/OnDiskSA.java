@@ -34,7 +34,7 @@ import static org.apache.cassandra.db.index.search.OnDiskSABuilder.Mode;
 
 public class OnDiskSA implements Iterable<OnDiskSA.DataSuffix>, Closeable
 {
-    public static enum IteratorOrder
+    public enum IteratorOrder
     {
         DESC, ASC;
 
@@ -195,9 +195,13 @@ public class OnDiskSA implements Iterable<OnDiskSA.DataSuffix>, Closeable
         List<SkippableIterator<Long, Token>> unions = new ArrayList<>();
 
         for (Expression e : ranges)
-            unions.add(searchRange(e));
+        {
+            SkippableIterator<Long, Token> range = searchRange(e);
+            if (range != null)
+                unions.add(range);
+        }
 
-        return new LazyMergeSortIterator<>(OperationType.OR, unions);
+        return unions.size() == 0 ? null : new LazyMergeSortIterator<>(OperationType.OR, unions);
     }
 
     private SkippableIterator<Long, Token> searchRange(Expression range)
@@ -292,7 +296,7 @@ public class OnDiskSA implements Iterable<OnDiskSA.DataSuffix>, Closeable
         for (int offset = 0; offset <= (lastFullBlockIdx - lastCoveredBlock); offset++)
             union.add(getBlockIterator(lastCoveredBlock + offset));
 
-        return new LazyMergeSortIterator<>(OperationType.OR, union);
+        return union.size() == 0 ? null : new LazyMergeSortIterator<>(OperationType.OR, union);
     }
 
     private SkippableIterator<Long, Token> searchPoint(int lowerBlock, Expression expression)
@@ -320,7 +324,7 @@ public class OnDiskSA implements Iterable<OnDiskSA.DataSuffix>, Closeable
             union.add(suffix.getTokens());
         }
 
-        return new LazyMergeSortIterator<>(OperationType.OR, union);
+        return union.size() == 0 ? null : new LazyMergeSortIterator<>(OperationType.OR, union);
     }
 
     private SkippableIterator<Long, Token> getBlockIterator(int blockIdx)
@@ -719,6 +723,12 @@ public class OnDiskSA implements Iterable<OnDiskSA.DataSuffix>, Closeable
         }
 
         @Override
+        public Long getMinimum()
+        {
+            return tokens.isEmpty() ? null : tokens.firstKey();
+        }
+
+        @Override
         protected Token computeNext()
         {
             return currentIterator != null && currentIterator.hasNext()
@@ -733,44 +743,29 @@ public class OnDiskSA implements Iterable<OnDiskSA.DataSuffix>, Closeable
         }
 
         @Override
+        public boolean intersect(Token token)
+        {
+            Token foundToken = tokens.get(token.get());
+            if (foundToken != null)
+            {
+                token.merge(foundToken);
+                return true;
+            }
+
+            return false;
+        }
+
+        @Override
+        public long getCount()
+        {
+            return tokens.size();
+        }
+
+        @Override
         public void close() throws IOException
         {
             endOfData();
         }
-    }
-
-    @SuppressWarnings("unused")
-    public void printSA(PrintStream out) throws IOException
-    {
-        int level = 0;
-        for (OnDiskSA.PointerLevel l : levels)
-        {
-            out.println(" !!!! level " + (level++));
-            for (int i = 0; i < l.blockCount; i++)
-            {
-                out.println(" --- block " + i + " ---- ");
-                OnDiskSA.PointerBlock block = l.getBlock(i);
-                for (int j = 0; j < block.getElementsSize(); j++)
-                {
-                    OnDiskSA.PointerSuffix p = block.getElement(j);
-                    out.printf("PointerSuffix(chars: %s, blockIdx: %d)%n", comparator.compose(p.getSuffix()), p.getBlock());
-                }
-            }
-        }
-
-        out.println(" !!!!! data blocks !!!!! ");
-        for (int i = 0; i < dataLevel.blockCount; i++)
-        {
-            out.println(" --- block " + i + " ---- ");
-            OnDiskSA.DataBlock block = dataLevel.getBlock(i);
-            for (int j = 0; j < block.getElementsSize(); j++)
-            {
-                OnDiskSA.DataSuffix p = block.getElement(j);
-                out.printf("DataSuffix(chars: %s, offsets: %s)%n", comparator.compose(p.getSuffix()), Iterators.toString(p.getTokens()));
-            }
-        }
-
-        out.println(" ***** end of level printout ***** ");
     }
 
     public AbstractType<?> getComparator()

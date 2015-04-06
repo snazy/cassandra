@@ -17,7 +17,7 @@ public class NonTokenizingAnalyzerTest
     public void caseInsensitiveAnalizer() throws Exception
     {
         NonTokenizingAnalyzer analyzer = new NonTokenizingAnalyzer();
-        NonTokenizingOptions options = NonTokenizingOptions.DEFAULT;
+        NonTokenizingOptions options = NonTokenizingOptions.getDefaultOptions();
         options.setCaseSensitive(false);
         analyzer.init(options, UTF8Type.instance);
 
@@ -34,7 +34,7 @@ public class NonTokenizingAnalyzerTest
     public void caseSensitiveAnalizer() throws Exception
     {
         NonTokenizingAnalyzer analyzer = new NonTokenizingAnalyzer();
-        NonTokenizingOptions options = NonTokenizingOptions.DEFAULT;
+        NonTokenizingOptions options = NonTokenizingOptions.getDefaultOptions();
         analyzer.init(options, UTF8Type.instance);
 
         String testString = "Nip it in the bud";
@@ -50,7 +50,7 @@ public class NonTokenizingAnalyzerTest
     public void ensureIncompatibleInputSkipped() throws Exception
     {
         NonTokenizingAnalyzer analyzer = new NonTokenizingAnalyzer();
-        NonTokenizingOptions options = NonTokenizingOptions.DEFAULT;
+        NonTokenizingOptions options = NonTokenizingOptions.getDefaultOptions();
         analyzer.init(options, Int32Type.instance);
 
         ByteBuffer toAnalyze = ByteBufferUtil.bytes(1);

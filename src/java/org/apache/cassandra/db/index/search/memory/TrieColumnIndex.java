@@ -109,7 +109,7 @@ public class TrieColumnIndex extends ColumnIndex
             Iterable<ConcurrentSkipListSet<DecoratedKey>> search = search(definition.getValidator().getString(prefix));
 
             for (ConcurrentSkipListSet<DecoratedKey> keys : search)
-                union.add(new KeySkippableIterator(keys.iterator()));
+                union.add(new KeySkippableIterator(keys));
 
             return new LazyMergeSortIterator<>(LazyMergeSortIterator.OperationType.OR, union);
         }

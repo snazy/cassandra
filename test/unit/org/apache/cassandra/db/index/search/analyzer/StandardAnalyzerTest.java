@@ -36,7 +36,7 @@ public class StandardAnalyzerTest
                 .getResourceAsStream("tokenization/lorem_ipsum.txt");
 
         StandardAnalyzer tokenizer = new StandardAnalyzer();
-        tokenizer.init(StandardTokenizerOptions.DEFAULT);
+        tokenizer.init(StandardTokenizerOptions.getDefaultOptions());
 
         List<ByteBuffer> tokens = new ArrayList<>();
         tokenizer.reset(is);
@@ -54,7 +54,7 @@ public class StandardAnalyzerTest
                 .getResourceAsStream("tokenization/ja_jp_1.txt");
 
         StandardAnalyzer tokenizer = new StandardAnalyzer();
-        tokenizer.init(StandardTokenizerOptions.DEFAULT);
+        tokenizer.init(StandardTokenizerOptions.getDefaultOptions());
 
         tokenizer.reset(is);
         List<ByteBuffer> tokens = new ArrayList<>();
@@ -89,7 +89,7 @@ public class StandardAnalyzerTest
         InputStream is = StandardAnalyzerTest.class.getClassLoader()
                 .getResourceAsStream("tokenization/ru_ru_1.txt");
         StandardAnalyzer tokenizer = new StandardAnalyzer();
-        tokenizer.init(StandardTokenizerOptions.DEFAULT);
+        tokenizer.init(StandardTokenizerOptions.getDefaultOptions());
 
         List<ByteBuffer> tokens = new ArrayList<>();
         tokenizer.reset(is);
@@ -105,7 +105,7 @@ public class StandardAnalyzerTest
         InputStream is = StandardAnalyzerTest.class.getClassLoader()
                 .getResourceAsStream("tokenization/zn_tw_1.txt");
         StandardAnalyzer tokenizer = new StandardAnalyzer();
-        tokenizer.init(StandardTokenizerOptions.DEFAULT);
+        tokenizer.init(StandardTokenizerOptions.getDefaultOptions());
 
         List<ByteBuffer> tokens = new ArrayList<>();
         tokenizer.reset(is);
@@ -142,7 +142,7 @@ public class StandardAnalyzerTest
                 .getResourceAsStream("tokenization/top_visited_domains.txt");
 
         StandardAnalyzer tokenizer = new StandardAnalyzer();
-        tokenizer.init(StandardTokenizerOptions.DEFAULT);
+        tokenizer.init(StandardTokenizerOptions.getDefaultOptions());
         tokenizer.reset(is);
 
         List<ByteBuffer> tokens = new ArrayList<>();
@@ -163,7 +163,7 @@ public class StandardAnalyzerTest
         bbToTokenize.add(ByteBuffer.wrap("The pen is mightier than the sword.".getBytes()));
 
         StandardAnalyzer tokenizer = new StandardAnalyzer();
-        tokenizer.init(StandardTokenizerOptions.DEFAULT);
+        tokenizer.init(StandardTokenizerOptions.getDefaultOptions());
 
         List<ByteBuffer> tokens = new ArrayList<>();
         for (ByteBuffer bb : bbToTokenize)
