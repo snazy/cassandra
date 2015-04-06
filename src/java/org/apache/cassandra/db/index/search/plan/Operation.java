@@ -4,6 +4,7 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.*;
 
+import org.apache.cassandra.config.CFMetaData;
 import org.apache.cassandra.config.ColumnDefinition;
 import org.apache.cassandra.db.Column;
 import org.apache.cassandra.db.Row;
@@ -21,8 +22,10 @@ import org.apache.cassandra.db.index.utils.LazyMergeSortIterator;
 import org.apache.cassandra.db.index.utils.LazyMergeSortIterator.OperationType;
 import org.apache.cassandra.db.index.utils.SkippableIterator;
 import org.apache.cassandra.db.marshal.AbstractType;
+import org.apache.cassandra.db.marshal.UTF8Type;
 import org.apache.cassandra.io.util.FileUtils;
 import org.apache.cassandra.thrift.IndexExpression;
+import org.apache.cassandra.utils.ByteBufferUtil;
 import org.apache.cassandra.utils.Pair;
 
 import com.google.common.annotations.VisibleForTesting;
@@ -35,6 +38,7 @@ import org.slf4j.LoggerFactory;
 public class Operation extends AbstractIterator<Token> implements SkippableIterator<Long, Token>
 {
     private static final Logger logger = LoggerFactory.getLogger(Operation.class);
+    private static final ByteBuffer DEFAULT_KEY_ALIAS = UTF8Type.instance.decompose(CFMetaData.DEFAULT_KEY_ALIAS);
 
     protected final OperationType op;
     protected final AbstractType<?> comparator;
@@ -194,8 +198,14 @@ public class Operation extends AbstractIterator<Token> implements SkippableItera
 
             Column column = row.cf.getColumn(expression.name);
             if (column == null)
+            {
+                // don't ever try to validate key alias
+                if (ByteBufferUtil.compareUnsigned(expression.name, DEFAULT_KEY_ALIAS) == 0)
+                    continue;
+
                 throw new IllegalStateException("All indexed columns should be included into the column slice, missing: "
                                               + comparator.getString(expression.name));
+            }
 
             if (!column.isLive(now))
                 return false;
