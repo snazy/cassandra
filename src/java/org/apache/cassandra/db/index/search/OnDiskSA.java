@@ -768,40 +768,6 @@ public class OnDiskSA implements Iterable<OnDiskSA.DataSuffix>, Closeable
         }
     }
 
-    @SuppressWarnings("unused")
-    public void printSA(PrintStream out) throws IOException
-    {
-        int level = 0;
-        for (OnDiskSA.PointerLevel l : levels)
-        {
-            out.println(" !!!! level " + (level++));
-            for (int i = 0; i < l.blockCount; i++)
-            {
-                out.println(" --- block " + i + " ---- ");
-                OnDiskSA.PointerBlock block = l.getBlock(i);
-                for (int j = 0; j < block.getElementsSize(); j++)
-                {
-                    OnDiskSA.PointerSuffix p = block.getElement(j);
-                    out.printf("PointerSuffix(chars: %s, blockIdx: %d)%n", comparator.compose(p.getSuffix()), p.getBlock());
-                }
-            }
-        }
-
-        out.println(" !!!!! data blocks !!!!! ");
-        for (int i = 0; i < dataLevel.blockCount; i++)
-        {
-            out.println(" --- block " + i + " ---- ");
-            OnDiskSA.DataBlock block = dataLevel.getBlock(i);
-            for (int j = 0; j < block.getElementsSize(); j++)
-            {
-                OnDiskSA.DataSuffix p = block.getElement(j);
-                out.printf("DataSuffix(chars: %s, offsets: %s)%n", comparator.compose(p.getSuffix()), Iterators.toString(p.getTokens()));
-            }
-        }
-
-        out.println(" ***** end of level printout ***** ");
-    }
-
     public AbstractType<?> getComparator()
     {
         return comparator;
