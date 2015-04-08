@@ -163,7 +163,14 @@ fi
 # Specifies the default port over which Cassandra will be available for
 # JMX connections.
 # For security reasons, you should not expose this port to the internet.  Firewall it if needed.
-JMX_PORT="7199"
+if [ "x$JMX_PORT" = "x" ]
+then
+    JMX_PORT="7199"
+fi
+if [ "x$JMX_ADDRESS" = "x" ]
+then
+    JMX_ADDRESS="127.0.0.1"
+fi
 
 
 # Here we create the arguments that will get passed to the jvm when
@@ -276,10 +283,22 @@ JVM_OPTS="$JVM_OPTS -Djava.net.preferIPv4Stack=true"
 # To enable remote JMX connections, uncomment lines below
 # with authentication and/or ssl enabled. See https://wiki.apache.org/cassandra/JmxSecurity 
 #
-LOCAL_JMX=yes
+if [ "x$LOCAL_JMX" = "x" ]
+then
+    LOCAL_JMX=yes
+fi
 
 if [ "$LOCAL_JMX" = "yes" ]; then
-  JVM_OPTS="$JVM_OPTS -Dcassandra.jmx.local.port=$JMX_PORT -XX:+DisableExplicitGC"
+  JVM_OPTS="$JVM_OPTS -Dcassandra.jmx.local.port=$JMX_PORT"
+  JVM_OPTS="$JVM_OPTS -Dcassandra.jmx.local.address=$JMX_ADDRESS"
+  JVM_OPTS="$JVM_OPTS -XX:+DisableExplicitGC"
+  # JVM_OPTS="$JVM_OPTS -Djavax.rmi.ssl.client.enabledCipherSuites=...
+  # JVM_OPTS="$JVM_OPTS -Djavax.rmi.ssl.client.enabledProtocols=...
+  # JVM_OPTS="$JVM_OPTS -Dcassandra.jmx.ssl=...
+  # JVM_OPTS="$JVM_OPTS -Dcassandra.jmx.truststore.path=...
+  # JVM_OPTS="$JVM_OPTS -Dcassandra.jmx.truststore.password.path=...
+  # JVM_OPTS="$JVM_OPTS -Dcassandra.jmx.keystore.path=...
+  # JVM_OPTS="$JVM_OPTS -Dcassandra.jmx.keystore.password.path=...
 else
   JVM_OPTS="$JVM_OPTS -Dcom.sun.management.jmxremote.port=$JMX_PORT"
   JVM_OPTS="$JVM_OPTS -Dcom.sun.management.jmxremote.rmi.port=$JMX_PORT"

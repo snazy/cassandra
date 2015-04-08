@@ -1,0 +1,5 @@
+keytool -keystore test/resources/unittest-jmx.keystore -alias cassandra-jmx -genkeypair -keyalg RSA
+
+keytool -export -alias cassandra-jmx -keystore test/resources/unittest-jmx.keystore -rfc -file test/resources/unittest-jmx.cer
+
+keytool -import -alias cassandra-jmxcert -file test/resources/unittest-jmx.cer -keystore test/resources/unittest-jmx.truststore

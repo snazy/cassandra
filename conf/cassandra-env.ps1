@@ -311,6 +311,8 @@ Function SetCassandraEnvironment
     # Specifies the default port over which Cassandra will be available for
     # JMX connections.
     $JMX_PORT="7199"
+    # Specifies the address on which JMX connections will be available.
+    $JMX_ADDRESS="127.0.0.1"
 
     # store in env to check if it's avail in verification
     $env:JMX_PORT=$JMX_PORT
@@ -409,7 +411,16 @@ Function SetCassandraEnvironment
     #$env:JVM_OPTS="$env:JVM_OPTS -Dcom.sun.management.jmxremote.ssl=false"
     #$env:JVM_OPTS="$env:JVM_OPTS -Dcom.sun.management.jmxremote.authenticate=true"
     #$env:JVM_OPTS="$env:JVM_OPTS -Dcom.sun.management.jmxremote.password.file=C:/jmxremote.password"
-    $env:JVM_OPTS="$env:JVM_OPTS -Dcassandra.jmx.local.port=$JMX_PORT -XX:+DisableExplicitGC"
+    $env:JVM_OPTS="$env:JVM_OPTS -Dcassandra.jmx.local.port=$JMX_PORT"
+    $env:JVM_OPTS="$env:JVM_OPTS -Dcassandra.jmx.local.address=$JMX_ADDRESS"
+    #$env:JVM_OPTS="$env:JVM_OPTS -Djavax.rmi.ssl.client.enabledCipherSuites=..."
+    #$env:JVM_OPTS="$env:JVM_OPTS -Djavax.rmi.ssl.client.enabledProtocols=..."
+    #$env:JVM_OPTS="$env:JVM_OPTS -Dcassandra.jmx.ssl=..."
+    #$env:JVM_OPTS="$env:JVM_OPTS -Dcassandra.jmx.truststore.path=..."
+    #$env:JVM_OPTS="$env:JVM_OPTS -Dcassandra.jmx.truststore.password.path=..."
+    #$env:JVM_OPTS="$env:JVM_OPTS -Dcassandra.jmx.keystore.path=..."
+    #$env:JVM_OPTS="$env:JVM_OPTS -Dcassandra.jmx.keystore.password.path=..."
+    $env:JVM_OPTS="$env:JVM_OPTS -XX:+DisableExplicitGC"
 
     $env:JVM_OPTS="$env:JVM_OPTS $JVM_EXTRA_OPTS"
 
