@@ -25,14 +25,11 @@ import org.apache.cassandra.utils.obs.IBitSet;
 import org.apache.cassandra.utils.obs.OffHeapBitSet;
 import org.apache.cassandra.utils.obs.OpenBitSet;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 public class FilterFactory
 {
+    @SuppressWarnings("resource")
     public static final IFilter AlwaysPresent = new AlwaysPresentFilter();
 
-    private static final Logger logger = LoggerFactory.getLogger(FilterFactory.class);
     private static final long BITSET_EXCESS = 20;
 
     public static void serialize(IFilter bf, DataOutputPlus output) throws IOException
@@ -51,13 +48,8 @@ public class FilterFactory
      */
     public static IFilter getFilter(long numElements, int targetBucketsPerElem, boolean offheap, boolean oldBfHashOrder)
     {
-        int maxBucketsPerElement = Math.max(1, BloomCalculations.maxBucketsPerElement(numElements));
-        int bucketsPerElement = Math.min(targetBucketsPerElem, maxBucketsPerElement);
-        if (bucketsPerElement < targetBucketsPerElem)
-        {
-            logger.warn(String.format("Cannot provide an optimal BloomFilter for %d elements (%d/%d buckets per element).", numElements, bucketsPerElement, targetBucketsPerElem));
-        }
-        BloomCalculations.BloomSpecification spec = BloomCalculations.computeBloomSpec(bucketsPerElement);
+        BloomCalculations.BloomSpecification spec = BloomCalculations.computeBloomSpec(numElements, targetBucketsPerElem);
+
         return createFilter(spec.K, numElements, spec.bucketsPerElement, offheap, oldBfHashOrder);
     }
 
@@ -70,18 +62,19 @@ public class FilterFactory
      */
     public static IFilter getFilter(long numElements, double maxFalsePosProbability, boolean offheap, boolean oldBfHashOrder)
     {
-        assert maxFalsePosProbability <= 1.0 : "Invalid probability";
-        if (maxFalsePosProbability == 1.0)
+        assert maxFalsePosProbability <= 1.0d && maxFalsePosProbability > Double.MIN_VALUE : "Invalid probability";
+        if (maxFalsePosProbability == 1.0d)
             return new AlwaysPresentFilter();
-        int bucketsPerElement = BloomCalculations.maxBucketsPerElement(numElements);
-        BloomCalculations.BloomSpecification spec = BloomCalculations.computeBloomSpec(bucketsPerElement, maxFalsePosProbability);
+
+        BloomCalculations.BloomSpecification spec = BloomCalculations.computeBloomSpec(numElements, maxFalsePosProbability);
+
         return createFilter(spec.K, numElements, spec.bucketsPerElement, offheap, oldBfHashOrder);
     }
 
     @SuppressWarnings("resource")
-    private static IFilter createFilter(int hash, long numElements, int bucketsPer, boolean offheap, boolean oldBfHashOrder)
+    private static IFilter createFilter(int hash, long numElements, double bucketsPer, boolean offheap, boolean oldBfHashOrder)
     {
-        long numBits = (numElements * bucketsPer) + BITSET_EXCESS;
+        long numBits = (long)(numElements * bucketsPer) + BITSET_EXCESS;
         IBitSet bitset = offheap ? new OffHeapBitSet(numBits) : new OpenBitSet(numBits);
         return new BloomFilter(hash, bitset, oldBfHashOrder);
     }

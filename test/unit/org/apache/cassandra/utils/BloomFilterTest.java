@@ -20,16 +20,13 @@ package org.apache.cassandra.utils;
 
 import java.io.*;
 import java.nio.ByteBuffer;
-import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.Iterator;
-import java.util.List;
 import java.util.Random;
 import java.util.Set;
 
 import org.junit.*;
 
-import org.apache.cassandra.db.marshal.Int32Type;
 import org.apache.cassandra.dht.IPartitioner;
 import org.apache.cassandra.dht.Murmur3Partitioner;
 import org.apache.cassandra.io.util.BufferedDataOutputStreamPlus;
@@ -49,6 +46,7 @@ public class BloomFilterTest
 
     }
 
+    @SuppressWarnings("resource")
     public static IFilter testSerialize(IFilter f, boolean oldBfHashOrder) throws IOException
     {
         f.add(FilterTestHelper.bytes("a"));
@@ -78,19 +76,6 @@ public class BloomFilterTest
         bfInvHashes.close();
     }
 
-    @Test(expected = UnsupportedOperationException.class)
-    public void testBloomLimits1()
-    {
-        int maxBuckets = BloomCalculations.probs.length - 1;
-        int maxK = BloomCalculations.probs[maxBuckets].length - 1;
-
-        // possible
-        BloomCalculations.computeBloomSpec(maxBuckets, BloomCalculations.probs[maxBuckets][maxK]);
-
-        // impossible, throws
-        BloomCalculations.computeBloomSpec(maxBuckets, BloomCalculations.probs[maxBuckets][maxK] / 2);
-    }
-
     @Test
     public void testOne()
     {
@@ -103,44 +88,7 @@ public class BloomFilterTest
         assert !bfInvHashes.isPresent(FilterTestHelper.bytes("b"));
     }
 
-    @Test
-    public void testFalsePositivesInt()
-    {
-        FilterTestHelper.testFalsePositives(bfOldFormat, FilterTestHelper.intKeys(), FilterTestHelper.randomKeys2());
-
-        FilterTestHelper.testFalsePositives(bfInvHashes, FilterTestHelper.intKeys(), FilterTestHelper.randomKeys2());
-    }
-
-    @Test
-    public void testFalsePositivesRandom()
-    {
-        FilterTestHelper.testFalsePositives(bfOldFormat, FilterTestHelper.randomKeys(), FilterTestHelper.randomKeys2());
-
-        FilterTestHelper.testFalsePositives(bfInvHashes, FilterTestHelper.randomKeys(), FilterTestHelper.randomKeys2());
-    }
-
-    @Test
-    public void testWords()
-    {
-        if (KeyGenerator.WordGenerator.WORDS == 0)
-        {
-            return;
-        }
-        IFilter bf2 = FilterFactory.getFilter(KeyGenerator.WordGenerator.WORDS / 2, FilterTestHelper.MAX_FAILURE_RATE, true, false);
-        int skipEven = KeyGenerator.WordGenerator.WORDS % 2 == 0 ? 0 : 2;
-        FilterTestHelper.testFalsePositives(bf2,
-                                            new KeyGenerator.WordGenerator(skipEven, 2),
-                                            new KeyGenerator.WordGenerator(1, 2));
-        bf2.close();
-
-        // new, swapped hash values bloom filter
-        bf2 = FilterFactory.getFilter(KeyGenerator.WordGenerator.WORDS / 2, FilterTestHelper.MAX_FAILURE_RATE, true, true);
-        FilterTestHelper.testFalsePositives(bf2,
-                                            new KeyGenerator.WordGenerator(skipEven, 2),
-                                            new KeyGenerator.WordGenerator(1, 2));
-        bf2.close();
-    }
-
+    @SuppressWarnings("resource")
     @Test
     public void testSerialize() throws IOException
     {
@@ -167,24 +115,27 @@ public class BloomFilterTest
         {
             hashes.clear();
             FilterKey buf = FilterTestHelper.wrap(keys.next());
-            BloomFilter bf = (BloomFilter) FilterFactory.getFilter(10, 1, false, oldBfHashOrder);
-            for (long hashIndex : bf.getHashBuckets(buf, MAX_HASH_COUNT, 1024 * 1024))
+            try (BloomFilter bf = (BloomFilter) FilterFactory.getFilter(10, 1, false, oldBfHashOrder))
             {
-                hashes.add(hashIndex);
+                for (long hashIndex : bf.getHashBuckets(buf, MAX_HASH_COUNT, 1024 * 1024))
+                {
+                    hashes.add(hashIndex);
+                }
+                collisions += (MAX_HASH_COUNT - hashes.size());
             }
-            collisions += (MAX_HASH_COUNT - hashes.size());
-            bf.close();
         }
         Assert.assertTrue("collisions=" + collisions, collisions <= 100);
     }
 
+    @SuppressWarnings("resource")
     @Test(expected = UnsupportedOperationException.class)
     public void testOffHeapException()
     {
-        long numKeys = ((long)Integer.MAX_VALUE) * 64L + 1L; // approx 128 Billion
+        long numKeys = Integer.MAX_VALUE * 64L + 1L; // approx 128 Billion
         FilterFactory.getFilter(numKeys, 0.01d, true, true).close();
     }
 
+    @SuppressWarnings("resource")
     @Test
     public void compareCachedKeyOldHashOrder()
     {
@@ -260,10 +211,11 @@ public class BloomFilterTest
         filter.close();
 
         DataInputStream in = new DataInputStream(new FileInputStream(file));
-        BloomFilter filter2 = (BloomFilter) FilterFactory.deserialize(in, true, oldBfHashOrder);
-        Assert.assertTrue(filter2.isPresent(FilterTestHelper.wrap(test)));
-        FileUtils.closeQuietly(in);
-        filter2.close();
+        try (BloomFilter filter2 = (BloomFilter) FilterFactory.deserialize(in, true, oldBfHashOrder))
+        {
+            Assert.assertTrue(filter2.isPresent(FilterTestHelper.wrap(test)));
+            FileUtils.closeQuietly(in);
+        }
     }
 
     @Test
