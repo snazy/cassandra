@@ -19,14 +19,19 @@
 package org.apache.cassandra.utils;
 
 import java.io.*;
+import java.lang.reflect.Field;
 import java.nio.ByteBuffer;
+import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.Iterator;
+import java.util.List;
 import java.util.Random;
 import java.util.Set;
 
+import com.google.common.hash.Funnel;
 import org.junit.*;
 
+import org.apache.cassandra.db.marshal.Int32Type;
 import org.apache.cassandra.dht.IPartitioner;
 import org.apache.cassandra.dht.Murmur3Partitioner;
 import org.apache.cassandra.io.util.BufferedDataOutputStreamPlus;
@@ -187,6 +192,108 @@ public class BloomFilterTest
             BitSetTest.compare(bf1.bitset, bf2.bitset);
             BitSetTest.compare(bf1.bitset, bf3.bitset);
         }
+    }
+
+    @Test
+    public void testBigBloomFilterFpc() throws Exception
+    {
+        List<String> errors = new ArrayList<>();
+
+        double[] fpcs = { .1d, .05d, .01d, .005d, .001d, .0005d, .0001d };
+        for (double fpc : fpcs)
+        {
+            int elems = 10000;
+            for (int i = 0; i < 3; i++, elems *= 10)
+            {
+                try (BloomFilter bf = (BloomFilter) FilterFactory.getFilter(elems, fpc, false, false))
+                {
+                    bigBloomFilterFpc(errors, fpc, true, elems, bf);
+                }
+
+                guavaBloomFilterFpc(errors, elems, fpc);
+            }
+        }
+
+        if (!errors.isEmpty())
+        {
+            for (String error : errors)
+                System.err.println("testBigBloomFilterFpc failed for: " + error);
+
+            Assert.fail("See error messages above");
+        }
+    }
+
+    private static void guavaBloomFilterFpc(List<String> errors, int elems, double fpc) throws Exception
+    {
+        Funnel<Integer> f = (Funnel<Integer>) (o, primitiveSink) -> primitiveSink.putInt(o);
+        final com.google.common.hash.BloomFilter<Integer> bf = com.google.common.hash.BloomFilter.create(f, elems, fpc);
+
+        for (int k = 0; k < elems; k++)
+        {
+            bf.put(k);
+        }
+
+        for (int i = 0; i < elems; i++)
+        {
+            boolean present = bf.mightContain(i);
+            Assert.assertTrue(present);
+        }
+        int positives = 0;
+        for (int i = elems; i < elems * 2; i++)
+        {
+            boolean present = bf.mightContain(i);
+            if (present)
+                positives++;
+        }
+        double fpr = positives;
+        fpr /= elems;
+
+        Field fld = com.google.common.hash.BloomFilter.class.getDeclaredField("numHashFunctions");
+        fld.setAccessible(true);
+        int hashCount = fld.getInt(bf);
+        fld = com.google.common.hash.BloomFilter.class.getDeclaredField("bits");
+        fld.setAccessible(true);
+        Object bitArray = fld.get(bf);
+        fld = bitArray.getClass().getDeclaredField("data");
+        fld.setAccessible(true);
+        long[] data = (long[]) fld.get(bitArray);
+        int bits = data.length * 64;
+
+        String s = String.format("guava              fpc=%.6f fpr=%.6f with %10d elements, bits=%d, hashCount=%d",
+                                 fpc, fpr, elems, bits, hashCount);
+        System.out.println(s);
+        if (fpr > fpc)
+            errors.add(s);
+    }
+
+    static void bigBloomFilterFpc(List<String> errors, double fpc, boolean invertedHash, int elems, IFilter filter)
+    {
+        Murmur3Partitioner partitioner = new Murmur3Partitioner();
+
+        for (int i = 0; i < elems; i++)
+        {
+            filter.add(partitioner.decorateKey(Int32Type.instance.decompose(i)));
+        }
+
+        for (int i = 0; i < elems; i++)
+        {
+            boolean present = filter.isPresent(partitioner.decorateKey(Int32Type.instance.decompose(i)));
+            Assert.assertTrue(present);
+        }
+        int positives = 0;
+        for (int i = elems; i < elems * 2; i++)
+        {
+            boolean present = filter.isPresent(partitioner.decorateKey(Int32Type.instance.decompose(i)));
+            if (present)
+                positives++;
+        }
+        double fpr = positives;
+        fpr /= elems;
+        String s = String.format("invertedHash=%5s fpc=%.6f fpr=%.6f with %10d elements, %s",
+                                 invertedHash, fpc, fpr, elems, filter);
+        System.out.println(s);
+        if (fpr > fpc)
+            errors.add(s);
     }
 
     @Test
