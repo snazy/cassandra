@@ -62,8 +62,17 @@ public class IndexMemtable
 
     public void index(ByteBuffer key, ColumnFamily cf)
     {
+        final long now = System.currentTimeMillis();
+
+        // avoid adding already expired or deleted columns to the index
+        if (cf == null || cf.isMarkedForDelete())
+            return;
+
         for (Column column : cf)
         {
+            if (column.isMarkedForDelete(now))
+                continue;
+
             Pair<ColumnDefinition, IndexMode> columnDefinition = backend.getIndexDefinition(column.name());
             if (columnDefinition == null)
                 continue;
