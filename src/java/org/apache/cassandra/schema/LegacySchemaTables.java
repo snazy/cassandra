@@ -827,7 +827,7 @@ public class LegacySchemaTables
         for (String rawType : rawTypes)
             types.add(parseType(rawType));
 
-        return new UserType(keyspace, name, columns, types);
+        return new UserType(keyspace, name, columns, types, false);
     }
 
     /*

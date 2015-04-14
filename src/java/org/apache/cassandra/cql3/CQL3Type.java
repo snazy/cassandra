@@ -239,7 +239,9 @@ public interface CQL3Type
         @Override
         public String toString()
         {
-            return name;
+            return type.isMultiCell()
+                   ? name
+                   : "frozen<" + name + '>';
         }
     }
 
@@ -287,6 +289,8 @@ public interface CQL3Type
         public String toString()
         {
             StringBuilder sb = new StringBuilder();
+            if (!type.isMultiCell())
+                sb.append("frozen<");
             sb.append("tuple<");
             for (int i = 0; i < type.size(); i++)
             {
@@ -294,7 +298,9 @@ public interface CQL3Type
                     sb.append(", ");
                 sb.append(type.type(i).asCQL3Type());
             }
-            sb.append(">");
+            sb.append('>');
+            if (!type.isMultiCell())
+                sb.append('>');
             return sb.toString();
         }
     }
@@ -368,7 +374,7 @@ public interface CQL3Type
 
         private static class RawType extends Raw
         {
-            private CQL3Type type;
+            private final CQL3Type type;
 
             private RawType(CQL3Type type)
             {
@@ -516,6 +522,8 @@ public interface CQL3Type
 
                 if (!frozen)
                     throw new InvalidRequestException("Non-frozen User-Defined types are not supported, please use frozen<>");
+                else
+                    type = (UserType) type.freeze();
 
                 return new UserDefined(name.toString(), type);
             }
@@ -574,7 +582,7 @@ public interface CQL3Type
 
                     ts.add(t.prepare(keyspace).getType());
                 }
-                return new Tuple(new TupleType(ts));
+                return new Tuple(new TupleType(ts, !frozen));
             }
 
             @Override

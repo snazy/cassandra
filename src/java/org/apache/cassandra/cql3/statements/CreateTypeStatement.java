@@ -113,7 +113,7 @@ public class CreateTypeStatement extends SchemaAlteringStatement
         for (CQL3Type.Raw type : columnTypes)
             types.add(type.prepare(keyspace()).getType());
 
-        return new UserType(name.getKeyspace(), name.getUserTypeName(), names, types);
+        return new UserType(name.getKeyspace(), name.getUserTypeName(), names, types, false);
     }
 
     public boolean announceMigration(boolean isLocalOnly) throws InvalidRequestException, ConfigurationException

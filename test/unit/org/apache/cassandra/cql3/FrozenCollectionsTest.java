@@ -1095,7 +1095,7 @@ public class FrozenCollectionsTest extends CQLTester
         // tuple<set<int>>
         List<AbstractType<?>> types = new ArrayList<>();
         types.add(SetType.getInstance(Int32Type.instance, true));
-        TupleType tuple = new TupleType(types);
+        TupleType tuple = new TupleType(types, false);
         assertEquals("TupleType(SetType(Int32Type))", clean(tuple.toString()));
     }
 }

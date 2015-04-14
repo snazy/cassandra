@@ -22,6 +22,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Iterator;
 import java.util.List;
+import java.util.regex.Pattern;
 
 import com.google.common.base.Objects;
 
@@ -32,7 +33,6 @@ import org.apache.cassandra.cql3.Tuples;
 import org.apache.cassandra.exceptions.ConfigurationException;
 import org.apache.cassandra.exceptions.SyntaxException;
 import org.apache.cassandra.serializers.*;
-import org.apache.cassandra.transport.Server;
 import org.apache.cassandra.utils.ByteBufferUtil;
 
 /**
@@ -41,21 +41,36 @@ import org.apache.cassandra.utils.ByteBufferUtil;
  */
 public class TupleType extends AbstractType<ByteBuffer>
 {
-    protected final List<AbstractType<?>> types;
+    private static final Pattern COLON = Pattern.compile(":");
+    private static final Pattern ESCAPED_COLON = Pattern.compile("\\\\:");
+    private static final Pattern AT = Pattern.compile("@");
+    private static final Pattern ESCAPED_AT = Pattern.compile("\\\\@");
 
-    public TupleType(List<AbstractType<?>> types)
+    protected final List<AbstractType<?>> types;
+    protected final boolean isMultiCell;
+
+    public TupleType(List<AbstractType<?>> types, boolean isMultiCell)
     {
-        for (int i = 0; i < types.size(); i++)
-            types.set(i, types.get(i).freeze());
+        if (!isMultiCell)
+            for (int i = 0; i < types.size(); i++)
+                types.set(i, types.get(i).freeze());
         this.types = types;
+        this.isMultiCell = isMultiCell;
     }
 
     public static TupleType getInstance(TypeParser parser) throws ConfigurationException, SyntaxException
     {
         List<AbstractType<?>> types = parser.getTypeParameters();
-        for (int i = 0; i < types.size(); i++)
-            types.set(i, types.get(i).freeze());
-        return new TupleType(types);
+        return new TupleType(types, true);
+    }
+
+    @Override
+    public AbstractType<?> freeze()
+    {
+        if (isMultiCell)
+            return new TupleType(new ArrayList<>(types), false);
+        else
+            return this;
     }
 
     public AbstractType<?> type(int i)
@@ -195,19 +210,19 @@ public class TupleType extends AbstractType<ByteBuffer>
                 return sb.toString();
 
             if (i > 0)
-                sb.append(":");
+                sb.append(':');
 
             AbstractType<?> type = type(i);
             int size = input.getInt();
             if (size < 0)
             {
-                sb.append("@");
+                sb.append('@');
                 continue;
             }
 
             ByteBuffer field = ByteBufferUtil.readBytes(input, size);
             // We use ':' as delimiter, and @ to represent null, so escape them in the generated string
-            sb.append(type.getString(field).replaceAll(":", "\\\\:").replaceAll("@", "\\\\@"));
+            sb.append(AT.matcher(COLON.matcher(type.getString(field)).replaceAll("\\\\:")).replaceAll("\\\\@"));
         }
         return sb.toString();
     }
@@ -225,7 +240,7 @@ public class TupleType extends AbstractType<ByteBuffer>
                 continue;
 
             AbstractType<?> type = type(i);
-            fields[i] = type.fromString(fieldString.replaceAll("\\\\:", ":").replaceAll("\\\\@", "@"));
+            fields[i] = type.fromString(ESCAPED_AT.matcher(ESCAPED_COLON.matcher(fieldString).replaceAll(":")).replaceAll("@"));
         }
         return buildValue(fields);
     }
@@ -277,7 +292,7 @@ public class TupleType extends AbstractType<ByteBuffer>
             else
                 sb.append(types.get(i).toJSONString(value, protocolVersion));
         }
-        return sb.append("]").toString();
+        return sb.append(']').toString();
     }
 
     public TypeSerializer<ByteBuffer> getSerializer()
@@ -349,9 +364,25 @@ public class TupleType extends AbstractType<ByteBuffer>
         return CQL3Type.Tuple.create(this);
     }
 
+//    @Override
+//    public String toString(boolean ignoreFreezing)
+//    {
+//        boolean includeFrozenType = !ignoreFreezing && !isMultiCell();
+//
+//        StringBuilder sb = new StringBuilder();
+//        if (includeFrozenType)
+//            sb.append(FrozenType.class.getName()).append('(');
+//        sb.append(getClass().getName());
+//        sb.append(TypeParser.stringifyTypeParameters(types, true));
+//        if (includeFrozenType)
+//            sb.append(')');
+//        return sb.toString();
+//    }
+
     @Override
     public String toString()
     {
+//        return this.toString(false);
         return getClass().getName() + TypeParser.stringifyTypeParameters(types, true);
     }
 }

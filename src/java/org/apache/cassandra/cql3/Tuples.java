@@ -93,7 +93,7 @@ public class Tuples
                 values.add(t);
                 types.add(receivers.get(i).type);
             }
-            DelayedValue value = new DelayedValue(new TupleType(types), values);
+            DelayedValue value = new DelayedValue(new TupleType(types, false), values);
             return allTerminal ? value.bind(QueryOptions.DEFAULT) : value;
         }
 
@@ -303,7 +303,7 @@ public class Tuples
             inName.append(')');
 
             ColumnIdentifier identifier = new ColumnIdentifier(inName.toString(), true);
-            TupleType type = new TupleType(types);
+            TupleType type = new TupleType(types, false);
             return new ColumnSpecification(receivers.get(0).ksName, receivers.get(0).cfName, identifier, type);
         }
 
@@ -348,7 +348,7 @@ public class Tuples
             inName.append(')');
 
             ColumnIdentifier identifier = new ColumnIdentifier(inName.toString(), true);
-            TupleType type = new TupleType(types);
+            TupleType type = new TupleType(types, false);
             return new ColumnSpecification(receivers.get(0).ksName, receivers.get(0).cfName, identifier, ListType.getInstance(type, false));
         }
 

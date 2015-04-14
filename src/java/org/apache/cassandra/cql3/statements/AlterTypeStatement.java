@@ -185,7 +185,7 @@ public abstract class AlterTypeStatement extends SchemaAlteringStatement
 
             // Otherwise, check for nesting
             List<AbstractType<?>> updatedTypes = updateTypes(ut.fieldTypes(), keyspace, toReplace, updated);
-            return updatedTypes == null ? null : new UserType(ut.keyspace, ut.name, new ArrayList<>(ut.fieldNames()), updatedTypes);
+            return updatedTypes == null ? null : new UserType(ut.keyspace, ut.name, new ArrayList<>(ut.fieldNames()), updatedTypes, false);
         }
         else if (type instanceof CompositeType)
         {
@@ -288,7 +288,7 @@ public abstract class AlterTypeStatement extends SchemaAlteringStatement
             newTypes.addAll(toUpdate.fieldTypes());
             newTypes.add(type.prepare(keyspace()).getType());
 
-            return new UserType(toUpdate.keyspace, toUpdate.name, newNames, newTypes);
+            return new UserType(toUpdate.keyspace, toUpdate.name, newNames, newTypes, false);
         }
 
         private UserType doAlter(UserType toUpdate) throws InvalidRequestException
@@ -305,7 +305,7 @@ public abstract class AlterTypeStatement extends SchemaAlteringStatement
             List<AbstractType<?>> newTypes = new ArrayList<>(toUpdate.fieldTypes());
             newTypes.set(idx, type.prepare(keyspace()).getType());
 
-            return new UserType(toUpdate.keyspace, toUpdate.name, newNames, newTypes);
+            return new UserType(toUpdate.keyspace, toUpdate.name, newNames, newTypes, false);
         }
 
         protected UserType makeUpdatedType(UserType toUpdate) throws InvalidRequestException
@@ -339,7 +339,7 @@ public abstract class AlterTypeStatement extends SchemaAlteringStatement
                 newNames.set(idx, to.bytes);
             }
 
-            UserType updated = new UserType(toUpdate.keyspace, toUpdate.name, newNames, newTypes);
+            UserType updated = new UserType(toUpdate.keyspace, toUpdate.name, newNames, newTypes, false);
             CreateTypeStatement.checkForDuplicateNames(updated);
             return updated;
         }

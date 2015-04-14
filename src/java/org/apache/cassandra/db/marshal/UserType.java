@@ -28,7 +28,6 @@ import org.apache.cassandra.cql3.*;
 import org.apache.cassandra.exceptions.ConfigurationException;
 import org.apache.cassandra.exceptions.SyntaxException;
 import org.apache.cassandra.serializers.*;
-import org.apache.cassandra.transport.Server;
 import org.apache.cassandra.utils.ByteBufferUtil;
 import org.apache.cassandra.utils.Pair;
 
@@ -44,9 +43,9 @@ public class UserType extends TupleType
     private final List<ByteBuffer> fieldNames;
     private final List<String> stringFieldNames;
 
-    public UserType(String keyspace, ByteBuffer name, List<ByteBuffer> fieldNames, List<AbstractType<?>> fieldTypes)
+    public UserType(String keyspace, ByteBuffer name, List<ByteBuffer> fieldNames, List<AbstractType<?>> fieldTypes, boolean isMultiCell)
     {
-        super(fieldTypes);
+        super(fieldTypes, isMultiCell);
         assert fieldNames.size() == fieldTypes.size();
         this.keyspace = keyspace;
         this.name = name;
@@ -77,7 +76,16 @@ public class UserType extends TupleType
             columnNames.add(p.left);
             columnTypes.add(p.right.freeze());
         }
-        return new UserType(keyspace, name, columnNames, columnTypes);
+        return new UserType(keyspace, name, columnNames, columnTypes, true);
+    }
+
+    @Override
+    public AbstractType<?> freeze()
+    {
+        if (isMultiCell)
+            return new UserType(keyspace, name, fieldNames, new ArrayList<>(fieldTypes()), false);
+        else
+            return this;
     }
 
     public AbstractType<?> fieldType(int i)
@@ -173,7 +181,7 @@ public class UserType extends TupleType
         {
             for (Object fieldName : keys)
             {
-                if (!stringFieldNames.contains((String) fieldName))
+                if (!stringFieldNames.contains(fieldName))
                     throw new MarshalException(String.format(
                             "Unknown field '%s' in value of user defined type %s", fieldName, getNameAsString()));
             }
@@ -194,7 +202,7 @@ public class UserType extends TupleType
 
             String name = stringFieldNames.get(i);
             if (!name.equals(name.toLowerCase(Locale.US)))
-                name = "\"" + name + "\"";
+                name = '"' + name + '"';
 
             sb.append('"');
             sb.append(Json.JSON_STRING_ENCODER.quoteAsString(name));
@@ -206,7 +214,7 @@ public class UserType extends TupleType
             else
                 sb.append(types.get(i).toJSONString(valueBuffer, protocolVersion));
         }
-        return sb.append("}").toString();
+        return sb.append('}').toString();
     }
 
     @Override
@@ -231,9 +239,25 @@ public class UserType extends TupleType
         return CQL3Type.UserDefined.create(this);
     }
 
+//    @Override
+//    public String toString(boolean ignoreFreezing)
+//    {
+//        boolean includeFrozenType = !ignoreFreezing && !isMultiCell();
+//
+//        StringBuilder sb = new StringBuilder();
+//        if (includeFrozenType)
+//            sb.append(FrozenType.class.getName()).append('(');
+//        sb.append(getClass().getName());
+//        TypeParser.stringifyUserTypeParameters(sb, keyspace, name, fieldNames, types);
+//        if (includeFrozenType)
+//            sb.append(')');
+//        return sb.toString();
+//    }
+
     @Override
     public String toString()
     {
+//        return this.toString(false);
         return getClass().getName() + TypeParser.stringifyUserTypeParameters(keyspace, name, fieldNames, types);
     }
 }
