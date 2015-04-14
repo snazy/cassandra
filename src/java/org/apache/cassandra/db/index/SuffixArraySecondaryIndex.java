@@ -439,6 +439,8 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex
         private long currentKeyPosition;
         private boolean isComplete;
 
+        private final long start = System.currentTimeMillis();
+
         public PerSSTableIndexWriter(Descriptor descriptor, Source source)
         {
             this.descriptor = descriptor;
@@ -461,6 +463,10 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex
 
         public void nextColumn(Column column)
         {
+            // avoid adding already expired or deleted columns to the index
+            if (column.isMarkedForDelete(start))
+                return;
+
             Component component = columnDefComponents.get(column.name());
             if (component == null)
                 return;
