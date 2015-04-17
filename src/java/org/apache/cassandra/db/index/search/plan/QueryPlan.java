@@ -2,12 +2,13 @@ package org.apache.cassandra.db.index.search.plan;
 
 import java.util.*;
 
+import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.db.*;
 import org.apache.cassandra.db.filter.ExtendedFilter;
 import org.apache.cassandra.db.index.SuffixArraySecondaryIndex;
 import org.apache.cassandra.db.index.utils.LazyMergeSortIterator.OperationType;
 import org.apache.cassandra.db.marshal.AbstractType;
-import org.apache.cassandra.dht.AbstractBounds;
+import org.apache.cassandra.dht.IPartitioner;
 import org.apache.cassandra.dht.LongToken;
 import org.apache.cassandra.thrift.IndexExpression;
 
@@ -156,20 +157,27 @@ public class QueryPlan
 
     public List<Row> execute()
     {
-        AbstractBounds<RowPosition> range = filter.dataRange.keyRange();
+
+        DataRange range = filter.dataRange;
+        RowPosition lastKey = range.stopKey();
+
+        IPartitioner<?> partitioner = DatabaseDescriptor.getPartitioner();
 
         final int maxRows = Math.min(filter.maxColumns(), Math.min(MAX_ROWS, filter.maxRows()));
         final List<Row> rows = new ArrayList<>(maxRows);
 
-        operationTree.skipTo(((LongToken) range.left.getToken()).token);
+        operationTree.skipTo(((LongToken) range.keyRange().left.getToken()).token);
 
         intersection:
         while (operationTree.hasNext())
         {
             for (DecoratedKey key : operationTree.next())
             {
-                if (!range.contains(key) || rows.size() >= maxRows)
+                if ((!lastKey.isMinimum(partitioner) && lastKey.compareTo(key) < 0) || rows.size() >= maxRows)
                     break intersection;
+
+                if (!range.contains(key))
+                    continue;
 
                 Row row = getRow(key, filter);
                 if (row != null && operationTree.satisfiedBy(row))

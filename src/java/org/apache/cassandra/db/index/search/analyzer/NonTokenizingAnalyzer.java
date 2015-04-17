@@ -1,5 +1,10 @@
 package org.apache.cassandra.db.index.search.analyzer;
 
+import java.nio.ByteBuffer;
+import java.util.HashSet;
+import java.util.Map;
+import java.util.Set;
+
 import org.apache.cassandra.db.index.search.analyzer.filter.BasicResultFilters;
 import org.apache.cassandra.db.index.search.analyzer.filter.FilterPipelineBuilder;
 import org.apache.cassandra.db.index.search.analyzer.filter.FilterPipelineExecutor;
@@ -7,17 +12,20 @@ import org.apache.cassandra.db.index.search.analyzer.filter.FilterPipelineTask;
 import org.apache.cassandra.db.marshal.AbstractType;
 import org.apache.cassandra.db.marshal.AsciiType;
 import org.apache.cassandra.db.marshal.UTF8Type;
+import org.apache.cassandra.serializers.MarshalException;
+import org.apache.cassandra.utils.ByteBufferUtil;
 
-import java.nio.ByteBuffer;
-import java.util.HashSet;
-import java.util.Map;
-import java.util.Set;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Analyzer that does *not* tokenize the input. Optionally will
  * apply filters for the input output as defined in analyzers options
  */
-public class NonTokenizingAnalyzer extends AbstractAnalyzer {
+public class NonTokenizingAnalyzer extends AbstractAnalyzer
+{
+    private static final Logger logger = LoggerFactory.getLogger(NonTokenizingAnalyzer.class);
+
     private static final Set<AbstractType<?>> VALID_ANALYZABLE_TYPES = new HashSet<AbstractType<?>>()
     {{
             add(UTF8Type.instance);
@@ -53,12 +61,32 @@ public class NonTokenizingAnalyzer extends AbstractAnalyzer {
 
         if (hasNext)
         {
-            String inputStr = (String) validator.compose(input);
-            Object pipelineRes = FilterPipelineExecutor.execute(filterPipeline, inputStr);
-            this.next = ByteBuffer.wrap(((String) pipelineRes).getBytes());
-            this.hasNext = false;
-            return true;
+            String inputStr;
+
+            try
+            {
+                inputStr = validator.getString(input);
+                if (inputStr == null)
+                    throw new MarshalException(String.format("'null' deserialized value for %s with %s", ByteBufferUtil.bytesToHex(input), validator));
+
+                Object pipelineRes = FilterPipelineExecutor.execute(filterPipeline, inputStr);
+                if (pipelineRes == null || !(pipelineRes instanceof String))
+                    return false;
+
+                next = ByteBuffer.wrap(((String) pipelineRes).getBytes());
+                return true;
+            }
+            catch (MarshalException e)
+            {
+                logger.error("Failed to deserialize value with " + validator, e);
+                return false;
+            }
+            finally
+            {
+                hasNext = false;
+            }
         }
+
         return false;
     }
 
