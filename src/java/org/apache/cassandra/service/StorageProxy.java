@@ -69,6 +69,8 @@ public class StorageProxy implements StorageProxyMBean
     private static final Logger logger = LoggerFactory.getLogger(StorageProxy.class);
     static final boolean OPTIMIZE_LOCAL_REQUESTS = true; // set to false to test messagingservice path on single node
 
+    private static final int MAX_RANGE_BUCKET_SIZE;
+
     public static final String UNREACHABLE = "UNREACHABLE";
 
     private static final WritePerformer standardWritePerformer;
@@ -95,6 +97,11 @@ public class StorageProxy implements StorageProxyMBean
 
     static
     {
+        int rangeConcurrencyFactor = DatabaseDescriptor.rangeConcurrencyFactor();
+        MAX_RANGE_BUCKET_SIZE = (rangeConcurrencyFactor <= 1) ? 1 : rangeConcurrencyFactor;
+
+        logger.info("Range Concurrency Factor is set to {}", MAX_RANGE_BUCKET_SIZE);
+
         MBeanServer mbs = ManagementFactory.getPlatformMBeanServer();
         try
         {
@@ -1515,6 +1522,10 @@ public class StorageProxy implements StorageProxyMBean
             AbstractBounds<RowPosition> nextRange = null;
             List<InetAddress> nextEndpoints = null;
             List<InetAddress> nextFilteredEndpoints = null;
+
+            List<ReadCallback<RangeSliceReply, Iterable<Row>>> concurrentBucket = new LinkedList<>();
+
+            range_slice:
             while (i < ranges.size())
             {
                 AbstractBounds<RowPosition> range = nextRange == null
@@ -1590,56 +1601,69 @@ public class StorageProxy implements StorageProxyMBean
                     }
                 }
 
-                try
-                {
-                    for (Row row : handler.get())
-                    {
-                        rows.add(row);
-                        if (countLiveRows)
-                            liveRowCount += row.getLiveCount(command.predicate, command.timestamp);
-                    }
-                    FBUtilities.waitOnFutures(resolver.repairResults, DatabaseDescriptor.getWriteRpcTimeout());
-                }
-                catch (ReadTimeoutException ex)
-                {
-                    // we timed out waiting for responses
-                    int blockFor = consistency_level.blockFor(keyspace);
-                    int responseCount = resolver.responses.size();
-                    String gotData = responseCount > 0
-                                     ? resolver.isDataPresent() ? " (including data)" : " (only digests)"
-                                     : "";
+                concurrentBucket.add(handler);
 
-                    if (Tracing.isTracing())
-                    {
-                        Tracing.trace("Timed out; received {} of {} responses{} for range {} of {}",
-                                new Object[]{ responseCount, blockFor, gotData, i, ranges.size() });
-                    }
-                    else if (logger.isDebugEnabled())
-                    {
-                        logger.debug("Range slice timeout; received {} of {} responses{} for range {} of {}",
-                                responseCount, blockFor, gotData, i, ranges.size());
-                    }
-                    throw ex;
-                }
-                catch (TimeoutException ex)
+                // bucket is not yet full, so let's do more concurrent requests before waiting
+                if (concurrentBucket.size() < MAX_RANGE_BUCKET_SIZE && ranges.size() - i > 0)
+                    continue;
+
+                for (ReadCallback<RangeSliceReply, Iterable<Row>> rangeHandler : concurrentBucket)
                 {
-                    // We got all responses, but timed out while repairing
-                    int blockFor = consistency_level.blockFor(keyspace);
-                    if (Tracing.isTracing())
-                        Tracing.trace("Timed out while read-repairing after receiving all {} data and digest responses", blockFor);
-                    else
-                        logger.debug("Range slice timeout while read-repairing after receiving all {} data and digest responses", blockFor);
-                    throw new ReadTimeoutException(consistency_level, blockFor-1, blockFor, true);
-                }
-                catch (DigestMismatchException e)
-                {
-                    throw new AssertionError(e); // no digests in range slices yet
+                    try
+                    {
+                        for (Row row : rangeHandler.get())
+                        {
+                            rows.add(row);
+
+                            if (countLiveRows)
+                                liveRowCount += row.getLiveCount(command.predicate, command.timestamp);
+
+                            // if we're done, great, otherwise, move to the next range
+                            int count = countLiveRows ? liveRowCount : rows.size();
+                            if (count >= nodeCmd.limit())
+                                break range_slice;
+                        }
+
+                        FBUtilities.waitOnFutures(resolver.repairResults, DatabaseDescriptor.getWriteRpcTimeout());
+                    }
+                    catch (ReadTimeoutException ex)
+                    {
+                        // we timed out waiting for responses
+                        int blockFor = consistency_level.blockFor(keyspace);
+                        int responseCount = resolver.responses.size();
+                        String gotData = responseCount > 0
+                                         ? resolver.isDataPresent() ? " (including data)" : " (only digests)"
+                                         : "";
+
+                        if (Tracing.isTracing())
+                        {
+                            Tracing.trace("Timed out; received {} of {} responses{} for range {} of {}",
+                                    new Object[]{ responseCount, blockFor, gotData, i, ranges.size() });
+                        }
+                        else if (logger.isDebugEnabled())
+                        {
+                            logger.debug("Range slice timeout; received {} of {} responses{} for range {} of {}",
+                                    responseCount, blockFor, gotData, i, ranges.size());
+                        }
+                        throw ex;
+                    }
+                    catch (TimeoutException ex)
+                    {
+                        // We got all responses, but timed out while repairing
+                        int blockFor = consistency_level.blockFor(keyspace);
+                        if (Tracing.isTracing())
+                            Tracing.trace("Timed out while read-repairing after receiving all {} data and digest responses", blockFor);
+                        else
+                            logger.debug("Range slice timeout while read-repairing after receiving all {} data and digest responses", blockFor);
+                        throw new ReadTimeoutException(consistency_level, blockFor-1, blockFor, true);
+                    }
+                    catch (DigestMismatchException e)
+                    {
+                        throw new AssertionError(e); // no digests in range slices yet
+                    }
                 }
 
-                // if we're done, great, otherwise, move to the next range
-                int count = countLiveRows ? liveRowCount : rows.size();
-                if (count >= nodeCmd.limit())
-                    break;
+                concurrentBucket.clear();
             }
         }
         finally

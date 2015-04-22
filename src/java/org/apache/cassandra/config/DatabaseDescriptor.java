@@ -1446,4 +1446,14 @@ public class DatabaseDescriptor
         String arch = System.getProperty("os.arch");
         return arch.contains("64") || arch.contains("sparcv9");
     }
+
+    public static int rangeConcurrencyFactor()
+    {
+        return Integer.valueOf(System.getProperty("cassandra.range_concurrency_factor", "1"));
+    }
+
+    public static int searchConcurrencyFactor()
+    {
+        return Integer.valueOf(System.getProperty("cassandra.search_concurrency_factor", "1"));
+    }
 }
