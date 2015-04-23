@@ -6,6 +6,7 @@ import org.junit.Assert;
 import org.junit.Test;
 
 import com.codahale.metrics.Snapshot;
+import org.apache.cassandra.exceptions.FunctionExecutionException;
 import org.apache.cassandra.exceptions.InvalidRequestException;
 
 public class UDFTestTest
@@ -17,7 +18,7 @@ public class UDFTestTest
         udf.penetrate();
     }
 
-    @Test(expected = InvalidRequestException.class)
+    @Test(expected = FunctionExecutionException.class)
     public void npeTest() throws Throwable
     {
         // this UDF fails with a NullPointerException if input parameter 'inp' is null
@@ -101,7 +102,7 @@ public class UDFTestTest
         dumpResult(result, "Javascript concurrent timed");
     }
 
-    private void dumpResult(UDFResult result, String title)
+    private static void dumpResult(UDFResult result, String title)
     {
         long cnt = result.getTimer().getCount();
         Snapshot snap = result.getTimer().getSnapshot();

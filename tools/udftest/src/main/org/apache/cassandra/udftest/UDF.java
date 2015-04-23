@@ -68,6 +68,7 @@ import org.apache.cassandra.db.marshal.UTF8Type;
 import org.apache.cassandra.db.marshal.UUIDType;
 import org.apache.cassandra.exceptions.InvalidRequestException;
 import org.apache.cassandra.exceptions.SyntaxException;
+import org.apache.cassandra.transport.Server;
 import org.apache.cassandra.utils.UUIDGen;
 
 /**
@@ -98,6 +99,7 @@ public class UDF
 
     private long timeout = 100;
     private TimeUnit timeoutUnit = TimeUnit.MILLISECONDS;
+    private int version = Server.VERSION_3;
 
     public UDF(String cql) throws InvalidRequestException, SyntaxException
     {
@@ -129,6 +131,16 @@ public class UDF
             throw new IllegalArgumentException("Must pass a CREATE FUNCTION statement (was " + statement.getClass().getSimpleName() + ")");
 
         this.udf = ((CreateFunctionStatement) statement).functionForTest();
+    }
+
+    public int getVersion()
+    {
+        return version;
+    }
+
+    public void setVersion(int version)
+    {
+        this.version = version;
     }
 
     /**
@@ -433,7 +445,7 @@ public class UDF
                 List<ByteBuffer> args = new ArrayList<>(params.size());
                 for (ByteBuffer param : params)
                     args.add(param != null ? param.duplicate() : null);
-                udf.execute(args);
+                udf.execute(version, args);
             }
         }
     }
@@ -564,7 +576,7 @@ public class UDF
 
                         // execute the UDF the first time
                         long t0 = System.nanoTime();
-                        ByteBuffer ref = udf.execute(params);
+                        ByteBuffer ref = udf.execute(version, params);
                         timer.update(System.nanoTime() - t0, TimeUnit.NANOSECONDS);
 
                         for (int i = 1; endReached(i); i++)
@@ -576,7 +588,7 @@ public class UDF
 
                             // execute the UDF (again and again
                             t0 = System.nanoTime();
-                            ByteBuffer cmp = udf.execute(params);
+                            ByteBuffer cmp = udf.execute(version, params);
                             timer.update(System.nanoTime() - t0, TimeUnit.NANOSECONDS);
 
                             // compare the result, if the UDF is deterministic (pure)
