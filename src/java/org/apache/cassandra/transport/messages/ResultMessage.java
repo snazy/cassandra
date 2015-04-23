@@ -60,7 +60,8 @@ public abstract class ResultMessage extends Message.Response
         ROWS         (2, Rows.subcodec),
         SET_KEYSPACE (3, SetKeyspace.subcodec),
         PREPARED     (4, Prepared.subcodec),
-        SCHEMA_CHANGE(5, SchemaChange.subcodec);
+        SCHEMA_CHANGE(5, SchemaChange.subcodec),
+        PREPARED_MULTI(6, PreparedMulti.subcodec);
 
         public final int id;
         public final Message.Codec<ResultMessage> subcodec;
@@ -333,6 +334,61 @@ public abstract class ResultMessage extends Message.Response
         public String toString()
         {
             return "RESULT PREPARED " + statementId + " " + metadata + " (resultMetadata=" + resultMetadata + ")";
+        }
+    }
+
+    public static class PreparedMulti extends ResultMessage
+    {
+        public static final Message.Codec<ResultMessage> subcodec = new Message.Codec<ResultMessage>()
+        {
+            public ResultMessage decode(ByteBuf body, int version)
+            {
+                int n = body.readInt();
+                List<Prepared> prepares = new ArrayList<>(n);
+                for (int i = 0; i < n; i++)
+                    prepares.add((Prepared) Prepared.subcodec.decode(body, version));
+                return new PreparedMulti(prepares);
+            }
+
+            public void encode(ResultMessage msg, ByteBuf dest, int version)
+            {
+                assert msg instanceof PreparedMulti;
+                PreparedMulti prepared = (PreparedMulti)msg;
+
+                dest.writeInt(prepared.prepares.size());
+                for (Prepared prepare : prepared.prepares)
+                    Prepared.subcodec.encode(prepare, dest, version);
+            }
+
+            public int encodedSize(ResultMessage msg, int version)
+            {
+                assert msg instanceof PreparedMulti;
+                PreparedMulti prepared = (PreparedMulti)msg;
+
+                int size = 4;
+                for (Prepared prepare : prepared.prepares)
+                    size += Prepared.subcodec.encodedSize(prepare, version);
+                return size;
+            }
+        };
+
+        public final List<Prepared> prepares;
+
+        public PreparedMulti(List<Prepared> prepares)
+        {
+            super(Kind.PREPARED_MULTI);
+            this.prepares = prepares;
+        }
+
+        public CqlResult toThriftResult()
+        {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public String toString()
+        {
+            return "RESULT PREPARED_MULTI " + prepares;
         }
     }
 

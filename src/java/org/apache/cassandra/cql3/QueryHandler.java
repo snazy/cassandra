@@ -17,6 +17,7 @@
  */
 package org.apache.cassandra.cql3;
 
+import java.util.List;
 import java.util.Map;
 
 import org.apache.cassandra.cql3.statements.BatchStatement;
@@ -32,6 +33,8 @@ public interface QueryHandler
     ResultMessage process(String query, QueryState state, QueryOptions options, Map<String, byte[]> customPayload) throws RequestExecutionException, RequestValidationException;
 
     ResultMessage.Prepared prepare(String query, QueryState state, Map<String, byte[]> customPayload) throws RequestValidationException;
+
+    ResultMessage.PreparedMulti prepareMulti(List<String> query, QueryState state, Map<String, byte[]> customPayload) throws RequestValidationException;
 
     ParsedStatement.Prepared getPrepared(MD5Digest id);
 

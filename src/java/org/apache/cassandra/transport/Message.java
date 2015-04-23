@@ -98,7 +98,8 @@ public abstract class Message
         BATCH          (13, Direction.REQUEST,  BatchMessage.codec),
         AUTH_CHALLENGE (14, Direction.RESPONSE, AuthChallenge.codec),
         AUTH_RESPONSE  (15, Direction.REQUEST,  AuthResponse.codec),
-        AUTH_SUCCESS   (16, Direction.RESPONSE, AuthSuccess.codec);
+        AUTH_SUCCESS   (16, Direction.RESPONSE, AuthSuccess.codec),
+        PREPARE_MULTI  (17, Direction.REQUEST,  PrepareMultiMessage.codec);
 
         public final int opcode;
         public final Direction direction;

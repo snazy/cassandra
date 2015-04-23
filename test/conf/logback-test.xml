@@ -51,7 +51,12 @@
       <level>WARN</level>
     </filter>
   </appender>
-        
+
+  <!-- for ConcurrentPrepareBench - prevent Java Driver to complain about duplicate prepares -->
+  <logger name="com.datastax.driver" level="ERROR"/>
+  <!-- for ConcurrentPrepareBench - prevent Netty to complain about exceptions (RejectedExecutionException during C* shutdown) -->
+  <logger name="org.jboss.netty.channel" level="ERROR"/>
+
   <root level="DEBUG">
     <appender-ref ref="FILE" />
     <appender-ref ref="STDERR" />

@@ -179,6 +179,7 @@ Table of Contents
     0x0E    AUTH_CHALLENGE
     0x0F    AUTH_RESPONSE
     0x10    AUTH_SUCCESS
+    0x11    PREPARE_MULTI
 
   Messages are described in Section 4.
 
@@ -515,6 +516,7 @@ Table of Contents
     0x0003    Set_keyspace: the result to a `use` query.
     0x0004    Prepared: result to a PREPARE message.
     0x0005    Schema_change: the result to a schema altering query.
+    0x0006    Prepared_multi: result to a PREPARE_MULTI message.
 
   The body for each kind (after the [int] kind) is defined below.
 

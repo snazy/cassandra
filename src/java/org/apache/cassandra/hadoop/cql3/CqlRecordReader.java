@@ -30,6 +30,7 @@ import com.google.common.base.Splitter;
 import com.google.common.collect.AbstractIterator;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.Maps;
+import com.google.common.reflect.TypeToken;
 import org.apache.commons.lang3.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -40,6 +41,7 @@ import com.datastax.driver.core.ColumnMetadata;
 import com.datastax.driver.core.ResultSet;
 import com.datastax.driver.core.Row;
 import com.datastax.driver.core.Session;
+import com.datastax.driver.core.Token;
 import com.datastax.driver.core.TupleValue;
 import com.datastax.driver.core.UDTValue;
 import org.apache.cassandra.schema.LegacySchemaTables;
@@ -544,6 +546,61 @@ public class CqlRecordReader extends RecordReader<Long, Row>
         public TupleValue getTupleValue(String name)
         {
             return row.getTupleValue(name);
+        }
+
+        public Token getPartitionKeyToken()
+        {
+            return null;
+        }
+
+        public Token getToken(int i)
+        {
+            return null;
+        }
+
+        public Token getToken(String s)
+        {
+            return null;
+        }
+
+        public <T> List<T> getList(int i, TypeToken<T> typeToken)
+        {
+            return null;
+        }
+
+        public <T> Set<T> getSet(int i, TypeToken<T> typeToken)
+        {
+            return null;
+        }
+
+        public <K, V> Map<K, V> getMap(int i, TypeToken<K> typeToken, TypeToken<V> typeToken1)
+        {
+            return null;
+        }
+
+        public Object getObject(int i)
+        {
+            return null;
+        }
+
+        public <T> List<T> getList(String s, TypeToken<T> typeToken)
+        {
+            return null;
+        }
+
+        public <T> Set<T> getSet(String s, TypeToken<T> typeToken)
+        {
+            return null;
+        }
+
+        public <K, V> Map<K, V> getMap(String s, TypeToken<K> typeToken, TypeToken<V> typeToken1)
+        {
+            return null;
+        }
+
+        public Object getObject(String s)
+        {
+            return null;
         }
     }
 

@@ -21,6 +21,7 @@ import java.lang.reflect.Field;
 import java.lang.reflect.Modifier;
 import java.nio.ByteBuffer;
 import java.util.Collections;
+import java.util.List;
 import java.util.Map;
 
 import org.junit.After;
@@ -300,6 +301,19 @@ public class MessagePayloadTest extends CQLTester
             if (customPayload != null)
                 requestPayload = customPayload;
             ResultMessage.Prepared result = QueryProcessor.instance.prepare(query, state, customPayload);
+            if (customPayload != null)
+            {
+                result.setCustomPayload(responsePayload);
+                responsePayload = null;
+            }
+            return result;
+        }
+
+        public ResultMessage.PreparedMulti prepareMulti(List<String> query, QueryState state, Map<String, byte[]> customPayload) throws RequestValidationException
+        {
+            if (customPayload != null)
+                requestPayload = customPayload;
+            ResultMessage.PreparedMulti result = QueryProcessor.instance.prepareMulti(query, state, customPayload);
             if (customPayload != null)
             {
                 result.setCustomPayload(responsePayload);

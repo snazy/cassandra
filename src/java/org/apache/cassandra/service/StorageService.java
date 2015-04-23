@@ -613,52 +613,7 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
             @Override
             public void runMayThrow() throws InterruptedException
             {
-                ExecutorService counterMutationStage = StageManager.getStage(Stage.COUNTER_MUTATION);
-                ExecutorService mutationStage = StageManager.getStage(Stage.MUTATION);
-                if (mutationStage.isShutdown() && counterMutationStage.isShutdown())
-                    return; // drained already
-
-                if (daemon != null)
-                	shutdownClientServers();
-                ScheduledExecutors.optionalTasks.shutdown();
-                Gossiper.instance.stop();
-
-                // In-progress writes originating here could generate hints to be written, so shut down MessagingService
-                // before mutation stage, so we can get all the hints saved before shutting down
-                MessagingService.instance().shutdown();
-                counterMutationStage.shutdown();
-                mutationStage.shutdown();
-                counterMutationStage.awaitTermination(3600, TimeUnit.SECONDS);
-                mutationStage.awaitTermination(3600, TimeUnit.SECONDS);
-                StorageProxy.instance.verifyNoHintsInProgress();
-
-                List<Future<?>> flushes = new ArrayList<>();
-                for (Keyspace keyspace : Keyspace.all())
-                {
-                    KSMetaData ksm = Schema.instance.getKSMetaData(keyspace.getName());
-                    if (!ksm.durableWrites)
-                    {
-                        for (ColumnFamilyStore cfs : keyspace.getColumnFamilyStores())
-                            flushes.add(cfs.forceFlush());
-                    }
-                }
-                try
-                {
-                    FBUtilities.waitOnFutures(flushes);
-                }
-                catch (Throwable t)
-                {
-                    JVMStabilityInspector.inspectThrowable(t);
-                    // don't let this stop us from shutting down the commitlog and other thread pools
-                    logger.warn("Caught exception while waiting for memtable flushes during shutdown hook", t);
-                }
-
-                CommitLog.instance.shutdownBlocking();
-
-                // wait for miscellaneous tasks like sstable and commitlog segment deletion
-                ScheduledExecutors.nonPeriodicTasks.shutdown();
-                if (!ScheduledExecutors.nonPeriodicTasks.awaitTermination(1, TimeUnit.MINUTES))
-                    logger.warn("Miscellaneous task executor still busy after one minute; proceeding with shutdown");
+                onShutdown();
             }
         }, "StorageServiceShutdownHook");
         Runtime.getRuntime().addShutdownHook(drainOnShutdown);
@@ -690,6 +645,56 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
             }
             logger.info("Not joining ring as requested. Use JMX (StorageService->joinRing()) to initiate ring joining");
         }
+    }
+
+    public void onShutdown() throws InterruptedException
+    {
+        ExecutorService counterMutationStage = StageManager.getStage(Stage.COUNTER_MUTATION);
+        ExecutorService mutationStage = StageManager.getStage(Stage.MUTATION);
+        if (mutationStage.isShutdown() && counterMutationStage.isShutdown())
+            return; // drained already
+
+        if (daemon != null)
+            shutdownClientServers();
+        ScheduledExecutors.optionalTasks.shutdown();
+        Gossiper.instance.stop();
+
+        // In-progress writes originating here could generate hints to be written, so shut down MessagingService
+        // before mutation stage, so we can get all the hints saved before shutting down
+        MessagingService.instance().shutdown();
+        counterMutationStage.shutdown();
+        mutationStage.shutdown();
+        counterMutationStage.awaitTermination(3600, TimeUnit.SECONDS);
+        mutationStage.awaitTermination(3600, TimeUnit.SECONDS);
+        StorageProxy.instance.verifyNoHintsInProgress();
+
+        List<Future<?>> flushes = new ArrayList<>();
+        for (Keyspace keyspace : Keyspace.all())
+        {
+            KSMetaData ksm = Schema.instance.getKSMetaData(keyspace.getName());
+            if (!ksm.durableWrites)
+            {
+                for (ColumnFamilyStore cfs : keyspace.getColumnFamilyStores())
+                    flushes.add(cfs.forceFlush());
+            }
+        }
+        try
+        {
+            FBUtilities.waitOnFutures(flushes);
+        }
+        catch (Throwable t)
+        {
+            JVMStabilityInspector.inspectThrowable(t);
+            // don't let this stop us from shutting down the commitlog and other thread pools
+            logger.warn("Caught exception while waiting for memtable flushes during shutdown hook", t);
+        }
+
+        CommitLog.instance.shutdownBlocking();
+
+        // wait for miscellaneous tasks like sstable and commitlog segment deletion
+        ScheduledExecutors.nonPeriodicTasks.shutdown();
+        if (!ScheduledExecutors.nonPeriodicTasks.awaitTermination(1, TimeUnit.MINUTES))
+            logger.warn("Miscellaneous task executor still busy after one minute; proceeding with shutdown");
     }
 
     /**

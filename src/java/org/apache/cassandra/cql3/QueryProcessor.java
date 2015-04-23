@@ -354,6 +354,14 @@ public class QueryProcessor implements QueryHandler
         return UntypedResultSet.create(cqlRows);
     }
 
+    public ResultMessage.PreparedMulti prepareMulti(List<String> query, QueryState state, Map<String, byte[]> customPayload) throws RequestValidationException
+    {
+        List<ResultMessage.Prepared> prepares = new ArrayList<>(query.size());
+        for (String q : query)
+            prepares.add(prepare(q, state, customPayload));
+        return new ResultMessage.PreparedMulti(prepares);
+    }
+
     public ResultMessage.Prepared prepare(String query, QueryState state, Map<String, byte[]> customPayload) throws RequestValidationException
     {
         return prepare(query, state);
