@@ -38,7 +38,6 @@ import java.util.TreeSet;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.primitives.Longs;
 
-import org.apache.cassandra.cache.RefCountedMemory;
 import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.db.TypeSizes;
 import org.apache.cassandra.exceptions.ConfigurationException;
@@ -52,6 +51,7 @@ import org.apache.cassandra.io.sstable.format.Version;
 import org.apache.cassandra.io.util.DataOutputPlus;
 import org.apache.cassandra.io.util.FileUtils;
 import org.apache.cassandra.io.util.Memory;
+import org.apache.cassandra.io.util.SafeMemory;
 import org.apache.cassandra.utils.Pair;
 
 /**
@@ -59,9 +59,11 @@ import org.apache.cassandra.utils.Pair;
  */
 public class CompressionMetadata
 {
+    // dataLength can represent either the true length of the file
+    // or some shorter value, in the case we want to impose a shorter limit on readers
+    // (when early opening, we want to ensure readers cannot read past fully written sections)
     public final long dataLength;
     public final long compressedFileLength;
-    public final boolean hasPostCompressionAdlerChecksums;
     private final Memory chunkOffsets;
     private final long chunkOffsetsSize;
     public final String indexFilePath;
@@ -81,14 +83,13 @@ public class CompressionMetadata
     public static CompressionMetadata create(String dataFilePath)
     {
         Descriptor desc = Descriptor.fromFilename(dataFilePath);
-        return new CompressionMetadata(desc.filenameFor(Component.COMPRESSION_INFO), new File(dataFilePath).length(), desc.version.hasPostCompressionAdlerChecksums());
+        return new CompressionMetadata(desc.filenameFor(Component.COMPRESSION_INFO), new File(dataFilePath).length());
     }
 
     @VisibleForTesting
-    CompressionMetadata(String indexFilePath, long compressedLength, boolean hasPostCompressionAdlerChecksums)
+    CompressionMetadata(String indexFilePath, long compressedLength)
     {
         this.indexFilePath = indexFilePath;
-        this.hasPostCompressionAdlerChecksums = hasPostCompressionAdlerChecksums;
 
         DataInputStream stream;
         try
@@ -133,18 +134,17 @@ public class CompressionMetadata
         {
             FileUtils.closeQuietly(stream);
         }
+
         this.chunkOffsetsSize = chunkOffsets.size();
     }
 
-    private CompressionMetadata(String filePath, CompressionParameters parameters, RefCountedMemory offsets, long offsetsSize, long dataLength, long compressedLength, boolean hasPostCompressionAdlerChecksums)
+    private CompressionMetadata(String filePath, CompressionParameters parameters, SafeMemory offsets, long offsetsSize, long dataLength, long compressedLength)
     {
         this.indexFilePath = filePath;
         this.parameters = parameters;
         this.dataLength = dataLength;
         this.compressedFileLength = compressedLength;
-        this.hasPostCompressionAdlerChecksums = hasPostCompressionAdlerChecksums;
         this.chunkOffsets = offsets;
-        offsets.reference();
         this.chunkOffsetsSize = offsetsSize;
     }
 
@@ -159,6 +159,15 @@ public class CompressionMetadata
     }
 
     /**
+     * Returns the amount of memory in bytes used off heap.
+     * @return the amount of memory in bytes used off heap
+     */
+    public long offHeapSize()
+    {
+        return chunkOffsets.size();
+    }
+
+    /**
      * Read offsets of the individual chunks from the given input.
      *
      * @param input Source of the data.
@@ -170,13 +179,16 @@ public class CompressionMetadata
         try
         {
             int chunkCount = input.readInt();
-            Memory offsets = Memory.allocate(chunkCount * 8);
+            if (chunkCount <= 0)
+                throw new IOException("Compressed file with 0 chunks encountered: " + input);
+
+            Memory offsets = Memory.allocate(chunkCount * 8L);
 
             for (int i = 0; i < chunkCount; i++)
             {
                 try
                 {
-                    offsets.setLong(i * 8, input.readLong());
+                    offsets.setLong(i * 8L, input.readLong());
                 }
                 catch (EOFException e)
                 {
@@ -209,7 +221,7 @@ public class CompressionMetadata
             throw new CorruptSSTableException(new EOFException(), indexFilePath);
 
         long chunkOffset = chunkOffsets.getLong(idx);
-        long nextChunkOffset = (idx + 8 == chunkOffsets.size())
+        long nextChunkOffset = (idx + 8 == chunkOffsetsSize)
                                 ? compressedFileLength
                                 : chunkOffsets.getLong(idx + 8);
 
@@ -237,7 +249,7 @@ public class CompressionMetadata
             endIndex = section.right % parameters.chunkLength() == 0 ? endIndex - 1 : endIndex;
             for (int i = startIndex; i <= endIndex; i++)
             {
-                long offset = i * 8;
+                long offset = i * 8L;
                 long chunkOffset = chunkOffsets.getLong(offset);
                 long nextChunkOffset = offset + 8 == chunkOffsetsSize
                                      ? compressedFileLength
@@ -250,10 +262,7 @@ public class CompressionMetadata
 
     public void close()
     {
-        if (chunkOffsets instanceof RefCountedMemory)
-            ((RefCountedMemory) chunkOffsets).unreference();
-        else
-            chunkOffsets.free();
+        chunkOffsets.close();
     }
 
     public static class Writer
@@ -262,9 +271,8 @@ public class CompressionMetadata
         private final CompressionParameters parameters;
         private final String filePath;
         private int maxCount = 100;
-        private RefCountedMemory offsets = new RefCountedMemory(maxCount * 8);
+        private SafeMemory offsets = new SafeMemory(maxCount * 8L);
         private int count = 0;
-        private Version latestVersion =  DatabaseDescriptor.getSSTableFormat().info.getLatestVersion();
 
 
         private Writer(CompressionParameters parameters, String path)
@@ -282,11 +290,11 @@ public class CompressionMetadata
         {
             if (count == maxCount)
             {
-                RefCountedMemory newOffsets = offsets.copy((maxCount *= 2) * 8);
-                offsets.unreference();
+                SafeMemory newOffsets = offsets.copy((maxCount *= 2L) * 8L);
+                offsets.close();
                 offsets = newOffsets;
             }
-            offsets.setLong(8 * count++, offset);
+            offsets.setLong(8L * count++, offset);
         }
 
         private void writeHeader(DataOutput out, long dataLength, int chunks)
@@ -313,16 +321,62 @@ public class CompressionMetadata
             }
         }
 
-        public CompressionMetadata openEarly(long dataLength, long compressedLength)
+        static enum OpenType
         {
-            return new CompressionMetadata(filePath, parameters, offsets, count * 8L, dataLength, compressedLength, latestVersion.hasPostCompressionAdlerChecksums());
+            // i.e. FinishType == EARLY; we will use the RefCountedMemory in possibly multiple instances
+            SHARED,
+            // i.e. FinishType == EARLY, but the sstable has been completely written, so we can
+            // finalise the contents and size of the memory, but must retain a reference to it
+            SHARED_FINAL,
+            // i.e. FinishType == NORMAL or FINISH_EARLY, i.e. we have actually finished writing the table
+            // and will never need to open the metadata again, so we can release any references to it here
+            FINAL
         }
 
-        public CompressionMetadata openAfterClose(long dataLength, long compressedLength)
+        public CompressionMetadata open(long dataLength, long compressedLength, OpenType type)
         {
-            RefCountedMemory newOffsets = offsets.copy(count * 8L);
-            offsets.unreference();
-            return new CompressionMetadata(filePath, parameters, newOffsets, count * 8L, dataLength, compressedLength, latestVersion.hasPostCompressionAdlerChecksums());
+            SafeMemory offsets;
+            int count = this.count;
+            switch (type)
+            {
+                case FINAL: case SHARED_FINAL:
+                    if (this.offsets.size() != count * 8L)
+                    {
+                        // finalize the size of memory used if it won't now change;
+                        // unnecessary if already correct size
+                        SafeMemory tmp = this.offsets.copy(count * 8L);
+                        this.offsets.free();
+                        this.offsets = tmp;
+                    }
+
+                    if (type == OpenType.SHARED_FINAL)
+                    {
+                        offsets = this.offsets.sharedCopy();
+                    }
+                    else
+                    {
+                        offsets = this.offsets;
+                        // null out our reference to the original shared data to catch accidental reuse
+                        // note that since noone is writing to this Writer while we open it, null:ing out this.offsets is safe
+                        this.offsets = null;
+                    }
+                    break;
+
+                case SHARED:
+                    offsets = this.offsets.sharedCopy();
+                    // we should only be opened on a compression data boundary; truncate our size to this boundary
+                    count = (int) (dataLength / parameters.chunkLength());
+                    if (dataLength % parameters.chunkLength() != 0)
+                        count++;
+                    // grab our actual compressed length from the next offset from our the position we're opened to
+                    if (count < this.count)
+                        compressedLength = offsets.getLong(count * 8L);
+                    break;
+
+                default:
+                    throw new AssertionError();
+            }
+            return new CompressionMetadata(filePath, parameters, offsets, count * 8L, dataLength, compressedLength);
         }
 
         /**
@@ -356,13 +410,19 @@ public class CompressionMetadata
             	out = new DataOutputStream(new BufferedOutputStream(new FileOutputStream(filePath)));
 	            assert chunks == count;
 	            writeHeader(out, dataLength, chunks);
-	            for (int i = 0 ; i < count ; i++)
-	                out.writeLong(offsets.getLong(i * 8));
+                for (int i = 0 ; i < count ; i++)
+                    out.writeLong(offsets.getLong(i * 8L));
             }
             finally
             {
                 FileUtils.closeQuietly(out);
             }
+        }
+
+        public void abort()
+        {
+            if (offsets != null)
+                offsets.close();
         }
     }
 
@@ -378,6 +438,8 @@ public class CompressionMetadata
 
         public Chunk(long offset, int length)
         {
+            assert(length > 0);
+
             this.offset = offset;
             this.length = length;
         }

@@ -23,12 +23,13 @@ import java.util.List;
 
 import org.apache.cassandra.io.compress.CompressionMetadata;
 import org.apache.cassandra.io.sstable.format.SSTableReader;
-import org.apache.cassandra.io.util.DataOutputStreamAndChannel;
+import org.apache.cassandra.io.util.DataOutputStreamPlus;
 import org.apache.cassandra.streaming.StreamSession;
 import org.apache.cassandra.streaming.StreamWriter;
 import org.apache.cassandra.streaming.compress.CompressedStreamWriter;
 import org.apache.cassandra.streaming.compress.CompressionInfo;
 import org.apache.cassandra.utils.Pair;
+import org.apache.cassandra.utils.concurrent.Ref;
 
 /**
  * OutgoingFileMessage is used to transfer the part(or whole) of a SSTable data file.
@@ -42,7 +43,7 @@ public class OutgoingFileMessage extends StreamMessage
             throw new UnsupportedOperationException("Not allowed to call deserialize on an outgoing file");
         }
 
-        public void serialize(OutgoingFileMessage message, DataOutputStreamAndChannel out, int version, StreamSession session) throws IOException
+        public void serialize(OutgoingFileMessage message, DataOutputStreamPlus out, int version, StreamSession session) throws IOException
         {
             FileMessageHeader.serializer.serialize(message.header, out, version);
 
@@ -52,18 +53,20 @@ public class OutgoingFileMessage extends StreamMessage
                     new CompressedStreamWriter(reader,
                             message.header.sections,
                             message.header.compressionInfo, session);
-            writer.write(out.getChannel());
+            writer.write(out);
             session.fileSent(message.header);
         }
     };
 
-    public FileMessageHeader header;
-    public SSTableReader sstable;
+    public final FileMessageHeader header;
+    public final SSTableReader sstable;
+    public final Ref<SSTableReader> ref;
 
-    public OutgoingFileMessage(SSTableReader sstable, int sequenceNumber, long estimatedKeys, List<Pair<Long, Long>> sections, long repairedAt, boolean keepSSTableLevel)
+    public OutgoingFileMessage(SSTableReader sstable, Ref ref, int sequenceNumber, long estimatedKeys, List<Pair<Long, Long>> sections, long repairedAt, boolean keepSSTableLevel)
     {
         super(Type.FILE);
         this.sstable = sstable;
+        this.ref = ref;
 
         CompressionInfo compressionInfo = null;
         if (sstable.compression)

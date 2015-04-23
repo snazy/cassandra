@@ -35,6 +35,7 @@ import javax.script.SimpleBindings;
 
 import org.apache.cassandra.cql3.ColumnIdentifier;
 import org.apache.cassandra.db.marshal.AbstractType;
+import org.apache.cassandra.exceptions.FunctionExecutionException;
 import org.apache.cassandra.exceptions.InvalidRequestException;
 
 public class ScriptBasedUDF extends UDFunction
@@ -88,15 +89,11 @@ public class ScriptBasedUDF extends UDFunction
         }
     }
 
-    public ByteBuffer execute(List<ByteBuffer> parameters) throws InvalidRequestException
+    public ByteBuffer execute(int protocolVersion, List<ByteBuffer> parameters) throws InvalidRequestException
     {
         Object[] params = new Object[argTypes.size()];
         for (int i = 0; i < params.length; i++)
-        {
-            ByteBuffer bb = parameters.get(i);
-            if (bb != null)
-                params[i] = argTypes.get(i).compose(bb);
-        }
+            params[i] = compose(protocolVersion, i, parameters.get(i));
 
         try
         {
@@ -108,7 +105,7 @@ public class ScriptBasedUDF extends UDFunction
             if (result == null)
                 return null;
 
-            Class<?> javaReturnType = returnType.getSerializer().getType();
+            Class<?> javaReturnType = returnDataType.asJavaClass();
             Class<?> resultType = result.getClass();
             if (!javaReturnType.isAssignableFrom(resultType))
             {
@@ -138,13 +135,12 @@ public class ScriptBasedUDF extends UDFunction
                 }
             }
 
-            @SuppressWarnings("unchecked") ByteBuffer r = ((AbstractType) returnType).decompose(result);
-            return r;
+            return decompose(protocolVersion, result);
         }
         catch (RuntimeException | ScriptException e)
         {
-            logger.info("Execution of UDF '{}' failed", name, e);
-            throw new InvalidRequestException("Execution of user-defined function '" + name + "' failed: " + e);
+            logger.debug("Execution of UDF '{}' failed", name, e);
+            throw FunctionExecutionException.create(this, e);
         }
     }
 }

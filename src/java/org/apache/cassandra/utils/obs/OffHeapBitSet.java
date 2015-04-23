@@ -61,6 +61,12 @@ public class OffHeapBitSet implements IBitSet
         return bytes.size() * 8;
     }
 
+    @Override
+    public long offHeapSize()
+    {
+        return bytes.size();
+    }
+
     public boolean get(long index)
     {
         long i = index >> 3;
@@ -165,5 +171,10 @@ public class OffHeapBitSet implements IBitSet
             h = (h << 1) | (h >>> 63); // rotate left
         }
         return (int) ((h >> 32) ^ h) + 0x98761234;
+    }
+
+    public String toString()
+    {
+        return "[OffHeapBitSet]";
     }
 }

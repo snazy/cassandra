@@ -107,7 +107,7 @@ public class SettingsPopulation implements Serializable
     private static final class SequentialOptions extends GenerateOptions
     {
         final OptionSimple populate;
-        final OptionDistribution lookback = new OptionDistribution("read-lookback=", "fixed(1)", "Select read seeds from the recently visited write seeds");
+        final OptionDistribution lookback = new OptionDistribution("read-lookback=", null, "Select read seeds from the recently visited write seeds", false);
         final OptionSimple nowrap = new OptionSimple("no-wrap", "", null, "Terminate the stress test once all seeds in the range have been visited", false);
 
         public SequentialOptions(String defaultLimit)
@@ -134,6 +134,11 @@ public class SettingsPopulation implements Serializable
         String[] params = clArgs.remove("-pop");
         if (params == null)
         {
+            if (command instanceof SettingsCommandUser && ((SettingsCommandUser)command).hasInsertOnly())
+            {
+                return new SettingsPopulation(new SequentialOptions(defaultLimit));
+            }
+
             // return defaults:
             switch(command.type)
             {

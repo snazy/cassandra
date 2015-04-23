@@ -45,6 +45,7 @@ import org.apache.cassandra.db.filter.SliceQueryFilter;
 import org.apache.cassandra.db.filter.NamesQueryFilter;
 import org.apache.cassandra.db.marshal.AbstractType;
 import org.apache.cassandra.dht.*;
+import org.apache.cassandra.dht.RandomPartitioner.BigIntegerToken;
 import org.apache.cassandra.gms.ApplicationState;
 import org.apache.cassandra.gms.Gossiper;
 import org.apache.cassandra.gms.VersionedValue;
@@ -117,6 +118,16 @@ public class Util
         return new BufferCell(cellname(name), ByteBufferUtil.bytes(value), timestamp);
     }
 
+    public static Cell column(String name, long value, long timestamp)
+    {
+        return new BufferCell(cellname(name), ByteBufferUtil.bytes(value), timestamp);
+    }
+
+    public static Cell column(String clusterKey, String name, long value, long timestamp)
+    {
+        return new BufferCell(cellname(clusterKey, name), ByteBufferUtil.bytes(value), timestamp);
+    }
+
     public static Cell expiringColumn(String name, String value, long timestamp, int ttl)
     {
         return new BufferExpiringCell(cellname(name), ByteBufferUtil.bytes(value), timestamp, ttl);
@@ -180,7 +191,7 @@ public class Util
                                : new SliceQueryFilter(SuperColumns.startOf(superColumn), SuperColumns.endOf(superColumn), false, Integer.MAX_VALUE);
 
         Token min = StorageService.getPartitioner().getMinimumToken();
-        return cfs.getRangeSlice(new Bounds<Token>(min, min).toRowBounds(), null, filter, 10000);
+        return cfs.getRangeSlice(Bounds.makeRowBounds(min, min), null, filter, 10000);
     }
 
     /**
@@ -208,27 +219,6 @@ public class Util
         ColumnFamilyStore cfStore = keyspace.getColumnFamilyStore(cfName);
         assert cfStore != null : "Table " + cfName + " has not been defined";
         return cfStore.getColumnFamily(QueryFilter.getIdentityFilter(key, cfName, System.currentTimeMillis()));
-    }
-
-    public static byte[] concatByteArrays(byte[] first, byte[]... remaining)
-    {
-        int length = first.length;
-        for (byte[] array : remaining)
-        {
-            length += array.length;
-        }
-
-        byte[] result = new byte[length];
-        System.arraycopy(first, 0, result, 0, first.length);
-        int offset = first.length;
-
-        for (byte[] array : remaining)
-        {
-            System.arraycopy(array, 0, result, offset, array.length);
-            offset += array.length;
-        }
-
-        return result;
     }
 
     public static boolean equalsCounterId(CounterId n, ByteBuffer context, int offset)
@@ -310,22 +300,6 @@ public class Util
         }
 
         assert thrown : exception.getName() + " not received";
-    }
-
-    public static ByteBuffer serializeForSSTable(ColumnFamily cf)
-    {
-        try
-        {
-            DataOutputBuffer out = new DataOutputBuffer();
-            DeletionTime.serializer.serialize(cf.deletionInfo().getTopLevelDeletion(), out);
-            out.writeInt(cf.getColumnCount());
-            new ColumnIndex.Builder(cf, ByteBufferUtil.EMPTY_BYTE_BUFFER, out).build(cf);
-            return ByteBuffer.wrap(out.toByteArray());
-        }
-        catch (IOException e)
-        {
-            throw new RuntimeException(e);
-        }
     }
 
     public static QueryFilter namesQueryFilter(ColumnFamilyStore cfs, DecoratedKey key)

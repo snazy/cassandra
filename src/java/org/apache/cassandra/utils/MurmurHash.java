@@ -17,8 +17,6 @@
  */
 package org.apache.cassandra.utils;
 
-import net.nicoulaj.compilecommand.annotations.Inline;
-
 import java.nio.ByteBuffer;
 
 /**
@@ -26,8 +24,10 @@ import java.nio.ByteBuffer;
  * lookup. See http://murmurhash.googlepages.com/ for more details.
  *
  * hash32() and hash64() are MurmurHash 2.0.
- * hash3_x64_128() is MurmurHash 3.0.
  *
+ * hash3_x64_128() is *almost* MurmurHash 3.0.  It was supposed to match, but we didn't catch a sign bug with
+ * the result that it doesn't.  Unfortunately, we can't change it now without breaking Murmur3Partitioner. *
+ * 
  * <p>
  * The C version of MurmurHash 2.0 found at that site was ported to Java by
  * Andrzej Bialecki (ab at getopt org).

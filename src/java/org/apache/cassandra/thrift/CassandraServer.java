@@ -29,43 +29,30 @@ import java.util.zip.Inflater;
 
 import com.google.common.base.Function;
 import com.google.common.base.Joiner;
-import com.google.common.collect.ImmutableMap;
-import com.google.common.collect.ImmutableSortedSet;
-import com.google.common.collect.Iterables;
-import com.google.common.collect.Lists;
-import com.google.common.collect.Maps;
+import com.google.common.collect.*;
 import com.google.common.primitives.Longs;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import org.apache.cassandra.auth.AuthenticatedUser;
 import org.apache.cassandra.auth.Permission;
-import org.apache.cassandra.config.CFMetaData;
-import org.apache.cassandra.config.DatabaseDescriptor;
-import org.apache.cassandra.config.KSMetaData;
-import org.apache.cassandra.config.Schema;
+import org.apache.cassandra.config.*;
 import org.apache.cassandra.cql3.QueryOptions;
 import org.apache.cassandra.cql3.statements.ParsedStatement;
 import org.apache.cassandra.db.*;
 import org.apache.cassandra.db.composites.*;
 import org.apache.cassandra.db.context.CounterContext;
 import org.apache.cassandra.db.filter.ColumnSlice;
-import org.apache.cassandra.db.filter.IDiskAtomFilter;
-import org.apache.cassandra.db.filter.NamesQueryFilter;
-import org.apache.cassandra.db.filter.SliceQueryFilter;
+import org.apache.cassandra.db.filter.*;
 import org.apache.cassandra.db.marshal.TimeUUIDType;
 import org.apache.cassandra.dht.*;
+import org.apache.cassandra.dht.Range;
 import org.apache.cassandra.exceptions.*;
 import org.apache.cassandra.io.util.DataOutputBuffer;
 import org.apache.cassandra.locator.DynamicEndpointSnitch;
 import org.apache.cassandra.metrics.ClientMetrics;
 import org.apache.cassandra.scheduler.IRequestScheduler;
 import org.apache.cassandra.serializers.MarshalException;
-import org.apache.cassandra.service.CASRequest;
-import org.apache.cassandra.service.ClientState;
-import org.apache.cassandra.service.MigrationManager;
-import org.apache.cassandra.service.StorageProxy;
-import org.apache.cassandra.service.StorageService;
+import org.apache.cassandra.service.*;
 import org.apache.cassandra.service.pager.QueryPagers;
 import org.apache.cassandra.tracing.Tracing;
 import org.apache.cassandra.utils.ByteBufferUtil;
@@ -551,7 +538,7 @@ public class CassandraServer implements Cassandra.Iface
             // request by page if this is a large row
             if (cfs.getMeanColumns() > 0)
             {
-                int averageColumnSize = (int) (cfs.getMeanRowSize() / cfs.getMeanColumns());
+                int averageColumnSize = (int) (cfs.metric.meanRowSize.getValue() / cfs.getMeanColumns());
                 pageSize = Math.min(COUNT_PAGE_SIZE, 4 * 1024 * 1024 / averageColumnSize);
                 pageSize = Math.max(2, pageSize);
                 logger.debug("average row column size is {}; using pageSize of {}", averageColumnSize, pageSize);
@@ -592,13 +579,6 @@ public class CassandraServer implements Cassandra.Iface
         {
             Tracing.instance.stopSession();
         }
-    }
-
-    private static ByteBuffer getName(ColumnOrSuperColumn cosc)
-    {
-        return cosc.isSetSuper_column() ? cosc.super_column.name :
-                   (cosc.isSetColumn() ? cosc.column.name :
-                       (cosc.isSetCounter_column() ? cosc.counter_column.name : cosc.counter_super_column.name));
     }
 
     public Map<ByteBuffer, Integer> multiget_count(List<ByteBuffer> keys, ColumnParent column_parent, SlicePredicate predicate, ConsistencyLevel consistency_level)
@@ -1167,12 +1147,12 @@ public class CassandraServer implements Cassandra.Iface
                 Token.TokenFactory tokenFactory = p.getTokenFactory();
                 Token left = tokenFactory.fromString(range.start_token);
                 Token right = tokenFactory.fromString(range.end_token);
-                bounds = Range.makeRowRange(left, right, p);
+                bounds = Range.makeRowRange(left, right);
             }
             else
             {
                 RowPosition end = range.end_key == null
-                                ? p.getTokenFactory().fromString(range.end_token).maxKeyBound(p)
+                                ? p.getTokenFactory().fromString(range.end_token).maxKeyBound()
                                 : RowPosition.ForKey.get(range.end_key, p);
                 bounds = new Bounds<RowPosition>(RowPosition.ForKey.get(range.start_key, p), end);
             }
@@ -1202,13 +1182,9 @@ public class CassandraServer implements Cassandra.Iface
         {
             throw ThriftConversion.toThrift(e);
         }
-        catch (ReadTimeoutException e)
+        catch (RequestExecutionException e)
         {
-            throw ThriftConversion.toThrift(e);
-        }
-        catch (org.apache.cassandra.exceptions.UnavailableException e)
-        {
-            throw ThriftConversion.toThrift(e);
+            throw ThriftConversion.rethrow(e);
         }
         finally
         {
@@ -1255,12 +1231,12 @@ public class CassandraServer implements Cassandra.Iface
                 Token.TokenFactory tokenFactory = p.getTokenFactory();
                 Token left = tokenFactory.fromString(range.start_token);
                 Token right = tokenFactory.fromString(range.end_token);
-                bounds = Range.makeRowRange(left, right, p);
+                bounds = Range.makeRowRange(left, right);
             }
             else
             {
                 RowPosition end = range.end_key == null
-                                ? p.getTokenFactory().fromString(range.end_token).maxKeyBound(p)
+                                ? p.getTokenFactory().fromString(range.end_token).maxKeyBound()
                                 : RowPosition.ForKey.get(range.end_key, p);
                 bounds = new Bounds<RowPosition>(RowPosition.ForKey.get(range.start_key, p), end);
             }
@@ -1288,13 +1264,9 @@ public class CassandraServer implements Cassandra.Iface
         {
             throw ThriftConversion.toThrift(e);
         }
-        catch (ReadTimeoutException e)
+        catch (RequestExecutionException e)
         {
-            throw ThriftConversion.toThrift(e);
-        }
-        catch (org.apache.cassandra.exceptions.UnavailableException e)
-        {
-            throw ThriftConversion.toThrift(e);
+            throw ThriftConversion.rethrow(e);
         }
         finally
         {
@@ -1364,13 +1336,9 @@ public class CassandraServer implements Cassandra.Iface
         {
             throw ThriftConversion.toThrift(e);
         }
-        catch (ReadTimeoutException e)
+        catch (RequestExecutionException e)
         {
-            throw ThriftConversion.toThrift(e);
-        }
-        catch (org.apache.cassandra.exceptions.UnavailableException e)
-        {
-            throw ThriftConversion.toThrift(e);
+            throw ThriftConversion.rethrow(e);
         }
         finally
         {
@@ -1484,12 +1452,11 @@ public class CassandraServer implements Cassandra.Iface
         }
     }
 
-    public void login(AuthenticationRequest auth_request) throws AuthenticationException, AuthorizationException, TException
+    public void login(AuthenticationRequest auth_request) throws TException
     {
         try
         {
-            AuthenticatedUser user = DatabaseDescriptor.getAuthenticator().authenticate(auth_request.getCredentials());
-            state().login(user);
+            state().login(DatabaseDescriptor.getAuthenticator().legacyAuthenticate(auth_request.getCredentials()));
         }
         catch (org.apache.cassandra.exceptions.AuthenticationException e)
         {
@@ -1893,6 +1860,10 @@ public class CassandraServer implements Cassandra.Iface
         {
             throw new InvalidRequestException("Error deflating query string.");
         }
+        catch (IOException e)
+        {
+            throw new AssertionError(e);
+        }
         return queryString;
     }
 
@@ -1917,7 +1888,10 @@ public class CassandraServer implements Cassandra.Iface
             }
 
             ThriftClientState cState = state();
-            return cState.getCQLQueryHandler().process(queryString, cState.getQueryState(), QueryOptions.fromProtocolV2(ThriftConversion.fromThrift(cLevel), Collections.<ByteBuffer>emptyList())).toThriftResult();
+            return ClientState.getCQLQueryHandler().process(queryString,
+                                                            cState.getQueryState(),
+                                                            QueryOptions.fromProtocolV2(ThriftConversion.fromThrift(cLevel), Collections.<ByteBuffer>emptyList()),
+                                                            null).toThriftResult();
         }
         catch (RequestExecutionException e)
         {
@@ -1948,7 +1922,9 @@ public class CassandraServer implements Cassandra.Iface
         try
         {
             cState.validateLogin();
-            return cState.getCQLQueryHandler().prepare(queryString, cState.getQueryState()).toThriftPreparedResult();
+            return ClientState.getCQLQueryHandler().prepare(queryString,
+                                                       cState.getQueryState(),
+                                                       null).toThriftPreparedResult();
         }
         catch (RequestValidationException e)
         {
@@ -1976,7 +1952,7 @@ public class CassandraServer implements Cassandra.Iface
         try
         {
             ThriftClientState cState = state();
-            ParsedStatement.Prepared prepared = cState.getCQLQueryHandler().getPreparedForThrift(itemId);
+            ParsedStatement.Prepared prepared = ClientState.getCQLQueryHandler().getPreparedForThrift(itemId);
 
             if (prepared == null)
                 throw new InvalidRequestException(String.format("Prepared query with ID %d not found" +
@@ -1985,9 +1961,10 @@ public class CassandraServer implements Cassandra.Iface
                                                                 itemId));
             logger.trace("Retrieved prepared statement #{} with {} bind markers", itemId, prepared.statement.getBoundTerms());
 
-            return cState.getCQLQueryHandler().processPrepared(prepared.statement,
-                                                               cState.getQueryState(),
-                                                               QueryOptions.fromProtocolV2(ThriftConversion.fromThrift(cLevel), bindVariables)).toThriftResult();
+            return ClientState.getCQLQueryHandler().processPrepared(prepared.statement,
+                                                                    cState.getQueryState(),
+                                                                    QueryOptions.fromProtocolV2(ThriftConversion.fromThrift(cLevel), bindVariables),
+                                                                    null).toThriftResult();
         }
         catch (RequestExecutionException e)
         {

@@ -18,8 +18,12 @@
 package org.apache.cassandra.utils;
 
 import java.io.FileDescriptor;
+import java.io.IOException;
 import java.io.RandomAccessFile;
 import java.lang.reflect.Field;
+import java.nio.channels.FileChannel;
+import java.nio.file.Paths;
+import java.nio.file.StandardOpenOption;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -276,6 +280,21 @@ public final class CLibrary
         }
     }
 
+    public static int getfd(FileChannel channel)
+    {
+        Field field = FBUtilities.getProtectedField(channel.getClass(), "fd");
+
+        try
+        {
+            return getfd((FileDescriptor)field.get(channel));
+        }
+        catch (IllegalArgumentException|IllegalAccessException e)
+        {
+            logger.warn("Unable to read fd field from FileChannel");
+        }
+        return -1;
+    }
+
     /**
      * Get system file descriptor from FileDescriptor object.
      * @param descriptor - FileDescriptor objec to get fd from
@@ -285,9 +304,6 @@ public final class CLibrary
     {
         Field field = FBUtilities.getProtectedField(descriptor.getClass(), "fd");
 
-        if (field == null)
-            return -1;
-
         try
         {
             return field.getInt(descriptor);
@@ -295,7 +311,7 @@ public final class CLibrary
         catch (Exception e)
         {
             JVMStabilityInspector.inspectThrowable(e);
-            logger.warn("unable to read fd field from FileDescriptor");
+            logger.warn("Unable to read fd field from FileDescriptor");
         }
 
         return -1;
@@ -303,29 +319,15 @@ public final class CLibrary
 
     public static int getfd(String path)
     {
-        RandomAccessFile file = null;
-        try
+        try(FileChannel channel = FileChannel.open(Paths.get(path), StandardOpenOption.READ))
         {
-            file = new RandomAccessFile(path, "r");
-            return getfd(file.getFD());
+            return getfd(channel);
         }
-        catch (Throwable t)
+        catch (IOException e)
         {
-            JVMStabilityInspector.inspectThrowable(t);
+            JVMStabilityInspector.inspectThrowable(e);
             // ignore
             return -1;
-        }
-        finally
-        {
-            try
-            {
-                if (file != null)
-                    file.close();
-            }
-            catch (Throwable t)
-            {
-                // ignore
-            }
         }
     }
 }

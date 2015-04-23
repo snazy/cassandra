@@ -39,7 +39,7 @@ import org.apache.cassandra.db.commitlog.CommitLog;
 import org.apache.cassandra.db.commitlog.ReplayPosition;
 import org.apache.cassandra.db.composites.CellNameType;
 import org.apache.cassandra.db.index.SecondaryIndexManager;
-import org.apache.cassandra.dht.LongToken;
+import org.apache.cassandra.dht.Murmur3Partitioner.LongToken;
 import org.apache.cassandra.io.sstable.metadata.MetadataCollector;
 import org.apache.cassandra.io.util.DiskAwareRunnable;
 import org.apache.cassandra.service.ActiveRepairService;
@@ -61,9 +61,16 @@ public class Memtable
     // the write barrier for directing writes to this memtable during a switch
     private volatile OpOrder.Barrier writeBarrier;
     // the last ReplayPosition owned by this Memtable; all ReplayPositions lower are owned by this or an earlier Memtable
-    private final AtomicReference<ReplayPosition> lastReplayPosition = new AtomicReference<>();
+    private volatile AtomicReference<ReplayPosition> lastReplayPosition;
     // the "first" ReplayPosition owned by this Memtable; this is inaccurate, and only used as a convenience to prevent CLSM flushing wantonly
     private final ReplayPosition minReplayPosition = CommitLog.instance.getContext();
+
+    public static final class LastReplayPosition extends ReplayPosition
+    {
+        public LastReplayPosition(ReplayPosition copy) {
+            super(copy.segment, copy.position);
+        }
+    }
 
     // We index the memtable by RowPosition only for the purpose of being able
     // to select key range using Token.KeyBound. However put() ensures that we
@@ -101,10 +108,10 @@ public class Memtable
         return currentOperations.get();
     }
 
-    void setDiscarding(OpOrder.Barrier writeBarrier, ReplayPosition minLastReplayPosition)
+    void setDiscarding(OpOrder.Barrier writeBarrier, AtomicReference<ReplayPosition> lastReplayPosition)
     {
         assert this.writeBarrier == null;
-        this.lastReplayPosition.set(minLastReplayPosition);
+        this.lastReplayPosition = lastReplayPosition;
         this.writeBarrier = writeBarrier;
         allocator.setDiscarding();
     }
@@ -114,10 +121,34 @@ public class Memtable
         allocator.setDiscarded();
     }
 
-    public boolean accepts(OpOrder.Group opGroup)
+    // decide if this memtable should take the write, or if it should go to the next memtable
+    public boolean accepts(OpOrder.Group opGroup, ReplayPosition replayPosition)
     {
+        // if the barrier hasn't been set yet, then this memtable is still taking ALL writes
         OpOrder.Barrier barrier = this.writeBarrier;
-        return barrier == null || barrier.isAfter(opGroup);
+        if (barrier == null)
+            return true;
+        // if the barrier has been set, but is in the past, we are definitely destined for a future memtable
+        if (!barrier.isAfter(opGroup))
+            return false;
+        // if we aren't durable we are directed only by the barrier
+        if (replayPosition == null)
+            return true;
+        while (true)
+        {
+            // otherwise we check if we are in the past/future wrt the CL boundary;
+            // if the boundary hasn't been finalised yet, we simply update it to the max of
+            // its current value and ours; if it HAS been finalised, we simply accept its judgement
+            // this permits us to coordinate a safe boundary, as the boundary choice is made
+            // atomically wrt our max() maintenance, so an operation cannot sneak into the past
+            ReplayPosition currentLast = lastReplayPosition.get();
+            if (currentLast instanceof LastReplayPosition)
+                return currentLast.compareTo(replayPosition) >= 0;
+            if (currentLast != null && currentLast.compareTo(replayPosition) >= 0)
+                return true;
+            if (lastReplayPosition.compareAndSet(currentLast, replayPosition))
+                return true;
+        }
     }
 
     public boolean isLive()
@@ -150,22 +181,8 @@ public class Memtable
      *
      * replayPosition should only be null if this is a secondary index, in which case it is *expected* to be null
      */
-    long put(DecoratedKey key, ColumnFamily cf, SecondaryIndexManager.Updater indexer, OpOrder.Group opGroup, ReplayPosition replayPosition)
+    long put(DecoratedKey key, ColumnFamily cf, SecondaryIndexManager.Updater indexer, OpOrder.Group opGroup)
     {
-        if (replayPosition != null && writeBarrier != null)
-        {
-            // if the writeBarrier is set, we want to maintain lastReplayPosition; this is an optimisation to avoid
-            // casing it for every write, but still ensure it is correct when writeBarrier.await() completes.
-            while (true)
-            {
-                ReplayPosition last = lastReplayPosition.get();
-                if (last.compareTo(replayPosition) >= 0)
-                    break;
-                if (lastReplayPosition.compareAndSet(last, replayPosition))
-                    break;
-            }
-        }
-
         AtomicBTreeColumns previous = rows.get(key);
 
         if (previous == null)
@@ -179,7 +196,7 @@ public class Memtable
                 previous = empty;
                 // allocate the row overhead after the fact; this saves over allocating and having to free after, but
                 // means we can overshoot our declared limit.
-                int overhead = (int) (cfs.partitioner.getHeapSizeOf(key.getToken()) + ROW_OVERHEAD_HEAP_SIZE);
+                int overhead = (int) (key.getToken().getHeapSize() + ROW_OVERHEAD_HEAP_SIZE);
                 allocator.onHeap().allocate(overhead, opGroup);
             }
             else
@@ -226,7 +243,7 @@ public class Memtable
     {
         return new Iterator<Map.Entry<DecoratedKey, ColumnFamily>>()
         {
-            private Iterator<? extends Map.Entry<? extends RowPosition, AtomicBTreeColumns>> iter = stopAt.isMinimum(cfs.partitioner)
+            private Iterator<? extends Map.Entry<? extends RowPosition, AtomicBTreeColumns>> iter = stopAt.isMinimum()
                     ? rows.tailMap(startWith).entrySet().iterator()
                     : rows.subMap(startWith, true, stopAt, true).entrySet().iterator();
 
@@ -274,11 +291,6 @@ public class Memtable
         return creationTime;
     }
 
-    public ReplayPosition getLastReplayPosition()
-    {
-        return lastReplayPosition.get();
-    }
-
     class FlushRunnable extends DiskAwareRunnable
     {
         private final ReplayPosition context;
@@ -306,10 +318,12 @@ public class Memtable
             return estimatedSize;
         }
 
-        protected void runWith(File sstableDirectory) throws Exception
+        protected void runMayThrow() throws Exception
         {
+            long writeSize = getExpectedWriteSize();
+            Directories.DataDirectory dataDirectory = getWriteDirectory(writeSize);
+            File sstableDirectory = cfs.directories.getLocationForDisk(dataDirectory);
             assert sstableDirectory != null : "Flush task is not bound to any disk";
-
             SSTableReader sstable = writeSortedContents(context, sstableDirectory);
             cfs.replaceFlushed(Memtable.this, sstable);
         }
@@ -343,7 +357,7 @@ public class Memtable
                         // and BL data is strictly local, so we don't need to preserve tombstones for repair.
                         // If we have a data row + row level tombstone, then writing it is effectively an expensive no-op so we skip it.
                         // See CASSANDRA-4667.
-                        if (cfs.name.equals(SystemKeyspace.BATCHLOG_TABLE) && cfs.keyspace.getName().equals(SystemKeyspace.NAME))
+                        if (cfs.name.equals(SystemKeyspace.BATCHLOG) && cfs.keyspace.getName().equals(SystemKeyspace.NAME))
                             continue;
                     }
 
@@ -400,10 +414,10 @@ public class Memtable
         ConcurrentNavigableMap<RowPosition, Object> rows = new ConcurrentSkipListMap<>();
         final Object val = new Object();
         for (int i = 0 ; i < count ; i++)
-            rows.put(allocator.clone(new BufferDecoratedKey(new LongToken((long) i), ByteBufferUtil.EMPTY_BYTE_BUFFER), group), val);
+            rows.put(allocator.clone(new BufferDecoratedKey(new LongToken(i), ByteBufferUtil.EMPTY_BYTE_BUFFER), group), val);
         double avgSize = ObjectSizes.measureDeep(rows) / (double) count;
         rowOverhead = (int) ((avgSize - Math.floor(avgSize)) < 0.05 ? Math.floor(avgSize) : Math.ceil(avgSize));
-        rowOverhead -= ObjectSizes.measureDeep(new LongToken((long) 0));
+        rowOverhead -= ObjectSizes.measureDeep(new LongToken(0));
         rowOverhead += AtomicBTreeColumns.EMPTY_SIZE;
         allocator.setDiscarding();
         allocator.setDiscarded();

@@ -20,23 +20,23 @@ package org.apache.cassandra.cql3.statements;
 import java.nio.ByteBuffer;
 import java.util.*;
 
-import org.apache.cassandra.exceptions.*;
-import org.apache.commons.lang3.StringUtils;
 import com.google.common.collect.HashMultiset;
 import com.google.common.collect.Multiset;
+import org.apache.commons.lang3.StringUtils;
 
-import org.apache.cassandra.auth.Permission;
-import org.apache.cassandra.config.ColumnDefinition;
-import org.apache.cassandra.config.CFMetaData;
-import org.apache.cassandra.config.Schema;
-import org.apache.cassandra.cql3.*;
-import org.apache.cassandra.db.composites.*;
+import org.apache.cassandra.auth.*;
+import org.apache.cassandra.config.*;
+import org.apache.cassandra.cql3.CFName;
+import org.apache.cassandra.cql3.CQL3Type;
+import org.apache.cassandra.cql3.ColumnIdentifier;
 import org.apache.cassandra.db.ColumnFamilyType;
+import org.apache.cassandra.db.composites.*;
 import org.apache.cassandra.db.marshal.*;
-import org.apache.cassandra.exceptions.AlreadyExistsException;
+import org.apache.cassandra.exceptions.*;
 import org.apache.cassandra.io.compress.CompressionParameters;
 import org.apache.cassandra.service.ClientState;
 import org.apache.cassandra.service.MigrationManager;
+import org.apache.cassandra.service.QueryState;
 import org.apache.cassandra.transport.Event;
 import org.apache.cassandra.utils.ByteBufferUtil;
 
@@ -65,19 +65,12 @@ public class CreateTableStatement extends SchemaAlteringStatement
         this.ifNotExists = ifNotExists;
         this.staticColumns = staticColumns;
 
-        try
-        {
-            if (!this.properties.hasProperty(CFPropDefs.KW_COMPRESSION) && CFMetaData.DEFAULT_COMPRESSOR != null)
-                this.properties.addProperty(CFPropDefs.KW_COMPRESSION,
-                                            new HashMap<String, String>()
-                                            {{
-                                                put(CompressionParameters.SSTABLE_COMPRESSION, CFMetaData.DEFAULT_COMPRESSOR);
-                                            }});
-        }
-        catch (SyntaxException e)
-        {
-            throw new AssertionError(e);
-        }
+        if (!this.properties.hasProperty(CFPropDefs.KW_COMPRESSION) && CFMetaData.DEFAULT_COMPRESSOR != null)
+            this.properties.addProperty(CFPropDefs.KW_COMPRESSION,
+                                        new HashMap<String, String>()
+                                        {{
+                                            put(CompressionParameters.SSTABLE_COMPRESSION, CFMetaData.DEFAULT_COMPRESSOR);
+                                        }});
     }
 
     public void checkAccess(ClientState state) throws UnauthorizedException, InvalidRequestException
@@ -126,6 +119,22 @@ public class CreateTableStatement extends SchemaAlteringStatement
         return new Event.SchemaChange(Event.SchemaChange.Change.CREATED, Event.SchemaChange.Target.TABLE, keyspace(), columnFamily());
     }
 
+    protected void grantPermissionsToCreator(QueryState state)
+    {
+        try
+        {
+            IResource resource = DataResource.table(keyspace(), columnFamily());
+            DatabaseDescriptor.getAuthorizer().grant(AuthenticatedUser.SYSTEM_USER,
+                                                     resource.applicablePermissions(),
+                                                     resource,
+                                                     RoleResource.role(state.getClientState().getUser().getName()));
+        }
+        catch (RequestExecutionException e)
+        {
+            throw new RuntimeException(e);
+        }
+    }
+
     /**
      * Returns a CFMetaData instance based on the parameters parsed from this
      * <code>CREATE</code> statement, or defaults where applicable.
@@ -151,13 +160,31 @@ public class CreateTableStatement extends SchemaAlteringStatement
             .addAllColumnDefinitions(getColumns(cfmd))
             .isDense(isDense);
 
-        cfmd.addColumnMetadataFromAliases(keyAliases, keyValidator, ColumnDefinition.Kind.PARTITION_KEY);
-        cfmd.addColumnMetadataFromAliases(columnAliases, comparator.asAbstractType(), ColumnDefinition.Kind.CLUSTERING_COLUMN);
+        addColumnMetadataFromAliases(cfmd, keyAliases, keyValidator, ColumnDefinition.Kind.PARTITION_KEY);
+        addColumnMetadataFromAliases(cfmd, columnAliases, comparator.asAbstractType(), ColumnDefinition.Kind.CLUSTERING_COLUMN);
         if (valueAlias != null)
-            cfmd.addColumnMetadataFromAliases(Collections.<ByteBuffer>singletonList(valueAlias), defaultValidator, ColumnDefinition.Kind.COMPACT_VALUE);
+            addColumnMetadataFromAliases(cfmd, Collections.singletonList(valueAlias), defaultValidator, ColumnDefinition.Kind.COMPACT_VALUE);
 
         properties.applyToCFMetadata(cfmd);
     }
+
+    private void addColumnMetadataFromAliases(CFMetaData cfm, List<ByteBuffer> aliases, AbstractType<?> comparator, ColumnDefinition.Kind kind)
+    {
+        if (comparator instanceof CompositeType)
+        {
+            CompositeType ct = (CompositeType)comparator;
+            for (int i = 0; i < aliases.size(); ++i)
+                if (aliases.get(i) != null)
+                    cfm.addOrReplaceColumnDefinition(new ColumnDefinition(cfm, aliases.get(i), ct.types.get(i), i, kind));
+        }
+        else
+        {
+            assert aliases.size() <= 1;
+            if (!aliases.isEmpty() && aliases.get(0) != null)
+                cfm.addOrReplaceColumnDefinition(new ColumnDefinition(cfm, aliases.get(0), comparator, null, kind));
+        }
+    }
+
 
     public static class RawStatement extends CFStatement
     {
@@ -199,6 +226,7 @@ public class CreateTableStatement extends SchemaAlteringStatement
 
             CreateTableStatement stmt = new CreateTableStatement(cfName, properties, ifNotExists, staticColumns);
 
+            boolean hasCounters = false;
             Map<ByteBuffer, CollectionType> definedMultiCellCollections = null;
             for (Map.Entry<ColumnIdentifier, CQL3Type.Raw> entry : definitions.entrySet())
             {
@@ -210,6 +238,9 @@ public class CreateTableStatement extends SchemaAlteringStatement
                         definedMultiCellCollections = new HashMap<>();
                     definedMultiCellCollections.put(id.bytes, (CollectionType) pt.getType());
                 }
+                else if (entry.getValue().isCounter())
+                    hasCounters = true;
+
                 stmt.columns.put(id, pt.getType()); // we'll remove what is not a column below
             }
 
@@ -217,6 +248,8 @@ public class CreateTableStatement extends SchemaAlteringStatement
                 throw new InvalidRequestException("No PRIMARY KEY specifed (exactly one required)");
             else if (keyAliases.size() > 1)
                 throw new InvalidRequestException("Multiple PRIMARY KEYs specifed (exactly one required)");
+            else if (hasCounters && properties.getDefaultTimeToLive() > 0)
+                throw new InvalidRequestException("Cannot set default_time_to_live on a table with counters");
 
             List<ColumnIdentifier> kAliases = keyAliases.get(0);
 

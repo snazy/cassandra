@@ -21,7 +21,6 @@ import java.nio.ByteBuffer;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
 import org.apache.cassandra.config.ColumnDefinition;
 import org.apache.cassandra.db.*;
 import org.apache.cassandra.db.composites.CellName;
@@ -44,27 +43,13 @@ public abstract class Constants
 
     public enum Type
     {
-        STRING, INTEGER, UUID, FLOAT, BOOLEAN, HEX;
+        STRING, INTEGER, UUID, FLOAT, DATE, TIME, BOOLEAN, HEX;
     }
+
+    public static final Value UNSET_VALUE = new Value(ByteBufferUtil.UNSET_BYTE_BUFFER);
 
     public static final Term.Raw NULL_LITERAL = new Term.Raw()
     {
-        private final Term.Terminal NULL_VALUE = new Value(null)
-        {
-            @Override
-            public Terminal bind(QueryOptions options)
-            {
-                // We return null because that makes life easier for collections
-                return null;
-            }
-
-            @Override
-            public String toString()
-            {
-                return "null";
-            }
-        };
-
         public Term prepare(String keyspace, ColumnSpecification receiver) throws InvalidRequestException
         {
             if (!testAssignment(keyspace, receiver).isAssignable())
@@ -78,6 +63,22 @@ public abstract class Constants
             return receiver.type instanceof CounterColumnType
                  ? AssignmentTestable.TestResult.NOT_ASSIGNABLE
                  : AssignmentTestable.TestResult.WEAKLY_ASSIGNABLE;
+        }
+
+        @Override
+        public String toString()
+        {
+            return "null";
+        }
+    };
+
+    public static final Term.Terminal NULL_VALUE = new Value(null)
+    {
+        @Override
+        public Terminal bind(QueryOptions options)
+        {
+            // We return null because that makes life easier for collections
+            return null;
         }
 
         @Override
@@ -181,6 +182,8 @@ public abstract class Constants
                         case TEXT:
                         case INET:
                         case VARCHAR:
+                        case DATE:
+                        case TIME:
                         case TIMESTAMP:
                             return AssignmentTestable.TestResult.WEAKLY_ASSIGNABLE;
                     }
@@ -190,6 +193,7 @@ public abstract class Constants
                     {
                         case BIGINT:
                         case COUNTER:
+                        case DATE:
                         case DECIMAL:
                         case DOUBLE:
                         case FLOAT:
@@ -253,7 +257,7 @@ public abstract class Constants
             this.bytes = bytes;
         }
 
-        public ByteBuffer get(QueryOptions options)
+        public ByteBuffer get(int protocolVersion)
         {
             return bytes;
         }
@@ -285,7 +289,7 @@ public abstract class Constants
             try
             {
                 ByteBuffer value = options.getValues().get(bindIndex);
-                if (value != null)
+                if (value != null && value != ByteBufferUtil.UNSET_BYTE_BUFFER)
                     receiver.type.validate(value);
                 return value;
             }
@@ -298,7 +302,11 @@ public abstract class Constants
         public Value bind(QueryOptions options) throws InvalidRequestException
         {
             ByteBuffer bytes = bindAndGet(options);
-            return bytes == null ? null : new Constants.Value(bytes);
+            if (bytes == null)
+                return null;
+            if (bytes == ByteBufferUtil.UNSET_BYTE_BUFFER)
+                return Constants.UNSET_VALUE;
+            return new Constants.Value(bytes);
         }
     }
 
@@ -311,9 +319,12 @@ public abstract class Constants
 
         public void execute(ByteBuffer rowKey, ColumnFamily cf, Composite prefix, UpdateParameters params) throws InvalidRequestException
         {
-            CellName cname = cf.getComparator().create(prefix, column);
             ByteBuffer value = t.bindAndGet(params.options);
-            cf.addColumn(value == null ? params.makeTombstone(cname) : params.makeColumn(cname, value));
+            if (value != ByteBufferUtil.UNSET_BYTE_BUFFER) // use reference equality and not object equality
+            {
+                CellName cname = cf.getComparator().create(prefix, column);
+                cf.addColumn(value == null ? params.makeTombstone(cname) : params.makeColumn(cname, value));
+            }
         }
     }
 
@@ -329,6 +340,9 @@ public abstract class Constants
             ByteBuffer bytes = t.bindAndGet(params.options);
             if (bytes == null)
                 throw new InvalidRequestException("Invalid null value for counter increment");
+            if (bytes == ByteBufferUtil.UNSET_BYTE_BUFFER)
+                return;
+
             long increment = ByteBufferUtil.toLong(bytes);
             CellName cname = cf.getComparator().create(prefix, column);
             cf.addColumn(params.makeCounter(cname, increment));
@@ -347,6 +361,8 @@ public abstract class Constants
             ByteBuffer bytes = t.bindAndGet(params.options);
             if (bytes == null)
                 throw new InvalidRequestException("Invalid null value for counter increment");
+            if (bytes == ByteBufferUtil.UNSET_BYTE_BUFFER)
+                return;
 
             long increment = ByteBufferUtil.toLong(bytes);
             if (increment == Long.MIN_VALUE)

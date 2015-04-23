@@ -48,16 +48,16 @@ public class ThriftValidationTest
     public static final String CF_STANDARDLONG3 = "StandardLong3";
 
     @BeforeClass
-    public static void defineSchema() throws ConfigurationException, IOException, TException
+    public static void defineSchema() throws ConfigurationException
     {
         SchemaLoader.prepareServer();
         SchemaLoader.createKeyspace(KEYSPACE1,
                                     SimpleStrategy.class,
                                     KSMetaData.optsWithRF(1),
                                     SchemaLoader.standardCFMD(KEYSPACE1, CF_STANDARD),
-                                    CFMetaData.denseCFMetaData(KEYSPACE1, CF_COUNTER, BytesType.instance).defaultValidator(CounterColumnType.instance),
+                                    SchemaLoader.standardCFMD(KEYSPACE1, CF_COUNTER).defaultValidator(CounterColumnType.instance),
                                     SchemaLoader.standardCFMD(KEYSPACE1, CF_UUID).keyValidator(UUIDType.instance),
-                                    CFMetaData.denseCFMetaData(KEYSPACE1, CF_STANDARDLONG3, IntegerType.instance));
+                                    SchemaLoader.standardCFMD(KEYSPACE1, CF_STANDARDLONG3, IntegerType.instance));
     }
     
     @Test(expected=org.apache.cassandra.exceptions.InvalidRequestException.class)

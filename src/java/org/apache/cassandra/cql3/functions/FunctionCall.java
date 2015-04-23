@@ -21,14 +21,14 @@ import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.List;
 
+import com.google.common.collect.Iterables;
+
 import org.apache.cassandra.cql3.*;
-import org.apache.cassandra.db.marshal.CollectionType;
-import org.apache.cassandra.db.marshal.ListType;
-import org.apache.cassandra.db.marshal.MapType;
-import org.apache.cassandra.db.marshal.SetType;
+import org.apache.cassandra.cql3.statements.RequestValidations;
+import org.apache.cassandra.db.marshal.*;
 import org.apache.cassandra.exceptions.InvalidRequestException;
-import org.apache.cassandra.utils.ByteBufferUtil;
 import org.apache.cassandra.serializers.MarshalException;
+import org.apache.cassandra.utils.ByteBufferUtil;
 
 public class FunctionCall extends Term.NonTerminal
 {
@@ -43,7 +43,12 @@ public class FunctionCall extends Term.NonTerminal
 
     public boolean usesFunction(String ksName, String functionName)
     {
-        return fun.name().keyspace.equals(ksName) && fun.name().name.equals(functionName);
+        return fun.usesFunction(ksName, functionName);
+    }
+
+    public Iterable<Function> getFunctions()
+    {
+        return Iterables.concat(Terms.getFunctions(terms), fun.getFunctions());
     }
 
     public void collectMarkerSpecification(VariableSpecifications boundNames)
@@ -62,19 +67,16 @@ public class FunctionCall extends Term.NonTerminal
         List<ByteBuffer> buffers = new ArrayList<>(terms.size());
         for (Term t : terms)
         {
-            // For now, we don't allow nulls as argument as no existing function needs it and it
-            // simplify things.
-            ByteBuffer val = t.bindAndGet(options);
-            if (val == null)
-                throw new InvalidRequestException(String.format("Invalid null value for argument to %s", fun));
-            buffers.add(val);
+            ByteBuffer functionArg = t.bindAndGet(options);
+            RequestValidations.checkBindValueSet(functionArg, "Invalid unset value for argument in call to function %s", fun.name().name);
+            buffers.add(functionArg);
         }
-        return executeInternal(fun, buffers);
+        return executeInternal(options.getProtocolVersion(), fun, buffers);
     }
 
-    private static ByteBuffer executeInternal(ScalarFunction fun, List<ByteBuffer> params) throws InvalidRequestException
+    private static ByteBuffer executeInternal(int protocolVersion, ScalarFunction fun, List<ByteBuffer> params) throws InvalidRequestException
     {
-        ByteBuffer result = fun.execute(params);
+        ByteBuffer result = fun.execute(protocolVersion, params);
         try
         {
             // Check the method didn't lied on it's declared return type
@@ -84,8 +86,8 @@ public class FunctionCall extends Term.NonTerminal
         }
         catch (MarshalException e)
         {
-            throw new RuntimeException(String.format("Return of function %s (%s) is not a valid value for its declared return type %s", 
-                                                     fun, ByteBufferUtil.bytesToHex(result), fun.returnType().asCQL3Type()));
+            throw new RuntimeException(String.format("Return of function %s (%s) is not a valid value for its declared return type %s",
+                                                     fun, ByteBufferUtil.bytesToHex(result), fun.returnType().asCQL3Type()), e);
         }
     }
 
@@ -126,7 +128,7 @@ public class FunctionCall extends Term.NonTerminal
 
         public Term prepare(String keyspace, ColumnSpecification receiver) throws InvalidRequestException
         {
-            Function fun = Functions.get(keyspace, name, terms, receiver.ksName, receiver.cfName);
+            Function fun = Functions.get(keyspace, name, terms, receiver.ksName, receiver.cfName, receiver.type);
             if (fun == null)
                 throw new InvalidRequestException(String.format("Unknown function %s called", name));
             if (fun.isAggregate())
@@ -143,36 +145,16 @@ public class FunctionCall extends Term.NonTerminal
 
             if (fun.argTypes().size() != terms.size())
                 throw new InvalidRequestException(String.format("Incorrect number of arguments specified for function %s (expected %d, found %d)",
-                                                                fun.name(), fun.argTypes().size(), terms.size()));
+                                                                fun, fun.argTypes().size(), terms.size()));
 
             List<Term> parameters = new ArrayList<>(terms.size());
-            boolean allTerminal = true;
             for (int i = 0; i < terms.size(); i++)
             {
                 Term t = terms.get(i).prepare(keyspace, Functions.makeArgSpec(receiver.ksName, receiver.cfName, scalarFun, i));
-                if (t instanceof NonTerminal)
-                    allTerminal = false;
                 parameters.add(t);
             }
 
-            // If all parameters are terminal and the function is pure, we can
-            // evaluate it now, otherwise we'd have to wait execution time
-            return allTerminal && scalarFun.isPure()
-                ? makeTerminal(scalarFun, execute(scalarFun, parameters), QueryOptions.DEFAULT.getProtocolVersion())
-                : new FunctionCall(scalarFun, parameters);
-        }
-
-        // All parameters must be terminal
-        private static ByteBuffer execute(ScalarFunction fun, List<Term> parameters) throws InvalidRequestException
-        {
-            List<ByteBuffer> buffers = new ArrayList<>(parameters.size());
-            for (Term t : parameters)
-            {
-                assert t instanceof Term.Terminal;
-                buffers.add(((Term.Terminal)t).get(QueryOptions.DEFAULT));
-            }
-
-            return executeInternal(fun, buffers);
+            return new FunctionCall(scalarFun, parameters);
         }
 
         public AssignmentTestable.TestResult testAssignment(String keyspace, ColumnSpecification receiver)
@@ -183,7 +165,14 @@ public class FunctionCall extends Term.NonTerminal
             // later with a more helpful error message that if we were to return false here.
             try
             {
-                Function fun = Functions.get(keyspace, name, terms, receiver.ksName, receiver.cfName);
+                Function fun = Functions.get(keyspace, name, terms, receiver.ksName, receiver.cfName, receiver.type);
+
+                // Because fromJson() can return whatever type the receiver is, we'll always get EXACT_MATCH.  To
+                // handle potentially ambiguous function calls with fromJson() as an argument, always return
+                // WEAKLY_ASSIGNABLE to force the user to typecast if necessary
+                if (fun != null && fun.name().equals(FromJsonFct.NAME))
+                    return TestResult.WEAKLY_ASSIGNABLE;
+
                 if (fun != null && receiver.type.equals(fun.returnType()))
                     return AssignmentTestable.TestResult.EXACT_MATCH;
                 else if (fun == null || receiver.type.isValueCompatibleWith(fun.returnType()))

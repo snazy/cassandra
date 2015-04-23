@@ -34,16 +34,19 @@ public final class SimpleSelector extends Selector
     {
         return new Factory()
         {
+            @Override
             protected String getColumnName()
             {
                 return columnName;
             }
 
+            @Override
             protected AbstractType<?> getReturnType()
             {
                 return type;
             }
 
+            @Override
             public Selector newInstance()
             {
                 return new SimpleSelector(columnName, idx, type);
@@ -51,21 +54,25 @@ public final class SimpleSelector extends Selector
         };
     }
 
-    public void addInput(ResultSetBuilder rs) throws InvalidRequestException
+    @Override
+    public void addInput(int protocolVersion, ResultSetBuilder rs) throws InvalidRequestException
     {
         current = rs.current.get(idx);
     }
 
-    public ByteBuffer getOutput() throws InvalidRequestException
+    @Override
+    public ByteBuffer getOutput(int protocolVersion) throws InvalidRequestException
     {
         return current;
     }
 
+    @Override
     public void reset()
     {
         current = null;
     }
 
+    @Override
     public AbstractType<?> getType()
     {
         return type;

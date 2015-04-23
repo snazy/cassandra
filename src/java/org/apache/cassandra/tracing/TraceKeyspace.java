@@ -17,12 +17,9 @@
  */
 package org.apache.cassandra.tracing;
 
+import java.net.InetAddress;
 import java.nio.ByteBuffer;
-import java.util.Arrays;
-import java.util.Date;
-import java.util.List;
-import java.util.Map;
-import java.util.concurrent.TimeUnit;
+import java.util.*;
 
 import com.google.common.collect.ImmutableMap;
 
@@ -39,25 +36,26 @@ public final class TraceKeyspace
 {
     public static final String NAME = "system_traces";
 
-    private static final String SESSIONS_TABLE = "sessions";
-    private static final String EVENTS_TABLE = "events";
+    public static final String SESSIONS = "sessions";
+    public static final String EVENTS = "events";
 
-    private static final int DAY = (int) TimeUnit.DAYS.toSeconds(1);
-
-    private static final CFMetaData SessionsTable =
-        compile(SESSIONS_TABLE, "tracing sessions",
+    private static final CFMetaData Sessions =
+        compile(SESSIONS,
+                "tracing sessions",
                 "CREATE TABLE %s ("
                 + "session_id uuid,"
+                + "command text,"
+                + "client inet,"
                 + "coordinator inet,"
                 + "duration int,"
                 + "parameters map<text, text>,"
                 + "request text,"
                 + "started_at timestamp,"
-                + "PRIMARY KEY ((session_id)))")
-                .defaultTimeToLive(DAY);
+                + "PRIMARY KEY ((session_id)))");
 
-    private static final CFMetaData EventsTable =
-        compile(EVENTS_TABLE, "tracing events",
+    private static final CFMetaData Events =
+        compile(EVENTS,
+                "tracing events",
                 "CREATE TABLE %s ("
                 + "session_id uuid,"
                 + "event_id timeuuid,"
@@ -65,57 +63,65 @@ public final class TraceKeyspace
                 + "source inet,"
                 + "source_elapsed int,"
                 + "thread text,"
-                + "PRIMARY KEY ((session_id), event_id))")
-                .defaultTimeToLive(DAY);
+                + "PRIMARY KEY ((session_id), event_id))");
 
-    private static CFMetaData compile(String table, String comment, String cql)
+    private static CFMetaData compile(String name, String description, String schema)
     {
-        return CFMetaData.compile(String.format(cql, table), NAME).comment(comment);
+        return CFMetaData.compile(String.format(schema, name), NAME)
+                         .comment(description);
     }
 
     public static KSMetaData definition()
     {
-        List<CFMetaData> tables = Arrays.asList(SessionsTable, EventsTable);
+        List<CFMetaData> tables = Arrays.asList(Sessions, Events);
         return new KSMetaData(NAME, SimpleStrategy.class, ImmutableMap.of("replication_factor", "2"), true, tables);
     }
 
-    static Mutation toStopSessionMutation(ByteBuffer sessionId, int elapsed)
+    static Mutation makeStartSessionMutation(ByteBuffer sessionId,
+                                             InetAddress client,
+                                             Map<String, String> parameters,
+                                             String request,
+                                             long startedAt,
+                                             String command,
+                                             int ttl)
     {
         Mutation mutation = new Mutation(NAME, sessionId);
-        ColumnFamily cells = mutation.addOrGet(SessionsTable);
+        ColumnFamily cells = mutation.addOrGet(TraceKeyspace.Sessions);
 
-        CFRowAdder adder = new CFRowAdder(cells, cells.metadata().comparator.builder().build(), FBUtilities.timestampMicros());
+        CFRowAdder adder = new CFRowAdder(cells, cells.metadata().comparator.builder().build(), FBUtilities.timestampMicros(), ttl);
+        adder.add("client", client)
+             .add("coordinator", FBUtilities.getBroadcastAddress())
+             .add("request", request)
+             .add("started_at", new Date(startedAt))
+             .add("command", command);
+        for (Map.Entry<String, String> entry : parameters.entrySet())
+            adder.addMapEntry("parameters", entry.getKey(), entry.getValue());
+
+        return mutation;
+    }
+
+    static Mutation makeStopSessionMutation(ByteBuffer sessionId, int elapsed, int ttl)
+    {
+        Mutation mutation = new Mutation(NAME, sessionId);
+        ColumnFamily cells = mutation.addOrGet(Sessions);
+
+        CFRowAdder adder = new CFRowAdder(cells, cells.metadata().comparator.builder().build(), FBUtilities.timestampMicros(), ttl);
         adder.add("duration", elapsed);
 
         return mutation;
     }
 
-    static Mutation toStartSessionMutation(ByteBuffer sessionId, Map<String, String> parameters, String request, long startedAt)
+    static Mutation makeEventMutation(ByteBuffer sessionId, String message, int elapsed, String threadName, int ttl)
     {
         Mutation mutation = new Mutation(NAME, sessionId);
-        ColumnFamily cells = mutation.addOrGet(TraceKeyspace.SessionsTable);
+        ColumnFamily cells = mutation.addOrGet(Events);
 
-        CFRowAdder adder = new CFRowAdder(cells, cells.metadata().comparator.builder().build(), FBUtilities.timestampMicros());
-        adder.add("coordinator", FBUtilities.getBroadcastAddress());
-        for (Map.Entry<String, String> entry : parameters.entrySet())
-            adder.addMapEntry("parameters", entry.getKey(), entry.getValue());
-        adder.add("request", request);
-        adder.add("started_at", new Date(startedAt));
-
-        return mutation;
-    }
-
-    static Mutation toEventMutation(ByteBuffer sessionId, String message, int elapsed, String threadName)
-    {
-        Mutation mutation = new Mutation(NAME, sessionId);
-        ColumnFamily cells = mutation.addOrGet(EventsTable);
-
-        CFRowAdder adder = new CFRowAdder(cells, cells.metadata().comparator.make(UUIDGen.getTimeUUID()), FBUtilities.timestampMicros());
-        adder.add("activity", message);
-        adder.add("source", FBUtilities.getBroadcastAddress());
+        CFRowAdder adder = new CFRowAdder(cells, cells.metadata().comparator.make(UUIDGen.getTimeUUID()), FBUtilities.timestampMicros(), ttl);
+        adder.add("activity", message)
+             .add("source", FBUtilities.getBroadcastAddress())
+             .add("thread", threadName);
         if (elapsed >= 0)
             adder.add("source_elapsed", elapsed);
-        adder.add("thread", threadName);
 
         return mutation;
     }

@@ -27,6 +27,7 @@ import org.apache.cassandra.cql3.ColumnIdentifier;
 import org.apache.cassandra.cql3.functions.Function;
 import org.apache.cassandra.cql3.functions.FunctionName;
 import org.apache.cassandra.cql3.functions.Functions;
+import org.apache.cassandra.cql3.functions.ToJsonFct;
 import org.apache.cassandra.db.marshal.AbstractType;
 import org.apache.cassandra.db.marshal.UserType;
 import org.apache.cassandra.exceptions.InvalidRequestException;
@@ -51,6 +52,11 @@ public abstract class Selectable
     public static interface Raw
     {
         public Selectable prepare(CFMetaData cfm);
+
+        /**
+         * Returns true if any processing is performed on the selected column.
+         **/
+        public boolean processesSelection();
     }
 
     public static class WritetimeOrTTL extends Selectable
@@ -103,6 +109,11 @@ public abstract class Selectable
             {
                 return new WritetimeOrTTL(id.prepare(cfm), isWritetime);
             }
+
+            public boolean processesSelection()
+            {
+                return true;
+            }
         }
     }
 
@@ -133,8 +144,14 @@ public abstract class Selectable
             SelectorFactories factories  =
                     SelectorFactories.createFactoriesAndCollectColumnDefinitions(args, cfm, defs);
 
-            // resolve built-in functions before user defined functions
-            Function fun = Functions.get(cfm.ksName, functionName, factories.newInstances(), cfm.ksName, cfm.cfName);
+            // We need to circumvent the normal function lookup process for toJson() because instances of the function
+            // are not pre-declared (because it can accept any type of argument).
+            Function fun;
+            if (functionName.equalsNativeFunction(ToJsonFct.NAME))
+                fun = ToJsonFct.getInstance(factories.getReturnTypes());
+            else
+                fun = Functions.get(cfm.ksName, functionName, factories.newInstances(), cfm.ksName, cfm.cfName, null);
+
             if (fun == null)
                 throw new InvalidRequestException(String.format("Unknown function '%s'", functionName));
             if (fun.returnType() == null)
@@ -161,6 +178,11 @@ public abstract class Selectable
                 for (Selectable.Raw arg : args)
                     preparedArgs.add(arg.prepare(cfm));
                 return new WithFunction(functionName, preparedArgs);
+            }
+
+            public boolean processesSelection()
+            {
+                return true;
             }
         }
     }
@@ -220,6 +242,11 @@ public abstract class Selectable
             public WithFieldSelection prepare(CFMetaData cfm)
             {
                 return new WithFieldSelection(selected.prepare(cfm), field.prepare(cfm));
+            }
+
+            public boolean processesSelection()
+            {
+                return true;
             }
         }
     }

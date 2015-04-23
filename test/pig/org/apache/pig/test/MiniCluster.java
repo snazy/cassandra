@@ -21,7 +21,6 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
-import java.util.Locale;
 
 import org.apache.cassandra.utils.FBUtilities;
 import org.apache.hadoop.conf.Configuration;
@@ -50,7 +49,7 @@ public class MiniCluster extends MiniGenericCluster {
 
             // Builds and starts the mini dfs and mapreduce clusters
             Configuration config = new Configuration();
-            if (!FBUtilities.isUnix())
+            if (FBUtilities.isWindows())
                 config.set("fs.file.impl", WindowsLocalFileSystem.class.getName());
             m_dfs = new MiniDFSCluster(config, dataNodes, true, null);
             m_fileSys = m_dfs.getFileSystem();

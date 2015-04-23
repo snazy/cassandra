@@ -17,6 +17,9 @@
  */
 package org.apache.cassandra.cql3;
 
+import java.util.Collections;
+
+import org.apache.cassandra.cql3.functions.Function;
 import org.apache.cassandra.db.marshal.CollectionType;
 import org.apache.cassandra.db.marshal.ListType;
 import org.apache.cassandra.exceptions.InvalidRequestException;
@@ -45,6 +48,11 @@ public abstract class AbstractMarker extends Term.NonTerminal
         return true;
     }
 
+    public Iterable<Function> getFunctions()
+    {
+        return Collections.emptySet();
+    }
+
     /**
      * A parsed, but non prepared, bind marker.
      */
@@ -57,7 +65,7 @@ public abstract class AbstractMarker extends Term.NonTerminal
             this.bindIndex = bindIndex;
         }
 
-        public AbstractMarker prepare(String keyspace, ColumnSpecification receiver) throws InvalidRequestException
+        public NonTerminal prepare(String keyspace, ColumnSpecification receiver) throws InvalidRequestException
         {
             if (!(receiver.type instanceof CollectionType))
                 return new Constants.Marker(bindIndex, receiver);

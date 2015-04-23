@@ -17,7 +17,10 @@
  */
 package org.apache.cassandra.io.compress;
 
+import org.apache.cassandra.utils.ByteBufferUtil;
+
 import java.io.IOException;
+import java.nio.ByteBuffer;
 import java.util.Collections;
 import java.util.Map;
 import java.util.Set;
@@ -68,29 +71,34 @@ public class DeflateCompressor implements ICompressor
         return chunkLength;
     }
 
-    public int compress(byte[] input, int inputOffset, int inputLength, ICompressor.WrappedArray output, int outputOffset)
+    public int compress(ByteBuffer src, ICompressor.WrappedByteBuffer dest)
     {
+        assert dest.buffer.hasArray();
+
         Deflater def = deflater.get();
         def.reset();
-        def.setInput(input, inputOffset, inputLength);
+        def.setInput(src.array(), src.arrayOffset() + src.position(), src.remaining());
         def.finish();
         if (def.needsInput())
             return 0;
 
-        int offs = outputOffset;
+        int startPos = dest.buffer.position();
         while (true)
         {
-            offs += def.deflate(output.buffer, offs, output.buffer.length - offs);
+            int arrayOffset = dest.buffer.arrayOffset();
+            int len = def.deflate(dest.buffer.array(), arrayOffset + dest.buffer.position(), dest.buffer.remaining());
+            dest.buffer.position(dest.buffer.position() + len);
             if (def.finished())
             {
-                return offs - outputOffset;
+                return dest.buffer.position() - startPos;
             }
             else
             {
                 // We're not done, output was too small. Increase it and continue
-                byte[] newBuffer = new byte[(output.buffer.length*4)/3 + 1];
-                System.arraycopy(output.buffer, 0, newBuffer, 0, offs);
-                output.buffer = newBuffer;
+                ByteBuffer newDest = ByteBuffer.allocate(dest.buffer.capacity()*4/3 + 1);
+                dest.buffer.rewind();
+                newDest.put(dest.buffer);
+                dest.buffer = newDest;
             }
         }
     }
@@ -112,5 +120,19 @@ public class DeflateCompressor implements ICompressor
         {
             throw new IOException(e);
         }
+    }
+
+    public int uncompress(ByteBuffer input_, ByteBuffer output) throws IOException
+    {
+        if (!output.hasArray())
+            throw new IllegalArgumentException("DeflateCompressor doesn't work with direct byte buffers");
+
+        byte[] input = ByteBufferUtil.getArray(input_);
+        return uncompress(input, 0, input.length, output.array(), output.arrayOffset() + output.position());
+    }
+
+    public boolean useDirectOutputByteBuffers()
+    {
+        return false;
     }
 }

@@ -23,26 +23,23 @@ package org.apache.cassandra.stress.util;
 
 import java.util.Arrays;
 import java.util.List;
-import java.util.Random;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ThreadLocalRandom;
 
 // a timer - this timer must be used by a single thread, and co-ordinates with other timers by
 public final class Timer
 {
-
-    private static final int SAMPLE_SIZE_SHIFT = 14;
-    private static final int SAMPLE_SIZE_MASK = (1 << SAMPLE_SIZE_SHIFT) - 1;
-
-    private final Random rnd = new Random();
+    private ThreadLocalRandom rnd;
 
     // in progress snap start
     private long sampleStartNanos;
 
     // each entry is present with probability 1/p(opCount) or 1/(p(opCount)-1)
-    private final long[] sample = new long[1 << SAMPLE_SIZE_SHIFT];
+    private final long[] sample;
     private int opCount;
 
     // aggregate info
+    private long errorCount;
     private long partitionCount;
     private long rowCount;
     private long total;
@@ -56,14 +53,25 @@ public final class Timer
     volatile TimingInterval report;
     private volatile TimingInterval finalReport;
 
+    public Timer(int sampleCount)
+    {
+        int powerOf2 = 32 - Integer.numberOfLeadingZeros(sampleCount - 1);
+        this.sample = new long[1 << powerOf2];
+    }
+
+    public void init()
+    {
+        rnd = ThreadLocalRandom.current();
+    }
+
     public void start(){
         // decide if we're logging this event
         sampleStartNanos = System.nanoTime();
     }
 
-    private static int p(int index)
+    private int p(int index)
     {
-        return 1 + (index >>> SAMPLE_SIZE_SHIFT);
+        return 1 + (index / sample.length);
     }
 
     public boolean running()
@@ -71,7 +79,7 @@ public final class Timer
         return finalReport == null;
     }
 
-    public void stop(long partitionCount, long rowCount)
+    public void stop(long partitionCount, long rowCount, boolean error)
     {
         maybeReport();
         long now = System.nanoTime();
@@ -87,12 +95,14 @@ public final class Timer
         opCount += 1;
         this.partitionCount += partitionCount;
         this.rowCount += rowCount;
+        if (error)
+            this.errorCount++;
         upToDateAsOf = now;
     }
 
-    private static int index(int count)
+    private int index(int count)
     {
-        return count & SAMPLE_SIZE_MASK;
+        return count & (sample.length - 1);
     }
 
     private TimingInterval buildReport()
@@ -101,14 +111,15 @@ public final class Timer
                 (       new SampleOfLongs(Arrays.copyOf(sample, index(opCount)), p(opCount)),
                         new SampleOfLongs(Arrays.copyOfRange(sample, index(opCount), Math.min(opCount, sample.length)), p(opCount) - 1)
                 );
-        final TimingInterval report = new TimingInterval(lastSnap, upToDateAsOf, max, maxStart, max, partitionCount, rowCount, total, opCount,
-                SampleOfLongs.merge(rnd, sampleLatencies, Integer.MAX_VALUE));
+        final TimingInterval report = new TimingInterval(lastSnap, upToDateAsOf, max, maxStart, max, partitionCount,
+                rowCount, total, opCount, errorCount, SampleOfLongs.merge(rnd, sampleLatencies, Integer.MAX_VALUE));
         // reset counters
         opCount = 0;
         partitionCount = 0;
         rowCount = 0;
         total = 0;
         max = 0;
+        errorCount = 0;
         lastSnap = upToDateAsOf;
         return report;
     }

@@ -35,6 +35,7 @@ import org.apache.cassandra.config.CFMetaData;
 import org.apache.cassandra.db.composites.CellName;
 import org.apache.cassandra.db.composites.Composite;
 import org.apache.cassandra.db.filter.ColumnSlice;
+import org.apache.cassandra.db.marshal.BytesType;
 import org.apache.cassandra.utils.*;
 import org.apache.cassandra.utils.SearchIterator;
 import org.apache.cassandra.utils.btree.BTree;
@@ -54,12 +55,13 @@ import static org.apache.cassandra.db.index.SecondaryIndexManager.Updater;
  * isolated (in the sense of ACID). Typically a addAll is guaranteed that no
  * other thread can see the state where only parts but not all columns have
  * been added.
- * <p/>
+ * <p>
  * WARNING: removing element through getSortedColumns().iterator() is *not* supported
+ * </p>
  */
 public class AtomicBTreeColumns extends ColumnFamily
 {
-    static final long EMPTY_SIZE = ObjectSizes.measure(new AtomicBTreeColumns(SystemKeyspace.BuiltIndexesTable, null))
+    static final long EMPTY_SIZE = ObjectSizes.measure(new AtomicBTreeColumns(CFMetaData.denseCFMetaData("keyspace", "table", BytesType.instance), null))
             + ObjectSizes.measure(new Holder(null, null));
 
     // Reserved values for wasteTracker field. These values must not be consecutive (see avoidReservedValues)
@@ -398,6 +400,11 @@ public class AtomicBTreeColumns extends ColumnFamily
         return false;
     }
 
+    public BatchRemoveIterator<Cell> batchRemoveIterator()
+    {
+        throw new UnsupportedOperationException();
+    }
+
     private static final class Holder
     {
         final DeletionInfo deletionInfo;
@@ -532,23 +539,24 @@ public class AtomicBTreeColumns extends ColumnFamily
 
         protected Cell computeNext()
         {
-            if (currentSlice == null)
+            while (currentSlice != null || idx < slices.length)
             {
-                if (idx >= slices.length)
-                    return endOfData();
+                if (currentSlice == null)
+                {
+                    ColumnSlice slice = slices[idx++];
+                    if (forwards)
+                        currentSlice = slice(btree, comparator, slice.start, slice.finish, true);
+                    else
+                        currentSlice = slice(btree, comparator, slice.finish, slice.start, false);
+                }
 
-                ColumnSlice slice = slices[idx++];
-                if (forwards)
-                    currentSlice = slice(btree, comparator, slice.start, slice.finish, true);
-                else
-                    currentSlice = slice(btree, comparator, slice.finish, slice.start, false);
+                if (currentSlice.hasNext())
+                    return currentSlice.next();
+
+                currentSlice = null;
             }
 
-            if (currentSlice.hasNext())
-                return currentSlice.next();
-
-            currentSlice = null;
-            return computeNext();
+            return endOfData();
         }
     }
 

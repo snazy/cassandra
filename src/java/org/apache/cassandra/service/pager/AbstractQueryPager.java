@@ -227,7 +227,7 @@ abstract class AbstractQueryPager implements QueryPager
         {
             Row first = rows.get(i++);
             firstKey = first.key;
-            firstCf = first.cf.cloneMeShallow();
+            firstCf = first.cf.cloneMeShallow(isReversed());
             toDiscard -= isReversed()
                        ? discardLast(first.cf, toDiscard, firstCf)
                        : discardFirst(first.cf, toDiscard, firstCf);
@@ -267,7 +267,7 @@ abstract class AbstractQueryPager implements QueryPager
         {
             Row last = rows.get(i--);
             lastKey = last.key;
-            lastCf = last.cf.cloneMeShallow();
+            lastCf = last.cf.cloneMeShallow(isReversed());
             toDiscard -= isReversed()
                        ? discardFirst(last.cf, toDiscard, lastCf)
                        : discardLast(last.cf, toDiscard, lastCf);
@@ -303,7 +303,7 @@ abstract class AbstractQueryPager implements QueryPager
         DeletionInfo.InOrderTester tester = cf.deletionInfo().inOrderTester(isReversed);
         return isReversed
              ? discardTail(cf, toDiscard, newCf, cf.reverseIterator(), tester)
-             : discardHead(cf, toDiscard, newCf, cf.iterator(), tester);
+             : discardHead(toDiscard, newCf, cf.iterator(), tester);
     }
 
     private int discardLast(ColumnFamily cf, int toDiscard, ColumnFamily newCf)
@@ -311,11 +311,11 @@ abstract class AbstractQueryPager implements QueryPager
         boolean isReversed = isReversed();
         DeletionInfo.InOrderTester tester = cf.deletionInfo().inOrderTester(isReversed);
         return isReversed
-             ? discardHead(cf, toDiscard, newCf, cf.reverseIterator(), tester)
+             ? discardHead(toDiscard, newCf, cf.reverseIterator(), tester)
              : discardTail(cf, toDiscard, newCf, cf.iterator(), tester);
     }
 
-    private int discardHead(ColumnFamily cf, int toDiscard, ColumnFamily copy, Iterator<Cell> iter, DeletionInfo.InOrderTester tester)
+    private int discardHead(int toDiscard, ColumnFamily copy, Iterator<Cell> iter, DeletionInfo.InOrderTester tester)
     {
         ColumnCounter counter = columnCounter();
 

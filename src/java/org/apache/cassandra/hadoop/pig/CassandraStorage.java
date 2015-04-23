@@ -35,7 +35,6 @@ import org.apache.cassandra.thrift.*;
 import org.apache.cassandra.utils.ByteBufferUtil;
 import org.apache.cassandra.utils.FBUtilities;
 import org.apache.cassandra.utils.Hex;
-import org.apache.cassandra.utils.JVMStabilityInspector;
 import org.apache.hadoop.mapreduce.*;
 import org.apache.pig.Expression;
 import org.apache.pig.ResourceSchema;
@@ -124,7 +123,7 @@ public class CassandraStorage extends AbstractCassandraStorage
                     {
                         if (tuple.size() == 0) // lastRow is a new one
                         {
-                            key = (ByteBuffer)reader.getCurrentKey();
+                            key = reader.getCurrentKey();
                             tuple = keyToTuple(key, cfDef, parseType(cfDef.getKey_validation_class()));
                         }
                         for (Map.Entry<ByteBuffer, Cell> entry : lastRow.entrySet())
@@ -147,18 +146,18 @@ public class CassandraStorage extends AbstractCassandraStorage
                             return null;
                     }
                 }
-                if (key != null && !((ByteBuffer)reader.getCurrentKey()).equals(key)) // key changed
+                if (key != null && !(reader.getCurrentKey()).equals(key)) // key changed
                 {
                     // read too much, hold on to it for next time
-                    lastKey = (ByteBuffer)reader.getCurrentKey();
-                    lastRow = (SortedMap<ByteBuffer, Cell>)reader.getCurrentValue();
+                    lastKey = reader.getCurrentKey();
+                    lastRow = reader.getCurrentValue();
                     // but return what we have so far
                     tuple.append(bag);
                     return tuple;
                 }
                 if (key == null) // only set the key on the first iteration
                 {
-                    key = (ByteBuffer)reader.getCurrentKey();
+                    key = reader.getCurrentKey();
                     if (lastKey != null && !(key.equals(lastKey))) // last key only had one value
                     {
                         if (tuple == null)
@@ -171,7 +170,7 @@ public class CassandraStorage extends AbstractCassandraStorage
                         }
                         tuple.append(bag);
                         lastKey = key;
-                        lastRow = (SortedMap<ByteBuffer, Cell>)reader.getCurrentValue();
+                        lastRow = reader.getCurrentValue();
                         return tuple;
                     }
                     if (tuple == null)
@@ -237,7 +236,6 @@ public class CassandraStorage extends AbstractCassandraStorage
                 }
                 catch (Exception e)
                 {
-                    JVMStabilityInspector.inspectThrowable(e);
                     cql3Table = true;
                 }
                 if (hasColumn)
@@ -727,7 +725,7 @@ public class CassandraStorage extends AbstractCassandraStorage
     }
 
     /** get a list of column for the column family */
-    protected List<ColumnDef> getColumnMetadata(Cassandra.Client client) 
+    protected List<ColumnDef> getColumnMetadata(Cassandra.Client client)
     throws TException, CharacterCodingException, InvalidRequestException, ConfigurationException
     {   
         return getColumnMeta(client, true, true);
@@ -822,7 +820,7 @@ public class CassandraStorage extends AbstractCassandraStorage
     
     public ByteBuffer nullToBB()
     {
-        return (ByteBuffer) null;
+        return null;
     }
 }
 

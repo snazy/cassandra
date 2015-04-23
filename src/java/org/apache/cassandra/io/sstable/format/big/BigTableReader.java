@@ -25,7 +25,6 @@ import org.apache.cassandra.db.DecoratedKey;
 import org.apache.cassandra.db.RowIndexEntry;
 import org.apache.cassandra.db.RowPosition;
 import org.apache.cassandra.db.columniterator.OnDiskAtomIterator;
-import org.apache.cassandra.db.compaction.ICompactionScanner;
 import org.apache.cassandra.db.composites.CellName;
 import org.apache.cassandra.db.filter.ColumnSlice;
 import org.apache.cassandra.dht.IPartitioner;
@@ -34,13 +33,13 @@ import org.apache.cassandra.dht.Token;
 import org.apache.cassandra.io.sstable.Component;
 import org.apache.cassandra.io.sstable.CorruptSSTableException;
 import org.apache.cassandra.io.sstable.Descriptor;
+import org.apache.cassandra.io.sstable.ISSTableScanner;
 import org.apache.cassandra.io.sstable.format.SSTableReader;
 import org.apache.cassandra.io.sstable.metadata.StatsMetadata;
 import org.apache.cassandra.io.util.FileDataInput;
 import org.apache.cassandra.io.util.FileUtils;
 import org.apache.cassandra.tracing.Tracing;
 import org.apache.cassandra.utils.ByteBufferUtil;
-import org.apache.cassandra.utils.Pair;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -85,9 +84,9 @@ public class BigTableReader extends SSTableReader
      * @param dataRange filter to use when reading the columns
      * @return A Scanner for seeking over the rows of the SSTable.
      */
-    public ICompactionScanner getScanner(DataRange dataRange, RateLimiter limiter)
+    public ISSTableScanner getScanner(DataRange dataRange, RateLimiter limiter)
     {
-        return new BigTableScanner(this, dataRange, limiter);
+        return BigTableScanner.getScanner(this, dataRange, limiter);
     }
 
 
@@ -97,14 +96,9 @@ public class BigTableReader extends SSTableReader
      * @param ranges the range of keys to cover
      * @return A Scanner for seeking over the rows of the SSTable.
      */
-    public ICompactionScanner getScanner(Collection<Range<Token>> ranges, RateLimiter limiter)
+    public ISSTableScanner getScanner(Collection<Range<Token>> ranges, RateLimiter limiter)
     {
-        // We want to avoid allocating a SSTableScanner if the range don't overlap the sstable (#5249)
-        List<Pair<Long, Long>> positions = getPositionsForRanges(Range.normalize(ranges));
-        if (positions.isEmpty())
-            return new EmptyCompactionScanner(getFilename());
-        else
-            return new BigTableScanner(this, ranges, limiter);
+        return BigTableScanner.getScanner(this, ranges, limiter);
     }
 
 
@@ -115,13 +109,12 @@ public class BigTableReader extends SSTableReader
      * @param updateCacheAndStats true if updating stats and cache
      * @return The index entry corresponding to the key, or null if the key is not present
      */
-    public RowIndexEntry getPosition(RowPosition key, Operator op, boolean updateCacheAndStats)
+    protected RowIndexEntry getPosition(RowPosition key, Operator op, boolean updateCacheAndStats, boolean permitMatchPastLast)
     {
-        // first, check bloom filter
         if (op == Operator.EQ)
         {
             assert key instanceof DecoratedKey; // EQ only make sense if the key is a valid row key
-            if (!bf.isPresent(((DecoratedKey)key).getKey()))
+            if (!bf.isPresent((DecoratedKey)key))
             {
                 Tracing.trace("Bloom filter allows skipping sstable {}", descriptor.generation);
                 return null;
@@ -142,24 +135,35 @@ public class BigTableReader extends SSTableReader
         }
 
         // check the smallest and greatest keys in the sstable to see if it can't be present
-        if (first.compareTo(key) > 0 || last.compareTo(key) < 0)
+        boolean skip = false;
+        if (key.compareTo(first) < 0)
+        {
+            if (op == Operator.EQ)
+                skip = true;
+            else
+                key = first;
+
+            op = Operator.EQ;
+        }
+        else
+        {
+            int l = last.compareTo(key);
+            // l <= 0  => we may be looking past the end of the file; we then narrow our behaviour to:
+            //             1) skipping if strictly greater for GE and EQ;
+            //             2) skipping if equal and searching GT, and we aren't permitting matching past last
+            skip = l <= 0 && (l < 0 || (!permitMatchPastLast && op == Operator.GT));
+        }
+        if (skip)
         {
             if (op == Operator.EQ && updateCacheAndStats)
                 bloomFilterTracker.addFalsePositive();
-
-            if (op.apply(1) < 0)
-            {
-                Tracing.trace("Check against min and max keys allows skipping sstable {}", descriptor.generation);
-                return null;
-            }
+            Tracing.trace("Check against min and max keys allows skipping sstable {}", descriptor.generation);
+            return null;
         }
 
         int binarySearchResult = indexSummary.binarySearch(key);
         long sampledPosition = getIndexScanPositionFromBinarySearchResult(binarySearchResult, indexSummary);
         int sampledIndex = getIndexSummaryIndexFromBinarySearchResult(binarySearchResult);
-
-        // if we matched the -1th position, we'll start at the first position
-        sampledPosition = sampledPosition == -1 ? 0 : sampledPosition;
 
         int effectiveInterval = indexSummary.getEffectiveIndexIntervalAfterIndex(sampledIndex);
 
@@ -171,12 +175,12 @@ public class BigTableReader extends SSTableReader
         // of the next interval).
         int i = 0;
         Iterator<FileDataInput> segments = ifile.iterator(sampledPosition);
-        while (segments.hasNext() && i <= effectiveInterval)
+        while (segments.hasNext())
         {
             FileDataInput in = segments.next();
             try
             {
-                while (!in.isEOF() && i <= effectiveInterval)
+                while (!in.isEOF())
                 {
                     i++;
 
@@ -186,7 +190,7 @@ public class BigTableReader extends SSTableReader
                     boolean exactMatch; // is the current position an exact match for the key, suitable for caching
 
                     // Compare raw keys if possible for performance, otherwise compare decorated keys.
-                    if (op == Operator.EQ)
+                    if (op == Operator.EQ && i <= effectiveInterval)
                     {
                         opSatisfied = exactMatch = indexKey.equals(((DecoratedKey) key).getKey());
                     }

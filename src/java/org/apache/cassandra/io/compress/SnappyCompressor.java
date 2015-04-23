@@ -18,6 +18,7 @@
 package org.apache.cassandra.io.compress;
 
 import java.io.IOException;
+import java.nio.ByteBuffer;
 import java.util.Collections;
 import java.util.Map;
 import java.util.Set;
@@ -86,13 +87,29 @@ public class SnappyCompressor implements ICompressor
         return Snappy.maxCompressedLength(chunkLength);
     }
 
-    public int compress(byte[] input, int inputOffset, int inputLength, ICompressor.WrappedArray output, int outputOffset) throws IOException
+    public int compress(ByteBuffer src, WrappedByteBuffer dest) throws IOException
     {
-        return Snappy.rawCompress(input, inputOffset, inputLength, output.buffer, outputOffset);
+        int result = Snappy.compress(src, dest.buffer);
+
+        // Snappy doesn't match LZ4 and Deflate w/regards to state it leaves dest ByteBuffer's counters in
+        dest.buffer.position(dest.buffer.limit());
+        dest.buffer.limit(dest.buffer.capacity());
+        return result;
     }
 
     public int uncompress(byte[] input, int inputOffset, int inputLength, byte[] output, int outputOffset) throws IOException
     {
         return Snappy.rawUncompress(input, inputOffset, inputLength, output, outputOffset);
+    }
+
+    public int uncompress(ByteBuffer input, ByteBuffer output) throws IOException
+    {
+        return Snappy.uncompress(input, output);
+    }
+
+    @Override
+    public boolean useDirectOutputByteBuffers()
+    {
+        return true;
     }
 }

@@ -17,16 +17,16 @@
  */
 package org.apache.cassandra.cql3.selection;
 
-import java.util.ArrayList;
-import java.util.Iterator;
-import java.util.List;
+import java.util.*;
 
-import com.google.common.base.Function;
+import com.google.common.collect.Iterables;
 import com.google.common.collect.Lists;
 
 import org.apache.cassandra.config.CFMetaData;
 import org.apache.cassandra.config.ColumnDefinition;
+import org.apache.cassandra.cql3.functions.Function;
 import org.apache.cassandra.cql3.selection.Selector.Factory;
+import org.apache.cassandra.db.marshal.AbstractType;
 import org.apache.cassandra.exceptions.InvalidRequestException;
 
 /**
@@ -97,6 +97,25 @@ final class SelectorFactories implements Iterable<Selector.Factory>
         return false;
     }
 
+    public Iterable<Function> getFunctions()
+    {
+        Iterable<Function> functions = Collections.emptySet();
+        for (Factory factory : factories)
+            if (factory != null)
+                functions = Iterables.concat(functions, factory.getFunctions());
+        return functions;
+    }
+
+    /**
+     * Adds a new <code>Selector.Factory</code> for a column that is needed only for ORDER BY purposes.
+     * @param def the column that is needed for ordering
+     * @param index the index of the column definition in the Selection's list of columns
+     */
+    public void addSelectorForOrdering(ColumnDefinition def, int index)
+    {
+        factories.add(SimpleSelector.newFactory(def.name.toString(), index, def.type));
+    }
+
     /**
      * Checks if this <code>SelectorFactories</code> contains only factories for aggregates.
      *
@@ -145,7 +164,7 @@ final class SelectorFactories implements Iterable<Selector.Factory>
      * Creates a list of new <code>Selector</code> instances.
      * @return a list of new <code>Selector</code> instances.
      */
-    public List<Selector> newInstances()
+    public List<Selector> newInstances() throws InvalidRequestException
     {
         List<Selector> selectors = new ArrayList<>(factories.size());
         for (Selector.Factory factory : factories)
@@ -168,11 +187,27 @@ final class SelectorFactories implements Iterable<Selector.Factory>
      */
     public List<String> getColumnNames()
     {
-        return Lists.transform(factories, new Function<Selector.Factory, String>()
+        return Lists.transform(factories, new com.google.common.base.Function<Selector.Factory, String>()
         {
             public String apply(Selector.Factory factory)
             {
                 return factory.getColumnName();
+            }
+        });
+    }
+
+    /**
+     * Returns a list of the return types of the selector instances created by these factories.
+     *
+     * @return a list of types
+     */
+    public List<AbstractType<?>> getReturnTypes()
+    {
+        return Lists.transform(factories, new com.google.common.base.Function<Selector.Factory, AbstractType<?>>()
+        {
+            public AbstractType<?> apply(Selector.Factory factory)
+            {
+                return factory.getReturnType();
             }
         });
     }

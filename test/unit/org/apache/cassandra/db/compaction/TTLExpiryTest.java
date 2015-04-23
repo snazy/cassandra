@@ -33,9 +33,11 @@ import org.apache.cassandra.config.KSMetaData;
 import org.apache.cassandra.db.*;
 import org.apache.cassandra.db.columniterator.OnDiskAtomIterator;
 import org.apache.cassandra.exceptions.ConfigurationException;
+import org.apache.cassandra.io.sstable.ISSTableScanner;
 import org.apache.cassandra.locator.SimpleStrategy;
 import org.apache.cassandra.utils.ByteBufferUtil;
 
+import java.io.IOException;
 import java.util.Collections;
 import java.util.Set;
 
@@ -152,7 +154,7 @@ public class TTLExpiryTest
     }
 
     @Test
-    public void testNoExpire() throws InterruptedException
+    public void testNoExpire() throws InterruptedException, IOException
     {
         ColumnFamilyStore cfs = Keyspace.open(KEYSPACE1).getColumnFamilyStore("Standard1");
         cfs.disableAutoCompaction();
@@ -197,12 +199,14 @@ public class TTLExpiryTest
         cfs.enableAutoCompaction(true);
         assertEquals(1, cfs.getSSTables().size());
         SSTableReader sstable = cfs.getSSTables().iterator().next();
-        ICompactionScanner scanner = sstable.getScanner(DataRange.allData(sstable.partitioner));
+        ISSTableScanner scanner = sstable.getScanner(DataRange.allData(sstable.partitioner));
         assertTrue(scanner.hasNext());
         while(scanner.hasNext())
         {
             OnDiskAtomIterator iter = scanner.next();
             assertEquals(noTTLKey, iter.getKey());
         }
+
+        scanner.close();
     }
 }

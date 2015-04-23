@@ -19,7 +19,6 @@ package org.apache.cassandra.cql3.functions;
 
 import com.google.common.base.Objects;
 
-import org.apache.cassandra.db.Keyspace;
 import org.apache.cassandra.db.SystemKeyspace;
 
 public final class FunctionName
@@ -35,7 +34,7 @@ public final class FunctionName
     public FunctionName(String keyspace, String name)
     {
         assert name != null : "Name parameter must not be null";
-        this.keyspace = keyspace != null ? keyspace : null;
+        this.keyspace = keyspace;
         this.name = name;
     }
 
@@ -64,6 +63,15 @@ public final class FunctionName
         FunctionName that = (FunctionName)o;
         return Objects.equal(this.keyspace, that.keyspace)
             && Objects.equal(this.name, that.name);
+    }
+
+    public final boolean equalsNativeFunction(FunctionName nativeFunction)
+    {
+        assert nativeFunction.keyspace.equals(SystemKeyspace.NAME);
+        if (this.hasKeyspace() && !this.keyspace.equals(SystemKeyspace.NAME))
+            return false;
+
+        return Objects.equal(this.name, nativeFunction.name);
     }
 
     @Override

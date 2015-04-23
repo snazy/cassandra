@@ -19,11 +19,8 @@ package org.apache.cassandra.io.util;
 
 import java.io.*;
 import java.nio.ByteBuffer;
-import java.nio.MappedByteBuffer;
-import java.nio.file.AtomicMoveNotSupportedException;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
+import java.nio.channels.FileChannel;
+import java.nio.file.*;
 import java.text.DecimalFormat;
 import java.util.Arrays;
 
@@ -32,7 +29,7 @@ import sun.nio.ch.DirectBuffer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import org.apache.cassandra.config.Config;
+import org.apache.cassandra.concurrent.ScheduledExecutors;
 import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.db.BlacklistedDirectories;
 import org.apache.cassandra.db.Keyspace;
@@ -186,28 +183,13 @@ public class FileUtils
     }
     public static void truncate(String path, long size)
     {
-        RandomAccessFile file;
-
-        try
+        try(FileChannel channel = FileChannel.open(Paths.get(path), StandardOpenOption.READ, StandardOpenOption.WRITE))
         {
-            file = new RandomAccessFile(path, "rw");
-        }
-        catch (FileNotFoundException e)
-        {
-            throw new RuntimeException(e);
-        }
-
-        try
-        {
-            file.getChannel().truncate(size);
+            channel.truncate(size);
         }
         catch (IOException e)
         {
-            throw new FSWriteError(e, path);
-        }
-        finally
-        {
-            closeQuietly(file);
+            throw new RuntimeException(e);
         }
     }
 
@@ -278,9 +260,10 @@ public class FileUtils
         return canCleanDirectBuffers;
     }
 
-    public static void clean(MappedByteBuffer buffer)
+    public static void clean(ByteBuffer buffer)
     {
-        ((DirectBuffer) buffer).cleaner().clean();
+        if (isCleanerAvailable() && buffer.isDirect())
+            ((DirectBuffer)buffer).cleaner().clean();
     }
 
     public static void createDirectory(String directory)
@@ -320,7 +303,7 @@ public class FileUtils
                 deleteWithConfirm(new File(file));
             }
         };
-        StorageService.tasks.execute(runnable);
+        ScheduledExecutors.nonPeriodicTasks.execute(runnable);
     }
 
     public static String stringifyFileSize(double value)

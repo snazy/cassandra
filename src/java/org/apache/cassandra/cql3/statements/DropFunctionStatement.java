@@ -20,6 +20,9 @@ package org.apache.cassandra.cql3.statements;
 import java.util.ArrayList;
 import java.util.List;
 
+import com.google.common.base.Joiner;
+
+import org.apache.cassandra.auth.FunctionResource;
 import org.apache.cassandra.auth.Permission;
 import org.apache.cassandra.cql3.CQL3Type;
 import org.apache.cassandra.cql3.functions.*;
@@ -42,6 +45,9 @@ public final class DropFunctionStatement extends SchemaAlteringStatement
     private final List<CQL3Type.Raw> argRawTypes;
     private final boolean argsPresent;
 
+    private Function old;
+    private List<AbstractType<?>> argTypes;
+
     public DropFunctionStatement(FunctionName functionName,
                                  List<CQL3Type.Raw> argRawTypes,
                                  boolean argsPresent,
@@ -53,41 +59,49 @@ public final class DropFunctionStatement extends SchemaAlteringStatement
         this.ifExists = ifExists;
     }
 
+    @Override
+    public Prepared prepare() throws InvalidRequestException
+    {
+        argTypes = new ArrayList<>(argRawTypes.size());
+        for (CQL3Type.Raw rawType : argRawTypes)
+            argTypes.add(rawType.prepare(typeKeyspace(rawType)).getType());
+        return super.prepare();
+    }
+
+    @Override
     public void prepareKeyspace(ClientState state) throws InvalidRequestException
     {
         if (!functionName.hasKeyspace() && state.getRawKeyspace() != null)
             functionName = new FunctionName(state.getKeyspace(), functionName.name);
 
         if (!functionName.hasKeyspace())
-            throw new InvalidRequestException("You need to be logged in a keyspace or use a fully qualified function name");
+            throw new InvalidRequestException("Functions must be fully qualified with a keyspace name if a keyspace is not set for the session");
 
         ThriftValidation.validateKeyspaceNotSystem(functionName.keyspace);
     }
 
+    @Override
     public void checkAccess(ClientState state) throws UnauthorizedException, InvalidRequestException
     {
-        // TODO CASSANDRA-7557 (function DDL permission)
-
-        state.hasKeyspaceAccess(functionName.keyspace, Permission.DROP);
+        Function function = findFunction();
+        if (function == null)
+        {
+            if (!ifExists)
+                throw new InvalidRequestException(String.format("Unconfigured function %s.%s(%s)",
+                                                                functionName.keyspace,
+                                                                functionName.name,
+                                                                Joiner.on(",").join(argRawTypes)));
+        }
+        else
+        {
+            state.ensureHasPermission(Permission.DROP, FunctionResource.function(function.name().keyspace,
+                                                                                 function.name().name,
+                                                                                 function.argTypes()));
+        }
     }
 
-    /**
-     * The <code>CqlParser</code> only goes as far as extracting the keyword arguments
-     * from these statements, so this method is responsible for processing and
-     * validating.
-     *
-     * @throws org.apache.cassandra.exceptions.InvalidRequestException if arguments are missing or unacceptable
-     */
-    public void validate(ClientState state) throws RequestValidationException
-    {
-    }
-
-    public Event.SchemaChange changeEvent()
-    {
-        return null;
-    }
-
-    public boolean announceMigration(boolean isLocalOnly) throws RequestValidationException
+    @Override
+    public void validate(ClientState state)
     {
         List<Function> olds = Functions.find(functionName);
 
@@ -97,43 +111,74 @@ public final class DropFunctionStatement extends SchemaAlteringStatement
                                                             "'DROP FUNCTION %s (type, type, ...)'. Hint: use cqlsh " +
                                                             "'DESCRIBE FUNCTION %s' command to find all overloads",
                                                             functionName, functionName, functionName));
+    }
 
-        List<AbstractType<?>> argTypes = new ArrayList<>(argRawTypes.size());
-        for (CQL3Type.Raw rawType : argRawTypes)
-            argTypes.add(rawType.prepare(functionName.keyspace).getType());
+    @Override
+    public Event.SchemaChange changeEvent()
+    {
+        return new Event.SchemaChange(Event.SchemaChange.Change.DROPPED, Event.SchemaChange.Target.FUNCTION,
+                                      old.name().keyspace, old.name().name, AbstractType.asCQLTypeStringList(old.argTypes()));
+    }
 
+    @Override
+    public boolean announceMigration(boolean isLocalOnly) throws RequestValidationException
+    {
+        old = findFunction();
+        if (old == null)
+        {
+            if (ifExists)
+                return false;
+            else
+                throw new InvalidRequestException(getMissingFunctionError());
+        }
+
+        List<Function> references = Functions.getReferencesTo(old);
+        if (!references.isEmpty())
+            throw new InvalidRequestException(String.format("Function '%s' still referenced by %s", old, references));
+
+        MigrationManager.announceFunctionDrop((UDFunction) old, isLocalOnly);
+
+        return true;
+    }
+
+    private String getMissingFunctionError()
+    {
+        // just build a nicer error message
+        StringBuilder sb = new StringBuilder("Cannot drop non existing function '");
+        sb.append(functionName);
+        if (argsPresent)
+            sb.append(Joiner.on(", ").join(argRawTypes));
+        sb.append("'");
+        return sb.toString();
+    }
+
+    private String typeKeyspace(CQL3Type.Raw rawType)
+    {
+        String ks = rawType.keyspace();
+        if (ks != null)
+            return ks;
+        return functionName.keyspace;
+    }
+
+    private Function findFunction()
+    {
         Function old;
         if (argsPresent)
         {
             old = Functions.find(functionName, argTypes);
-            if (old == null)
+            if (old == null || !(old instanceof ScalarFunction))
             {
-                if (ifExists)
-                    return false;
-                // just build a nicer error message
-                StringBuilder sb = new StringBuilder();
-                for (CQL3Type.Raw rawType : argRawTypes)
-                {
-                    if (sb.length() > 0)
-                        sb.append(", ");
-                    sb.append(rawType);
-                }
-                throw new InvalidRequestException(String.format("Cannot drop non existing function '%s(%s)'",
-                                                                functionName, sb));
+                return null;
             }
         }
         else
         {
-            if (olds == null || olds.isEmpty())
-            {
-                if (ifExists)
-                    return false;
-                throw new InvalidRequestException(String.format("Cannot drop non existing function '%s'", functionName));
-            }
+            List<Function> olds = Functions.find(functionName);
+            if (olds == null || olds.isEmpty() || !(olds.get(0) instanceof ScalarFunction))
+                return null;
+
             old = olds.get(0);
         }
-
-        MigrationManager.announceFunctionDrop((UDFunction)old, isLocalOnly);
-        return true;
+        return old;
     }
 }

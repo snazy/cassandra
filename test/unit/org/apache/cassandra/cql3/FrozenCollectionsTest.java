@@ -75,8 +75,8 @@ public class FrozenCollectionsTest extends CQLTester
         );
 
         assertRows(execute("SELECT * FROM %s WHERE k IN ?", list(set(4, 5, 6), set())),
-                row(set(4, 5, 6), 0),
-                row(set(), 0)
+                   row(set(), 0),
+                   row(set(4, 5, 6), 0)
         );
 
         assertRows(execute("SELECT * FROM %s WHERE token(k) >= token(?)", set(4, 5, 6)),
@@ -144,9 +144,9 @@ public class FrozenCollectionsTest extends CQLTester
         );
 
         assertRows(execute("SELECT * FROM %s WHERE k IN ?", list(map(set(4, 5, 6), list(1, 2, 3)), map(), map(set(), list(1, 2, 3)))),
-            row(map(set(4, 5, 6), list(1, 2, 3)), 0),
-            row(map(), 0),
-            row(map(set(), list(1, 2, 3)), 0)
+                   row(map(), 0),
+                   row(map(set(), list(1, 2, 3)), 0),
+                   row(map(set(4, 5, 6), list(1, 2, 3)), 0)
         );
 
         assertRows(execute("SELECT * FROM %s WHERE token(k) >= token(?)", map(set(4, 5, 6), list(1, 2, 3))),
@@ -615,10 +615,10 @@ public class FrozenCollectionsTest extends CQLTester
                              "SELECT * FROM %s WHERE c CONTAINS KEY ?", 1);
 
         // normal indexes on frozen collections don't support CONTAINS or CONTAINS KEY
-        assertInvalidMessage("No secondary indexes on the restricted columns support the provided operator",
+        assertInvalidMessage("Cannot restrict clustering columns by a CONTAINS relation without a secondary index",
                              "SELECT * FROM %s WHERE b CONTAINS ?", 1);
 
-        assertInvalidMessage("No secondary indexes on the restricted columns support the provided operator",
+        assertInvalidMessage("Cannot restrict clustering columns by a CONTAINS relation without a secondary index",
                              "SELECT * FROM %s WHERE b CONTAINS ? ALLOW FILTERING", 1);
 
         assertInvalidMessage("No secondary indexes on the restricted columns support the provided operator",
@@ -627,7 +627,7 @@ public class FrozenCollectionsTest extends CQLTester
         assertInvalidMessage("No secondary indexes on the restricted columns support the provided operator",
                              "SELECT * FROM %s WHERE d CONTAINS KEY ? ALLOW FILTERING", 1);
 
-        assertInvalidMessage("No secondary indexes on the restricted columns support the provided operator",
+        assertInvalidMessage("Cannot restrict clustering columns by a CONTAINS relation without a secondary index",
                              "SELECT * FROM %s WHERE b CONTAINS ? AND d CONTAINS KEY ? ALLOW FILTERING", 1, 1);
 
         // index lookup on b
@@ -740,6 +740,316 @@ public class FrozenCollectionsTest extends CQLTester
         execute("DELETE d FROM %s WHERE a=? AND b=?", 0, list(1, 2, 3));
         assertRows(execute("SELECT * FROM %s WHERE d=?", map(1, "a")),
             row(0, list(4, 5, 6), set(1, 2, 3), map(1, "a"))
+        );
+    }
+
+    /** Test for CASSANDRA-8302 */
+    @Test
+    public void testClusteringColumnFiltering() throws Throwable
+    {
+        createTable("CREATE TABLE %s (a int, b frozen<map<int, int>>, c int, d int, PRIMARY KEY (a, b, c))");
+        createIndex("CREATE INDEX c_index ON %s (c)");
+        createIndex("CREATE INDEX d_index ON %s (d)");
+
+        execute("INSERT INTO %s (a, b, c, d) VALUES (?, ?, ?, ?)", 0, map(0, 0, 1, 1), 0, 0);
+        execute("INSERT INTO %s (a, b, c, d) VALUES (?, ?, ?, ?)", 0, map(1, 1, 2, 2), 0, 0);
+        execute("INSERT INTO %s (a, b, c, d) VALUES (?, ?, ?, ?)", 1, map(0, 0, 1, 1), 0, 0);
+        execute("INSERT INTO %s (a, b, c, d) VALUES (?, ?, ?, ?)", 1, map(1, 1, 2, 2), 0, 0);
+
+        assertRows(execute("SELECT * FROM %s WHERE d=? AND b CONTAINS ? ALLOW FILTERING", 0, 0),
+                row(0, map(0, 0, 1, 1), 0, 0),
+                row(1, map(0, 0, 1, 1), 0, 0)
+        );
+
+        assertRows(execute("SELECT * FROM %s WHERE d=? AND b CONTAINS KEY ? ALLOW FILTERING", 0, 0),
+                row(0, map(0, 0, 1, 1), 0, 0),
+                row(1, map(0, 0, 1, 1), 0, 0)
+        );
+
+        assertRows(execute("SELECT * FROM %s WHERE a=? AND d=? AND b CONTAINS ? ALLOW FILTERING", 0, 0, 0),
+                row(0, map(0, 0, 1, 1), 0, 0)
+        );
+        assertRows(execute("SELECT * FROM %s WHERE a=? AND d=? AND b CONTAINS KEY ? ALLOW FILTERING", 0, 0, 0),
+                row(0, map(0, 0, 1, 1), 0, 0)
+        );
+
+        dropIndex("DROP INDEX %s.d_index");
+
+        assertRows(execute("SELECT * FROM %s WHERE c=? AND b CONTAINS ? ALLOW FILTERING", 0, 0),
+                row(0, map(0, 0, 1, 1), 0, 0),
+                row(1, map(0, 0, 1, 1), 0, 0)
+        );
+
+        assertRows(execute("SELECT * FROM %s WHERE c=? AND b CONTAINS KEY ? ALLOW FILTERING", 0, 0),
+                row(0, map(0, 0, 1, 1), 0, 0),
+                row(1, map(0, 0, 1, 1), 0, 0)
+        );
+
+        assertRows(execute("SELECT * FROM %s WHERE a=? AND c=? AND b CONTAINS ? ALLOW FILTERING", 0, 0, 0),
+                row(0, map(0, 0, 1, 1), 0, 0)
+        );
+        assertRows(execute("SELECT * FROM %s WHERE a=? AND c=? AND b CONTAINS KEY ? ALLOW FILTERING", 0, 0, 0),
+                row(0, map(0, 0, 1, 1), 0, 0)
+        );
+    }
+
+    @Test
+    public void testFrozenListInMap() throws Throwable
+    {
+        createTable("CREATE TABLE %s (k int primary key, m map<frozen<list<int>>, int>)");
+
+        execute("INSERT INTO %s (k, m) VALUES (1, {[1, 2, 3] : 1})");
+        assertRows(execute("SELECT * FROM %s WHERE k = 1"),
+                row(1, map(list(1, 2, 3), 1)));
+
+        execute("UPDATE %s SET m[[1, 2, 3]]=2 WHERE k=1");
+        assertRows(execute("SELECT * FROM %s WHERE k = 1"),
+                row(1, map(list(1, 2, 3), 2)));
+
+        execute("UPDATE %s SET m = m + ? WHERE k=1", map(list(4, 5, 6), 3));
+        assertRows(execute("SELECT * FROM %s WHERE k = 1"),
+                row(1,
+                    map(list(1, 2, 3), 2,
+                        list(4, 5, 6), 3)));
+
+        execute("DELETE m[[1, 2, 3]] FROM %s WHERE k = 1");
+        assertRows(execute("SELECT * FROM %s WHERE k = 1"),
+                row(1, map(list(4, 5, 6), 3)));
+    }
+
+    @Test
+    public void testFrozenListInSet() throws Throwable
+    {
+        createTable("CREATE TABLE %s (k int primary key, s set<frozen<list<int>>>)");
+
+        execute("INSERT INTO %s (k, s) VALUES (1, {[1, 2, 3]})");
+        assertRows(execute("SELECT * FROM %s WHERE k = 1"),
+                row(1, set(list(1, 2, 3)))
+        );
+
+        execute("UPDATE %s SET s = s + ? WHERE k=1", set(list(4, 5, 6)));
+        assertRows(execute("SELECT * FROM %s WHERE k = 1"),
+                row(1, set(list(1, 2, 3), list(4, 5, 6)))
+        );
+
+        execute("UPDATE %s SET s = s - ? WHERE k=1", set(list(4, 5, 6)));
+        assertRows(execute("SELECT * FROM %s WHERE k = 1"),
+                row(1, set(list(1, 2, 3)))
+        );
+
+        execute("DELETE s[[1, 2, 3]] FROM %s WHERE k = 1");
+        assertRows(execute("SELECT * FROM %s WHERE k = 1"),
+                row(1, null)
+        );
+    }
+
+    @Test
+    public void testFrozenListInList() throws Throwable
+    {
+        createTable("CREATE TABLE %s (k int primary key, l list<frozen<list<int>>>)");
+
+        execute("INSERT INTO %s (k, l) VALUES (1, [[1, 2, 3]])");
+        assertRows(execute("SELECT * FROM %s WHERE k = 1"),
+                row(1, list(list(1, 2, 3)))
+        );
+
+        execute("UPDATE %s SET l[?]=? WHERE k=1", 0, list(4, 5, 6));
+        assertRows(execute("SELECT * FROM %s WHERE k = 1"),
+                row(1, list(list(4, 5, 6)))
+        );
+
+        execute("UPDATE %s SET l = ? + l WHERE k=1", list(list(1, 2, 3)));
+        assertRows(execute("SELECT * FROM %s WHERE k = 1"),
+                row(1, list(list(1, 2, 3), list(4, 5, 6)))
+        );
+
+        execute("UPDATE %s SET l = l + ? WHERE k=1", list(list(7, 8, 9)));
+        assertRows(execute("SELECT * FROM %s WHERE k = 1"),
+                row(1, list(list(1, 2, 3), list(4, 5, 6), list(7, 8, 9)))
+        );
+
+        execute("UPDATE %s SET l = l - ? WHERE k=1", list(list(4, 5, 6)));
+        assertRows(execute("SELECT * FROM %s WHERE k = 1"),
+                row(1, list(list(1, 2, 3), list(7, 8, 9)))
+        );
+
+        execute("DELETE l[0] FROM %s WHERE k = 1");
+        assertRows(execute("SELECT * FROM %s WHERE k = 1"),
+                row(1, list(list(7, 8, 9)))
+        );
+    }
+
+    @Test
+    public void testFrozenMapInMap() throws Throwable
+    {
+        createTable("CREATE TABLE %s (k int primary key, m map<frozen<map<int, int>>, int>)");
+
+        execute("INSERT INTO %s (k, m) VALUES (1, {{1 : 1, 2 : 2} : 1})");
+        assertRows(execute("SELECT * FROM %s WHERE k = 1"),
+                row(1, map(map(1, 1, 2, 2), 1)));
+
+        execute("UPDATE %s SET m[?]=2 WHERE k=1", map(1, 1, 2, 2));
+        assertRows(execute("SELECT * FROM %s WHERE k = 1"),
+                row(1, map(map(1, 1, 2, 2), 2)));
+
+        execute("UPDATE %s SET m = m + ? WHERE k=1", map(map(3, 3, 4, 4), 3));
+        assertRows(execute("SELECT * FROM %s WHERE k = 1"),
+                row(1,
+                    map(map(1, 1, 2, 2), 2,
+                        map(3, 3, 4, 4), 3)));
+
+        execute("DELETE m[?] FROM %s WHERE k = 1", map(1, 1, 2, 2));
+        assertRows(execute("SELECT * FROM %s WHERE k = 1"),
+                row(1, map(map(3, 3, 4, 4), 3)));
+    }
+
+    @Test
+    public void testFrozenMapInSet() throws Throwable
+    {
+        createTable("CREATE TABLE %s (k int primary key, s set<frozen<map<int, int>>>)");
+
+        execute("INSERT INTO %s (k, s) VALUES (1, {{1 : 1, 2 : 2}})");
+
+        assertRows(execute("SELECT * FROM %s WHERE k = 1"),
+                row(1, set(map(1, 1, 2, 2)))
+        );
+
+        execute("UPDATE %s SET s = s + ? WHERE k=1", set(map(3, 3, 4, 4)));
+        assertRows(execute("SELECT * FROM %s WHERE k = 1"),
+                row(1, set(map(1, 1, 2, 2), map(3, 3, 4, 4)))
+        );
+
+        execute("UPDATE %s SET s = s - ? WHERE k=1", set(map(3, 3, 4, 4)));
+        assertRows(execute("SELECT * FROM %s WHERE k = 1"),
+                row(1, set(map(1, 1, 2, 2)))
+        );
+
+        execute("DELETE s[?] FROM %s WHERE k = 1", map(1, 1, 2, 2));
+        assertRows(execute("SELECT * FROM %s WHERE k = 1"),
+                row(1, null)
+        );
+    }
+
+    @Test
+    public void testFrozenMapInList() throws Throwable
+    {
+        createTable("CREATE TABLE %s (k int primary key, l list<frozen<map<int, int>>>)");
+
+        execute("INSERT INTO %s (k, l) VALUES (1, [{1 : 1, 2 : 2}])");
+        assertRows(execute("SELECT * FROM %s WHERE k = 1"),
+                row(1, list(map(1, 1, 2, 2)))
+        );
+
+        execute("UPDATE %s SET l[?]=? WHERE k=1", 0, map(3, 3, 4, 4));
+        assertRows(execute("SELECT * FROM %s WHERE k = 1"),
+                row(1, list(map(3, 3, 4, 4)))
+        );
+
+        execute("UPDATE %s SET l = ? + l WHERE k=1", list(map(1, 1, 2, 2)));
+        assertRows(execute("SELECT * FROM %s WHERE k = 1"),
+                row(1, list(map(1, 1, 2, 2), map(3, 3, 4, 4)))
+        );
+
+        execute("UPDATE %s SET l = l + ? WHERE k=1", list(map(5, 5, 6, 6)));
+        assertRows(execute("SELECT * FROM %s WHERE k = 1"),
+                row(1, list(map(1, 1, 2, 2), map(3, 3, 4, 4), map(5, 5, 6, 6)))
+        );
+
+        execute("UPDATE %s SET l = l - ? WHERE k=1", list(map(3, 3, 4, 4)));
+        assertRows(execute("SELECT * FROM %s WHERE k = 1"),
+                row(1, list(map(1, 1, 2, 2), map(5, 5, 6, 6)))
+        );
+
+        execute("DELETE l[0] FROM %s WHERE k = 1");
+        assertRows(execute("SELECT * FROM %s WHERE k = 1"),
+                row(1, list(map(5, 5, 6, 6)))
+        );
+    }
+
+    @Test
+    public void testFrozenSetInMap() throws Throwable
+    {
+        createTable("CREATE TABLE %s (k int primary key, m map<frozen<set<int>>, int>)");
+
+        execute("INSERT INTO %s (k, m) VALUES (1, {{1, 2, 3} : 1})");
+        assertRows(execute("SELECT * FROM %s WHERE k = 1"),
+                row(1, map(set(1, 2, 3), 1)));
+
+        execute("UPDATE %s SET m[?]=2 WHERE k=1", set(1, 2, 3));
+        assertRows(execute("SELECT * FROM %s WHERE k = 1"),
+                row(1, map(set(1, 2, 3), 2)));
+
+        execute("UPDATE %s SET m = m + ? WHERE k=1", map(set(4, 5, 6), 3));
+        assertRows(execute("SELECT * FROM %s WHERE k = 1"),
+                row(1,
+                    map(set(1, 2, 3), 2,
+                        set(4, 5, 6), 3)));
+
+        execute("DELETE m[?] FROM %s WHERE k = 1", set(1, 2, 3));
+        assertRows(execute("SELECT * FROM %s WHERE k = 1"),
+                row(1, map(set(4, 5, 6), 3)));
+    }
+
+    @Test
+    public void testFrozenSetInSet() throws Throwable
+    {
+        createTable("CREATE TABLE %s (k int primary key, s set<frozen<set<int>>>)");
+
+        execute("INSERT INTO %s (k, s) VALUES (1, {{1, 2, 3}})");
+
+        assertRows(execute("SELECT * FROM %s WHERE k = 1"),
+                row(1, set(set(1, 2, 3)))
+        );
+
+        execute("UPDATE %s SET s = s + ? WHERE k=1", set(set(4, 5, 6)));
+        assertRows(execute("SELECT * FROM %s WHERE k = 1"),
+                row(1, set(set(1, 2, 3), set(4, 5, 6)))
+        );
+
+        execute("UPDATE %s SET s = s - ? WHERE k=1", set(set(4, 5, 6)));
+        assertRows(execute("SELECT * FROM %s WHERE k = 1"),
+                row(1, set(set(1, 2, 3)))
+        );
+
+        execute("DELETE s[?] FROM %s WHERE k = 1", set(1, 2, 3));
+        assertRows(execute("SELECT * FROM %s WHERE k = 1"),
+                row(1, null)
+        );
+    }
+
+    @Test
+    public void testFrozenSetInList() throws Throwable
+    {
+        createTable("CREATE TABLE %s (k int primary key, l list<frozen<set<int>>>)");
+
+        execute("INSERT INTO %s (k, l) VALUES (1, [{1, 2, 3}])");
+        assertRows(execute("SELECT * FROM %s WHERE k = 1"),
+                row(1, list(set(1, 2, 3)))
+        );
+
+        execute("UPDATE %s SET l[?]=? WHERE k=1", 0, set(4, 5, 6));
+        assertRows(execute("SELECT * FROM %s WHERE k = 1"),
+                row(1, list(set(4, 5, 6)))
+        );
+
+        execute("UPDATE %s SET l = ? + l WHERE k=1", list(set(1, 2, 3)));
+        assertRows(execute("SELECT * FROM %s WHERE k = 1"),
+                row(1, list(set(1, 2, 3), set(4, 5, 6)))
+        );
+
+        execute("UPDATE %s SET l = l + ? WHERE k=1", list(set(7, 8, 9)));
+        assertRows(execute("SELECT * FROM %s WHERE k = 1"),
+                row(1, list(set(1, 2, 3), set(4, 5, 6), set(7, 8, 9)))
+        );
+
+        execute("UPDATE %s SET l = l - ? WHERE k=1", list(set(4, 5, 6)));
+        assertRows(execute("SELECT * FROM %s WHERE k = 1"),
+                row(1, list(set(1, 2, 3), set(7, 8, 9)))
+        );
+
+        execute("DELETE l[0] FROM %s WHERE k = 1");
+        assertRows(execute("SELECT * FROM %s WHERE k = 1"),
+                row(1, list(set(7, 8, 9)))
         );
     }
 

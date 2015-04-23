@@ -18,19 +18,17 @@
 package org.apache.cassandra.tools;
 
 import java.io.File;
-import java.net.*;
+import java.net.InetAddress;
+import java.net.MalformedURLException;
+import java.net.UnknownHostException;
 import java.util.*;
 
 import com.google.common.base.Joiner;
 import com.google.common.collect.HashMultimap;
 import com.google.common.collect.Multimap;
-
 import org.apache.commons.cli.*;
-import org.apache.thrift.protocol.TBinaryProtocol;
-import org.apache.thrift.protocol.TProtocol;
-import org.apache.thrift.transport.TTransport;
 
-import org.apache.cassandra.auth.IAuthenticator;
+import org.apache.cassandra.auth.PasswordAuthenticator;
 import org.apache.cassandra.config.*;
 import org.apache.cassandra.db.SystemKeyspace;
 import org.apache.cassandra.db.marshal.UTF8Type;
@@ -38,11 +36,15 @@ import org.apache.cassandra.dht.Range;
 import org.apache.cassandra.dht.Token;
 import org.apache.cassandra.exceptions.ConfigurationException;
 import org.apache.cassandra.io.sstable.SSTableLoader;
+import org.apache.cassandra.schema.LegacySchemaTables;
 import org.apache.cassandra.streaming.*;
 import org.apache.cassandra.thrift.*;
 import org.apache.cassandra.utils.ByteBufferUtil;
 import org.apache.cassandra.utils.JVMStabilityInspector;
 import org.apache.cassandra.utils.OutputHandler;
+import org.apache.thrift.protocol.TBinaryProtocol;
+import org.apache.thrift.protocol.TProtocol;
+import org.apache.thrift.transport.TTransport;
 
 public class BulkLoader
 {
@@ -73,6 +75,7 @@ public class BulkLoader
 
     public static void main(String args[])
     {
+        Config.setClientMode(true);
         LoaderOptions options = LoaderOptions.parseArgs(args);
         OutputHandler handler = new OutputHandler.SystemOutput(options.verbose, options.debug);
         SSTableLoader loader = new SSTableLoader(
@@ -224,14 +227,14 @@ public class BulkLoader
                     peak = average;
                 sb.append("(avg: ").append(average).append(" MB/s)");
 
-                System.err.print(sb.toString());
+                System.out.print(sb.toString());
             }
         }
 
         private int mbPerSec(long bytes, long timeInNano)
         {
             double bytesPerNano = ((double)bytes) / timeInNano;
-            return (int)((bytesPerNano * 1000 * 1000 * 1000) / (1024 * 2024));
+            return (int)((bytesPerNano * 1000 * 1000 * 1000) / (1024 * 1024));
         }
 
         private void printSummary(int connectionsPerHost)
@@ -247,7 +250,7 @@ public class BulkLoader
             sb.append(String.format("   %-30s: %-10d%n", "Total duration (ms): ", durationMS));
             sb.append(String.format("   %-30s: %-10d%n", "Average transfer rate (MB/s): ", + average));
             sb.append(String.format("   %-30s: %-10d%n", "Peak transfer rate (MB/s): ", + peak));
-            System.err.println(sb.toString());
+            System.out.println(sb.toString());
         }
     }
 
@@ -300,7 +303,7 @@ public class BulkLoader
 
                     for (TokenRange tr : client.describe_ring(keyspace))
                     {
-                        Range<Token> range = new Range<>(tkFactory.fromString(tr.start_token), tkFactory.fromString(tr.end_token), getPartitioner());
+                        Range<Token> range = new Range<>(tkFactory.fromString(tr.start_token), tkFactory.fromString(tr.end_token));
                         for (String ep : tr.endpoints)
                         {
                             addRangeForEndpoint(range, InetAddress.getByName(ep));
@@ -309,7 +312,7 @@ public class BulkLoader
 
                     String cfQuery = String.format("SELECT * FROM %s.%s WHERE keyspace_name = '%s'",
                                                    SystemKeyspace.NAME,
-                                                   SystemKeyspace.SCHEMA_COLUMNFAMILIES_TABLE,
+                                                   LegacySchemaTables.COLUMNFAMILIES,
                                                    keyspace);
                     CqlResult cfRes = client.execute_cql3_query(ByteBufferUtil.bytes(cfQuery), Compression.NONE, ConsistencyLevel.ONE);
 
@@ -319,7 +322,7 @@ public class BulkLoader
                         String columnFamily = UTF8Type.instance.getString(row.columns.get(1).bufferForName());
                         String columnsQuery = String.format("SELECT * FROM %s.%s WHERE keyspace_name = '%s' AND columnfamily_name = '%s'",
                                                             SystemKeyspace.NAME,
-                                                            SystemKeyspace.SCHEMA_COLUMNS_TABLE,
+                                                            LegacySchemaTables.COLUMNS,
                                                             keyspace,
                                                             columnFamily);
                         CqlResult columnsRes = client.execute_cql3_query(ByteBufferUtil.bytes(columnsQuery), Compression.NONE, ConsistencyLevel.ONE);
@@ -357,8 +360,8 @@ public class BulkLoader
             if (user != null && passwd != null)
             {
                 Map<String, String> credentials = new HashMap<>();
-                credentials.put(IAuthenticator.USERNAME_KEY, user);
-                credentials.put(IAuthenticator.PASSWORD_KEY, passwd);
+                credentials.put(PasswordAuthenticator.USERNAME_KEY, user);
+                credentials.put(PasswordAuthenticator.PASSWORD_KEY, passwd);
                 AuthenticationRequest authenticationRequest = new AuthenticationRequest(credentials);
                 client.login(authenticationRequest);
             }

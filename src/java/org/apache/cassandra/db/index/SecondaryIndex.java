@@ -18,7 +18,6 @@
 package org.apache.cassandra.db.index;
 
 import java.nio.ByteBuffer;
-import java.util.Collection;
 import java.util.Collections;
 import java.util.Iterator;
 import java.util.Set;
@@ -26,17 +25,18 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Future;
 import java.util.concurrent.FutureTask;
 
-import org.apache.cassandra.io.sstable.format.SSTableReader;
 import com.google.common.base.Objects;
 import org.apache.commons.lang3.StringUtils;
-
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import org.apache.cassandra.config.CFMetaData;
 import org.apache.cassandra.config.ColumnDefinition;
 import org.apache.cassandra.cql3.Operator;
-import org.apache.cassandra.db.*;
+import org.apache.cassandra.db.Cell;
+import org.apache.cassandra.db.ColumnFamilyStore;
+import org.apache.cassandra.db.DecoratedKey;
+import org.apache.cassandra.db.SystemKeyspace;
 import org.apache.cassandra.db.compaction.CompactionManager;
 import org.apache.cassandra.db.composites.CellName;
 import org.apache.cassandra.db.composites.CellNameType;
@@ -46,11 +46,13 @@ import org.apache.cassandra.db.index.keys.KeysIndex;
 import org.apache.cassandra.db.marshal.AbstractType;
 import org.apache.cassandra.db.marshal.BytesType;
 import org.apache.cassandra.db.marshal.LocalByPartionerType;
-import org.apache.cassandra.dht.LocalToken;
 import org.apache.cassandra.exceptions.ConfigurationException;
+import org.apache.cassandra.io.sstable.format.SSTableReader;
 import org.apache.cassandra.io.sstable.ReducingKeyIterator;
 import org.apache.cassandra.service.StorageService;
 import org.apache.cassandra.utils.FBUtilities;
+
+import org.apache.cassandra.utils.concurrent.Refs;
 
 /**
  * Abstract base class for different types of secondary indexes.
@@ -72,6 +74,11 @@ public abstract class SecondaryIndex
      * The name of the option used to specify that the index is on the collection values.
      */
     public static final String INDEX_VALUES_OPTION_NAME = "index_values";
+
+    /**
+     * The name of the option used to specify that the index is on the collection (map) entries.
+     */
+    public static final String INDEX_ENTRIES_OPTION_NAME = "index_keys_and_values";
 
     public static final AbstractType<?> keyComparator = StorageService.getPartitioner().preservesOrder()
                                                       ? BytesType.instance
@@ -202,8 +209,7 @@ public abstract class SecondaryIndex
         logger.info(String.format("Submitting index build of %s for data in %s",
                 getIndexName(), StringUtils.join(baseCfs.getSSTables(), ", ")));
 
-        Collection<SSTableReader> sstables = baseCfs.markCurrentSSTablesReferenced();
-        try
+        try (Refs<SSTableReader> sstables = baseCfs.selectAndReference(ColumnFamilyStore.CANONICAL_SSTABLES).refs)
         {
             SecondaryIndexBuilder builder = new SecondaryIndexBuilder(baseCfs,
                                                                       Collections.singleton(getIndexName()),
@@ -212,10 +218,6 @@ public abstract class SecondaryIndex
             FBUtilities.waitOnFuture(future);
             forceBlockingFlush();
             setIndexBuilt();
-        }
-        finally
-        {
-            SSTableReader.releaseReferences(sstables);
         }
         logger.info("Index build of {} complete", getIndexName());
     }
@@ -296,21 +298,29 @@ public abstract class SecondaryIndex
     }
 
     /**
-     * Returns the decoratedKey for a column value
+     * Returns the decoratedKey for a column value. Assumes an index CFS is present.
      * @param value column value
      * @return decorated key
      */
     public DecoratedKey getIndexKeyFor(ByteBuffer value)
     {
-        // FIXME: this imply one column definition per index
-        ByteBuffer name = columnDefs.iterator().next().name.bytes;
-        return new BufferDecoratedKey(new LocalToken(baseCfs.metadata.getColumnDefinition(name).type, value), value);
+        return getIndexCfs().partitioner.decorateKey(value);
     }
 
     /**
      * Returns true if the provided cell name is indexed by this secondary index.
      */
     public abstract boolean indexes(CellName name);
+
+    /**
+     * Returns true if the defined column is indexed by this secondary index.
+     * @param column definition of the column to check
+     * @return whether the supplied column is indexed or not
+     */
+    public boolean indexes(ColumnDefinition column)
+    {
+        return columnDefs.contains(column);
+    }
 
     /**
      * This is the primary way to create a secondary index instance for a CF column.

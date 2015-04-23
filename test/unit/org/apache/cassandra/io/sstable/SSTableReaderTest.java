@@ -59,10 +59,9 @@ import org.apache.cassandra.db.Row;
 import org.apache.cassandra.db.RowPosition;
 import org.apache.cassandra.db.columniterator.IdentityQueryFilter;
 import org.apache.cassandra.db.compaction.CompactionManager;
-import org.apache.cassandra.db.compaction.ICompactionScanner;
 import org.apache.cassandra.db.composites.Composites;
 import org.apache.cassandra.dht.LocalPartitioner;
-import org.apache.cassandra.dht.LocalToken;
+import org.apache.cassandra.dht.LocalPartitioner.LocalToken;
 import org.apache.cassandra.dht.Range;
 import org.apache.cassandra.dht.Token;
 import org.apache.cassandra.io.util.FileDataInput;
@@ -72,7 +71,6 @@ import org.apache.cassandra.service.CacheService;
 import org.apache.cassandra.service.StorageService;
 import org.apache.cassandra.utils.ByteBufferUtil;
 import org.apache.cassandra.utils.Pair;
-
 import static org.apache.cassandra.Util.cellname;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
@@ -109,7 +107,7 @@ public class SSTableReaderTest
     }
 
     @Test
-    public void testGetPositionsForRanges() throws ExecutionException, InterruptedException
+    public void testGetPositionsForRanges()
     {
         Keyspace keyspace = Keyspace.open(KEYSPACE1);
         ColumnFamilyStore store = keyspace.getColumnFamilyStore("Standard2");
@@ -124,7 +122,7 @@ public class SSTableReaderTest
             rm.applyUnsafe();
         }
         store.forceBlockingFlush();
-        CompactionManager.instance.performMaximal(store);
+        CompactionManager.instance.performMaximal(store, false);
 
         List<Range<Token>> ranges = new ArrayList<Range<Token>>();
         // 1 key
@@ -148,7 +146,7 @@ public class SSTableReaderTest
     }
 
     @Test
-    public void testSpannedIndexPositions() throws IOException, ExecutionException, InterruptedException
+    public void testSpannedIndexPositions() throws IOException
     {
         MmappedSegmentedFile.MAX_SEGMENT_SIZE = 40; // each index entry is ~11 bytes, so this will generate lots of segments
 
@@ -165,7 +163,7 @@ public class SSTableReaderTest
             rm.applyUnsafe();
         }
         store.forceBlockingFlush();
-        CompactionManager.instance.performMaximal(store);
+        CompactionManager.instance.performMaximal(store, false);
 
         // check that all our keys are found correctly
         SSTableReader sstable = store.getSSTables().iterator().next();
@@ -202,7 +200,7 @@ public class SSTableReaderTest
         store.forceBlockingFlush();
 
         clearAndLoad(store);
-        assert store.getMaxRowSize() != 0;
+        assert store.metric.maxRowSize.getValue() != 0;
     }
 
     private void clearAndLoad(ColumnFamilyStore cfs)
@@ -228,19 +226,19 @@ public class SSTableReaderTest
         store.forceBlockingFlush();
 
         SSTableReader sstable = store.getSSTables().iterator().next();
-        assertEquals(0, sstable.readMeter.count());
+        assertEquals(0, sstable.getReadMeter().count());
 
         DecoratedKey key = sstable.partitioner.decorateKey(ByteBufferUtil.bytes("4"));
         store.getColumnFamily(key, Composites.EMPTY, Composites.EMPTY, false, 100, 100);
-        assertEquals(1, sstable.readMeter.count());
+        assertEquals(1, sstable.getReadMeter().count());
         store.getColumnFamily(key, cellname("0"), cellname("0"), false, 100, 100);
-        assertEquals(2, sstable.readMeter.count());
+        assertEquals(2, sstable.getReadMeter().count());
         store.getColumnFamily(Util.namesQueryFilter(store, key, cellname("0")));
-        assertEquals(3, sstable.readMeter.count());
+        assertEquals(3, sstable.getReadMeter().count());
     }
 
     @Test
-    public void testGetPositionsForRangesWithKeyCache() throws ExecutionException, InterruptedException
+    public void testGetPositionsForRangesWithKeyCache()
     {
         Keyspace keyspace = Keyspace.open(KEYSPACE1);
         ColumnFamilyStore store = keyspace.getColumnFamilyStore("Standard2");
@@ -256,7 +254,7 @@ public class SSTableReaderTest
             rm.applyUnsafe();
         }
         store.forceBlockingFlush();
-        CompactionManager.instance.performMaximal(store);
+        CompactionManager.instance.performMaximal(store, false);
 
         SSTableReader sstable = store.getSSTables().iterator().next();
         long p2 = sstable.getPosition(k(2), SSTableReader.Operator.EQ).position;
@@ -288,6 +286,37 @@ public class SSTableReaderTest
         // check if opening and querying works
         assertIndexQueryWorks(store);
     }
+    public void testGetPositionsKeyCacheStats()
+    {
+        Keyspace keyspace = Keyspace.open(KEYSPACE1);
+        ColumnFamilyStore store = keyspace.getColumnFamilyStore("Standard2");
+        CacheService.instance.keyCache.setCapacity(1000);
+
+        // insert data and compact to a single sstable
+        CompactionManager.instance.disableAutoCompaction();
+        for (int j = 0; j < 10; j++)
+        {
+            ByteBuffer key = ByteBufferUtil.bytes(String.valueOf(j));
+            Mutation rm = new Mutation("Keyspace1", key);
+            rm.add("Standard2", cellname("0"), ByteBufferUtil.EMPTY_BYTE_BUFFER, j);
+            rm.apply();
+        }
+        store.forceBlockingFlush();
+        CompactionManager.instance.performMaximal(store, false);
+
+        SSTableReader sstable = store.getSSTables().iterator().next();
+        sstable.getPosition(k(2), SSTableReader.Operator.EQ);
+        assertEquals(0, sstable.getKeyCacheHit());
+        assertEquals(1, sstable.getBloomFilterTruePositiveCount());
+        sstable.getPosition(k(2), SSTableReader.Operator.EQ);
+        assertEquals(1, sstable.getKeyCacheHit());
+        assertEquals(2, sstable.getBloomFilterTruePositiveCount());
+        sstable.getPosition(k(15), SSTableReader.Operator.EQ);
+        assertEquals(1, sstable.getKeyCacheHit());
+        assertEquals(2, sstable.getBloomFilterTruePositiveCount());
+
+    }
+
 
     @Test
     public void testOpeningSSTable() throws Exception
@@ -328,6 +357,7 @@ public class SSTableReaderTest
         Assert.assertArrayEquals(ByteBufferUtil.getArray(firstKey.getKey()), target.getIndexSummaryKey(0));
         assert target.first.equals(firstKey);
         assert target.last.equals(lastKey);
+        target.selfRef().release();
     }
 
     @Test
@@ -346,19 +376,19 @@ public class SSTableReaderTest
         SSTableReader sstable = indexCfs.getSSTables().iterator().next();
         assert sstable.first.getToken() instanceof LocalToken;
 
-        SegmentedFile.Builder ibuilder = SegmentedFile.getBuilder(DatabaseDescriptor.getIndexAccessMode());
-        SegmentedFile.Builder dbuilder = sstable.compression
-                                          ? SegmentedFile.getCompressedBuilder()
-                                          : SegmentedFile.getBuilder(DatabaseDescriptor.getDiskAccessMode());
-        sstable.saveSummary(ibuilder, dbuilder);
-
+        try(SegmentedFile.Builder ibuilder = SegmentedFile.getBuilder(DatabaseDescriptor.getIndexAccessMode(), false);
+            SegmentedFile.Builder dbuilder = SegmentedFile.getBuilder(DatabaseDescriptor.getDiskAccessMode(), sstable.compression))
+        {
+            sstable.saveSummary(ibuilder, dbuilder);
+        }
         SSTableReader reopened = SSTableReader.open(sstable.descriptor);
         assert reopened.first.getToken() instanceof LocalToken;
+        reopened.selfRef().release();
     }
 
     /** see CASSANDRA-5407 */
     @Test
-    public void testGetScannerForNoIntersectingRanges()
+    public void testGetScannerForNoIntersectingRanges() throws Exception
     {
         Keyspace keyspace = Keyspace.open(KEYSPACE1);
         ColumnFamilyStore store = keyspace.getColumnFamilyStore("Standard1");
@@ -370,15 +400,17 @@ public class SSTableReaderTest
         boolean foundScanner = false;
         for (SSTableReader s : store.getSSTables())
         {
-            ICompactionScanner scanner = s.getScanner(new Range<Token>(t(0), t(1), s.partitioner), null);
-            scanner.next(); // throws exception pre 5407
-            foundScanner = true;
+            try (ISSTableScanner scanner = s.getScanner(new Range<Token>(t(0), t(1)), null))
+            {
+                scanner.next(); // throws exception pre 5407
+                foundScanner = true;
+            }
         }
         assertTrue(foundScanner);
     }
 
     @Test
-    public void testGetPositionsForRangesFromTableOpenedForBulkLoading() throws IOException, ExecutionException, InterruptedException
+    public void testGetPositionsForRangesFromTableOpenedForBulkLoading() throws IOException
     {
         Keyspace keyspace = Keyspace.open(KEYSPACE1);
         ColumnFamilyStore store = keyspace.getColumnFamilyStore("Standard2");
@@ -395,7 +427,7 @@ public class SSTableReaderTest
             rm.applyUnsafe();
         }
         store.forceBlockingFlush();
-        CompactionManager.instance.performMaximal(store);
+        CompactionManager.instance.performMaximal(store, false);
 
         // construct a range which is present in the sstable, but whose
         // keys are not found in the first segment of the index.
@@ -408,9 +440,12 @@ public class SSTableReaderTest
 
         // re-open the same sstable as it would be during bulk loading
         Set<Component> components = Sets.newHashSet(Component.DATA, Component.PRIMARY_INDEX);
+        if (sstable.components.contains(Component.COMPRESSION_INFO))
+            components.add(Component.COMPRESSION_INFO);
         SSTableReader bulkLoaded = SSTableReader.openForBatch(sstable.descriptor, components, store.metadata, sstable.partitioner);
         sections = bulkLoaded.getPositionsForRanges(ranges);
         assert sections.size() == 1 : "Expected to find range in sstable opened for bulk loading";
+        bulkLoaded.selfRef().release();
     }
 
     @Test
@@ -429,7 +464,7 @@ public class SSTableReaderTest
             rm.applyUnsafe();
         }
         store.forceBlockingFlush();
-        CompactionManager.instance.performMaximal(store);
+        CompactionManager.instance.performMaximal(store, false);
 
         Collection<SSTableReader> sstables = store.getSSTables();
         assert sstables.size() == 1;

@@ -28,9 +28,9 @@ import com.google.common.base.Function;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.Iterators;
 
-import net.nicoulaj.compilecommand.annotations.Inline;
+import org.apache.cassandra.concurrent.Stage;
+import org.apache.cassandra.concurrent.StageManager;
 import org.apache.cassandra.db.columniterator.OnDiskAtomIterator;
-import org.apache.cassandra.db.compaction.SizeTieredCompactionStrategy;
 import org.apache.cassandra.db.composites.CellName;
 import org.apache.cassandra.db.filter.NamesQueryFilter;
 import org.apache.cassandra.db.filter.QueryFilter;
@@ -153,10 +153,18 @@ public class CollationController
                 && !cfs.isAutoCompactionDisabled()
                 && cfs.getCompactionStrategy().shouldDefragment())
             {
+                // !!WARNING!!   if we stop copying our data to a heap-managed object,
+                //               we will need to track the lifetime of this mutation as well
                 Tracing.trace("Defragmenting requested data");
-                Mutation mutation = new Mutation(cfs.keyspace.getName(), filter.key.getKey(), returnCF.cloneMe());
-                // skipping commitlog and index updates is fine since we're just de-fragmenting existing data
-                Keyspace.open(mutation.getKeyspaceName()).apply(mutation, false, false);
+                final Mutation mutation = new Mutation(cfs.keyspace.getName(), filter.key.getKey(), returnCF.cloneMe());
+                StageManager.getStage(Stage.MUTATION).execute(new Runnable()
+                {
+                    public void run()
+                    {
+                        // skipping commitlog and index updates is fine since we're just de-fragmenting existing data
+                        Keyspace.open(mutation.getKeyspaceName()).apply(mutation, false, false);
+                    }
+                });
             }
 
             // Caller is responsible for final removeDeletedCF.  This is important for cacheRow to work correctly:
@@ -301,8 +309,11 @@ public class CollationController
                     }
                 }
             }
+
             if (Tracing.isTracing())
-                Tracing.trace("Skipped {}/{} non-slice-intersecting sstables, included {} due to tombstones", new Object[] {nonIntersectingSSTables, view.sstables.size(), includedDueToTombstones});
+                Tracing.trace("Skipped {}/{} non-slice-intersecting sstables, included {} due to tombstones",
+                              nonIntersectingSSTables, view.sstables.size(), includedDueToTombstones);
+
             // we need to distinguish between "there is no data at all for this row" (BF will let us rebuild that efficiently)
             // and "there used to be data, but it's gone now" (we should cache the empty CF so we don't need to rebuild that slower)
             if (iterators.isEmpty())

@@ -23,39 +23,40 @@ import java.lang.management.ManagementFactory;
 import java.lang.management.MemoryPoolMXBean;
 import java.net.InetAddress;
 import java.net.UnknownHostException;
-import java.util.Arrays;
-import java.util.Date;
-import java.util.Map;
-import java.util.UUID;
+import java.rmi.registry.LocateRegistry;
+import java.rmi.server.RMIServerSocketFactory;
+import java.util.*;
 import java.util.concurrent.TimeUnit;
 import javax.management.MBeanServer;
 import javax.management.ObjectName;
 import javax.management.StandardMBean;
+import javax.management.remote.JMXConnectorServer;
+import javax.management.remote.JMXServiceURL;
+import javax.management.remote.rmi.RMIConnectorServer;
 
 import com.google.common.collect.Iterables;
 import com.google.common.util.concurrent.Uninterruptibles;
-import org.hyperic.sigar.SigarException;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import com.addthis.metrics.reporter.config.ReporterConfig;
+import com.addthis.metrics3.reporter.config.ReporterConfig;
+
 import org.apache.cassandra.concurrent.JMXEnabledThreadPoolExecutor;
+import org.apache.cassandra.concurrent.ScheduledExecutors;
 import org.apache.cassandra.concurrent.Stage;
 import org.apache.cassandra.concurrent.StageManager;
 import org.apache.cassandra.config.CFMetaData;
 import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.config.Schema;
-import org.apache.cassandra.cql3.functions.Functions;
-import org.apache.cassandra.db.ColumnFamilyStore;
-import org.apache.cassandra.db.Directories;
-import org.apache.cassandra.db.Keyspace;
-import org.apache.cassandra.db.SystemKeyspace;
+import org.apache.cassandra.db.*;
 import org.apache.cassandra.db.commitlog.CommitLog;
 import org.apache.cassandra.db.compaction.CompactionManager;
 import org.apache.cassandra.exceptions.ConfigurationException;
 import org.apache.cassandra.io.FSError;
 import org.apache.cassandra.io.sstable.CorruptSSTableException;
 import org.apache.cassandra.io.util.FileUtils;
+import org.apache.cassandra.metrics.CassandraMetricsRegistry;
 import org.apache.cassandra.metrics.StorageMetrics;
 import org.apache.cassandra.thrift.ThriftServer;
 import org.apache.cassandra.tracing.Tracing;
@@ -70,8 +71,60 @@ import org.apache.cassandra.utils.*;
 public class CassandraDaemon
 {
     public static final String MBEAN_NAME = "org.apache.cassandra.db:type=NativeAccess";
+    public static JMXConnectorServer jmxServer = null;
 
     private static final Logger logger = LoggerFactory.getLogger(CassandraDaemon.class);
+
+    private static void maybeInitJmx()
+    {
+        String jmxPort = System.getProperty("com.sun.management.jmxremote.port");
+
+        if (jmxPort == null)
+        {
+            logger.warn("JMX is not enabled to receive remote connections. Please see cassandra-env.sh for more info.");
+
+            jmxPort = System.getProperty("cassandra.jmx.local.port");
+
+            if (jmxPort == null)
+            {
+                logger.error("cassandra.jmx.local.port missing from cassandra-env.sh, unable to start local JMX service." + jmxPort);
+            }
+            else
+            {
+                System.setProperty("java.rmi.server.hostname", InetAddress.getLoopbackAddress().getHostAddress());
+
+                try
+                {
+                    RMIServerSocketFactory serverFactory = new RMIServerSocketFactoryImpl();
+                    LocateRegistry.createRegistry(Integer.valueOf(jmxPort), null, serverFactory);
+
+                    StringBuffer url = new StringBuffer();
+                    url.append("service:jmx:");
+                    url.append("rmi://localhost/jndi/");
+                    url.append("rmi://localhost:").append(jmxPort).append("/jmxrmi");
+                    
+                    Map env = new HashMap();
+                    env.put(RMIConnectorServer.RMI_SERVER_SOCKET_FACTORY_ATTRIBUTE, serverFactory);
+
+                    jmxServer = new RMIConnectorServer(
+                            new JMXServiceURL(url.toString()),
+                            env,
+                            ManagementFactory.getPlatformMBeanServer()
+                    );
+
+                    jmxServer.start();
+                }
+                catch (IOException e)
+                {
+                    logger.error("Error starting local jmx server: ", e);
+                }
+            }
+        }
+        else
+        {
+            logger.info("JMX is enabled to receive remote connections on port: " + jmxPort);
+        }
+    }
 
     private static final CassandraDaemon instance = new CassandraDaemon();
 
@@ -171,6 +224,8 @@ public class CassandraDaemon
 
         CLibrary.tryMlockall();
 
+        maybeInitJmx();
+
         Thread.setDefaultUncaughtExceptionHandler(new Thread.UncaughtExceptionHandler()
         {
             public void uncaughtException(Thread t, Throwable e)
@@ -252,10 +307,8 @@ public class CassandraDaemon
             exitOrFail(100, "Fatal exception during initialization", e);
         }
 
-
-        // load keyspace && function descriptions.
-        DatabaseDescriptor.loadSchemas();
-        Functions.loadUDFFromSchema();
+        // load schema from disk
+        Schema.instance.loadFromDisk();
 
         // clean up compaction leftovers
         Map<Pair<String, String>, Map<Integer, UUID>> unfinishedCompactions = SystemKeyspace.getUnfinishedCompactions();
@@ -348,7 +401,7 @@ public class CassandraDaemon
                 }
             }
         };
-        StorageService.optionalTasks.schedule(runnable, 5 * 60, TimeUnit.SECONDS);
+        ScheduledExecutors.optionalTasks.schedule(runnable, 5, TimeUnit.MINUTES);
 
         SystemKeyspace.finishStartup();
 
@@ -374,7 +427,7 @@ public class CassandraDaemon
             try
             {
                 String reportFileLocation = CassandraDaemon.class.getClassLoader().getResource(metricsReporterConfigFile).getFile();
-                ReporterConfig.loadFromFile(reportFileLocation).enableAll();
+                ReporterConfig.loadFromFile(reportFileLocation).enableAll(CassandraMetricsRegistry.Metrics);
             }
             catch (Exception e)
             {
@@ -385,7 +438,13 @@ public class CassandraDaemon
         if (!FBUtilities.getBroadcastAddress().equals(InetAddress.getLoopbackAddress()))
             waitForGossipToSettle();
 
-        // Thift
+        // schedule periodic dumps of table size estimates into SystemKeyspace.SIZE_ESTIMATES_CF
+        // set cassandra.size_recorder_interval to 0 to disable
+        int sizeRecorderInterval = Integer.getInteger("cassandra.size_recorder_interval", 5 * 60);
+        if (sizeRecorderInterval > 0)
+            ScheduledExecutors.optionalTasks.scheduleWithFixedDelay(SizeEstimatesRecorder.instance, 30, sizeRecorderInterval, TimeUnit.SECONDS);
+
+        // Thrift
         InetAddress rpcAddr = DatabaseDescriptor.getRpcAddress();
         int rpcPort = DatabaseDescriptor.getRpcPort();
         int listenBacklog = DatabaseDescriptor.getRpcListenBacklog();
@@ -421,7 +480,9 @@ public class CassandraDaemon
     {
         String nativeFlag = System.getProperty("cassandra.start_native_transport");
         if ((nativeFlag != null && Boolean.parseBoolean(nativeFlag)) || (nativeFlag == null && DatabaseDescriptor.startNativeTransport()))
+        {
             nativeServer.start();
+        }
         else
             logger.info("Not starting native transport as requested. Use JMX (StorageService->startNativeTransport()) or nodetool (enablebinary) to start it");
 
@@ -447,8 +508,20 @@ public class CassandraDaemon
 
         // On windows, we need to stop the entire system as prunsrv doesn't have the jsvc hooks
         // We rely on the shutdown hook to drain the node
-        if (!FBUtilities.isUnix())
+        if (FBUtilities.isWindows())
             System.exit(0);
+
+        if (jmxServer != null)
+        {
+            try
+            {
+                jmxServer.stop();
+            }
+            catch (IOException e)
+            {
+                logger.error("Error shutting down local JMX server: ", e);
+            }
+        }
     }
 
 
@@ -479,6 +552,12 @@ public class CassandraDaemon
                 //Allow the server to start even if the bean can't be registered
             }
 
+            try {
+                DatabaseDescriptor.forceStaticInitialization();
+            } catch (ExceptionInInitializerError e) {
+                throw e.getCause();
+            }
+
             setup();
 
             if (pidFile != null)
@@ -496,12 +575,27 @@ public class CassandraDaemon
         }
         catch (Throwable e)
         {
-            logger.error("Exception encountered during startup", e);
+            boolean logStackTrace =
+                    e instanceof ConfigurationException ? ((ConfigurationException)e).logStackTrace : true;
 
-            // try to warn user on stdout too, if we haven't already detached
-            e.printStackTrace();
-            System.out.println("Exception encountered during startup: " + e.getMessage());
-            exitOrFail(3, "Exception encountered during startup", e);
+            System.out.println("Exception (" + e.getClass().getName() + ") encountered during startup: " + e.getMessage());
+
+            if (logStackTrace)
+            {
+                if (runManaged)
+                    logger.error("Exception encountered during startup", e);
+                // try to warn user on stdout too, if we haven't already detached
+                e.printStackTrace();
+                exitOrFail(3, "Exception encountered during startup", e);
+            }
+            else
+            {
+                if (runManaged)
+                    logger.error("Exception encountered during startup: {}", e.getMessage());
+                // try to warn user on stdout too, if we haven't already detached
+                System.err.println(e.getMessage());
+                exitOrFail(3, "Exception encountered during startup: " + e.getMessage());
+            }
         }
     }
 
@@ -537,9 +631,9 @@ public class CassandraDaemon
         while (numOkay < GOSSIP_SETTLE_POLL_SUCCESSES_REQUIRED)
         {
             Uninterruptibles.sleepUninterruptibly(GOSSIP_SETTLE_POLL_INTERVAL_MS, TimeUnit.MILLISECONDS);
-            long completed = gossipStage.getCompletedTasks();
-            long active = gossipStage.getActiveCount();
-            long pending = gossipStage.getPendingTasks();
+            long completed = gossipStage.metrics.completedTasks.getValue();
+            long active = gossipStage.metrics.activeTasks.getValue();
+            long pending = gossipStage.metrics.pendingTasks.getValue();
             totalPolls++;
             if (active == 0 && pending == 0)
             {
@@ -573,7 +667,7 @@ public class CassandraDaemon
     {
         instance.activate();
     }
-    
+
     private void exitOrFail(int code, String message) {
         exitOrFail(code, message, null);
     }

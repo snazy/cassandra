@@ -59,7 +59,7 @@ public class OneCompactionTest
                                     SchemaLoader.standardCFMD(KEYSPACE1, CF_STANDARD2));
     }
 
-    private void testCompaction(String columnFamilyName, int insertsPerTable) throws ExecutionException, InterruptedException
+    private void testCompaction(String columnFamilyName, int insertsPerTable)
     {
         CompactionManager.instance.disableAutoCompaction();
 
@@ -76,18 +76,18 @@ public class OneCompactionTest
             store.forceBlockingFlush();
             assertEquals(inserted.size(), Util.getRangeSlice(store).size());
         }
-        CompactionManager.instance.performMaximal(store);
+        CompactionManager.instance.performMaximal(store, false);
         assertEquals(1, store.getSSTables().size());
     }
 
     @Test
-    public void testCompaction1() throws ExecutionException, InterruptedException
+    public void testCompaction1()
     {
         testCompaction("Standard1", 1);
     }
 
     @Test
-    public void testCompaction2() throws ExecutionException, InterruptedException
+    public void testCompaction2()
     {
         testCompaction("Standard2", 2);
     }

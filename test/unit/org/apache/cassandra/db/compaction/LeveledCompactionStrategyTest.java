@@ -24,6 +24,7 @@ import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.Random;
 import java.util.UUID;
 
 import org.apache.cassandra.io.sstable.format.SSTableReader;
@@ -44,6 +45,7 @@ import org.apache.cassandra.db.Mutation;
 import org.apache.cassandra.dht.Range;
 import org.apache.cassandra.dht.Token;
 import org.apache.cassandra.exceptions.ConfigurationException;
+import org.apache.cassandra.io.sstable.ISSTableScanner;
 import org.apache.cassandra.locator.SimpleStrategy;
 import org.apache.cassandra.notifications.SSTableAddedNotification;
 import org.apache.cassandra.notifications.SSTableRepairStatusChanged;
@@ -120,10 +122,10 @@ public class LeveledCompactionStrategyTest
         }
 
         waitForLeveling(cfs);
-        LeveledCompactionStrategy strategy = (LeveledCompactionStrategy) cfs.getCompactionStrategy();
+        WrappingCompactionStrategy strategy = (WrappingCompactionStrategy) cfs.getCompactionStrategy();
         // Checking we're not completely bad at math
-        assert strategy.getLevelSize(1) > 0;
-        assert strategy.getLevelSize(2) > 0;
+        assert strategy.getSSTableCountPerLevel()[1] > 0;
+        assert strategy.getSSTableCountPerLevel()[2] > 0;
 
         Collection<Collection<SSTableReader>> groupedSSTables = cfs.getCompactionStrategy().groupSSTablesForAntiCompaction(cfs.getSSTables());
         for (Collection<SSTableReader> sstableGroup : groupedSSTables)
@@ -149,7 +151,9 @@ public class LeveledCompactionStrategyTest
     @Test
     public void testValidationMultipleSSTablePerLevel() throws Exception
     {
-        ByteBuffer value = ByteBuffer.wrap(new byte[100 * 1024]); // 100 KB value, make it easy to have multiple files
+        byte [] b = new byte[100 * 1024];
+        new Random().nextBytes(b);
+        ByteBuffer value = ByteBuffer.wrap(b); // 100 KB value, make it easy to have multiple files
 
         // Enough data to have a level 1 and 2
         int rows = 20;
@@ -171,8 +175,8 @@ public class LeveledCompactionStrategyTest
         waitForLeveling(cfs);
         WrappingCompactionStrategy strategy = (WrappingCompactionStrategy) cfs.getCompactionStrategy();
         // Checking we're not completely bad at math
-        assert strategy.getSSTableCountPerLevel()[1] > 0;
-        assert strategy.getSSTableCountPerLevel()[2] > 0;
+        assertTrue(strategy.getSSTableCountPerLevel()[1] > 0);
+        assertTrue(strategy.getSSTableCountPerLevel()[2] > 0);
 
         Range<Token> range = new Range<>(Util.token(""), Util.token(""));
         int gcBefore = keyspace.getColumnFamilyStore(CF_STANDARDDLEVELED).gcBefore(System.currentTimeMillis());
@@ -198,7 +202,9 @@ public class LeveledCompactionStrategyTest
     public void testCompactionProgress() throws Exception
     {
         // make sure we have SSTables in L1
-        ByteBuffer value = ByteBuffer.wrap(new byte[100 * 1024]);
+        byte [] b = new byte[100 * 1024];
+        new Random().nextBytes(b);
+        ByteBuffer value = ByteBuffer.wrap(b);
         int rows = 2;
         int columns = 10;
         for (int r = 0; r < rows; r++)
@@ -219,15 +225,15 @@ public class LeveledCompactionStrategyTest
 
         // get LeveledScanner for level 1 sstables
         Collection<SSTableReader> sstables = strategy.manifest.getLevel(1);
-        List<ICompactionScanner> scanners = strategy.getScanners(sstables).scanners;
+        List<ISSTableScanner> scanners = strategy.getScanners(sstables).scanners;
         assertEquals(1, scanners.size()); // should be one per level
-        ICompactionScanner scanner = scanners.get(0);
+        ISSTableScanner scanner = scanners.get(0);
         // scan through to the end
         while (scanner.hasNext())
             scanner.next();
 
         // scanner.getCurrentPosition should be equal to total bytes of L1 sstables
-        assert scanner.getCurrentPosition() == SSTableReader.getTotalBytes(sstables);
+        assertEquals(scanner.getCurrentPosition(), SSTableReader.getTotalUncompressedBytes(sstables));
     }
 
     @Test
@@ -279,7 +285,9 @@ public class LeveledCompactionStrategyTest
     @Test
     public void testNewRepairedSSTable() throws Exception
     {
-        ByteBuffer value = ByteBuffer.wrap(new byte[100 * 1024]); // 100 KB value, make it easy to have multiple files
+        byte [] b = new byte[100 * 1024];
+        new Random().nextBytes(b);
+        ByteBuffer value = ByteBuffer.wrap(b); // 100 KB value, make it easy to have multiple files
 
         // Enough data to have a level 1 and 2
         int rows = 20;

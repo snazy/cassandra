@@ -21,12 +21,7 @@ package org.apache.cassandra.stress.settings;
  */
 
 
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -187,6 +182,11 @@ abstract class OptionMulti extends Option
         {
             return !options.isEmpty();
         }
+
+        boolean present()
+        {
+            return !options.isEmpty();
+        }
     }
 
     List<Option> optionsSetByUser()
@@ -202,7 +202,7 @@ abstract class OptionMulti extends Option
     {
         List<Option> r = new ArrayList<>();
         for (Option option : delegate.options())
-            if (!option.setByUser() && option.happy())
+            if (!option.setByUser() && option.present())
                 r.add(option);
         return r;
     }
@@ -211,6 +211,14 @@ abstract class OptionMulti extends Option
     {
         for (Option option : delegate.options())
             if (option.setByUser())
+                return true;
+        return false;
+    }
+
+    boolean present()
+    {
+        for (Option option : delegate.options())
+            if (option.present())
                 return true;
         return false;
     }

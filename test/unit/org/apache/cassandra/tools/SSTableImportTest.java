@@ -71,14 +71,14 @@ public class SSTableImportTest
     public static final String CQL_TABLE = "table1";
 
     @BeforeClass
-    public static void defineSchema() throws ConfigurationException, IOException, TException
+    public static void defineSchema() throws ConfigurationException
     {
         SchemaLoader.prepareServer();
         SchemaLoader.createKeyspace(KEYSPACE1,
                                     SimpleStrategy.class,
                                     KSMetaData.optsWithRF(1),
                                     SchemaLoader.standardCFMD(KEYSPACE1, CF_STANDARD),
-                                    CFMetaData.denseCFMetaData(KEYSPACE1, CF_COUNTER, BytesType.instance).defaultValidator(CounterColumnType.instance),
+                                    SchemaLoader.standardCFMD(KEYSPACE1, CF_COUNTER).defaultValidator(CounterColumnType.instance),
                                     SchemaLoader.standardCFMD(KEYSPACE1, "AsciiKeys").keyValidator(AsciiType.instance),
                                     CFMetaData.compile("CREATE TABLE table1 (k int PRIMARY KEY, v1 text, v2 int)", KEYSPACE1));
     }
@@ -103,6 +103,7 @@ public class SSTableImportTest
         assert expCol.value().equals(hexToBytes("76616c4143"));
         assert expCol instanceof ExpiringCell;
         assert ((ExpiringCell)expCol).getTimeToLive() == 42 && expCol.getLocalDeletionTime() == 2000000000;
+        reader.selfRef().release();
     }
 
     private ColumnFamily cloneForAdditions(OnDiskAtomIterator iter)
@@ -137,6 +138,7 @@ public class SSTableImportTest
         assert expCol.value().equals(hexToBytes("76616c4143"));
         assert expCol instanceof ExpiringCell;
         assert ((ExpiringCell) expCol).getTimeToLive() == 42 && expCol.getLocalDeletionTime() == 2000000000;
+        reader.selfRef().release();
     }
 
     @Test
@@ -161,6 +163,7 @@ public class SSTableImportTest
         assert expCol.value().equals(hexToBytes("76616c4143"));
         assert expCol instanceof ExpiringCell;
         assert ((ExpiringCell) expCol).getTimeToLive() == 42 && expCol.getLocalDeletionTime() == 2000000000;
+        reader.selfRef().release();
     }
 
     @Test
@@ -180,6 +183,7 @@ public class SSTableImportTest
         Cell c = cf.getColumn(Util.cellname("colAA"));
         assert c instanceof CounterCell : c;
         assert ((CounterCell) c).total() == 42;
+        reader.selfRef().release();
     }
 
     @Test
@@ -188,6 +192,7 @@ public class SSTableImportTest
         // Import JSON to temp SSTable file
         String jsonUrl = resourcePath("SimpleCF.json");
         File tempSS = tempSSTableFile(KEYSPACE1, "AsciiKeys");
+        System.setProperty("skip.key.validator", "false");
         new SSTableImport(true).importJson(jsonUrl, KEYSPACE1, "AsciiKeys", tempSS.getPath());
 
         // Verify results
@@ -199,6 +204,7 @@ public class SSTableImportTest
         QueryFilter qf2 = QueryFilter.getIdentityFilter(Util.dk("726f7741", BytesType.instance), "AsciiKeys", System.currentTimeMillis());
         OnDiskAtomIterator iter2 = qf2.getSSTableColumnIterator(reader);
         assert !iter2.hasNext(); // "bytes" key does not exist
+        reader.selfRef().release();
     }
 
     @Test
@@ -217,6 +223,7 @@ public class SSTableImportTest
         QueryFilter qf = QueryFilter.getIdentityFilter(Util.dk("rowA"), "AsciiKeys", System.currentTimeMillis());
         OnDiskAtomIterator iter = qf.getSSTableColumnIterator(reader);
         assert iter.hasNext(); // "bytes" key exists
+        reader.selfRef().release();
     }
     
     @Test
@@ -236,6 +243,7 @@ public class SSTableImportTest
         assertThat(result.size(), is(2));
         assertThat(result, hasItem(withElements(1, "NY", 1980)));
         assertThat(result, hasItem(withElements(2, "CA", 2014)));
+        reader.selfRef().release();
     }
 
     @Test(expected=AssertionError.class)

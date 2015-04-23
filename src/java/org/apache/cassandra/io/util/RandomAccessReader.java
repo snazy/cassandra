@@ -19,8 +19,6 @@ package org.apache.cassandra.io.util;
 
 import java.io.*;
 import java.nio.ByteBuffer;
-import java.nio.channels.FileChannel;
-import java.nio.file.StandardOpenOption;
 
 import com.google.common.annotations.VisibleForTesting;
 
@@ -29,13 +27,8 @@ import org.apache.cassandra.utils.ByteBufferUtil;
 
 public class RandomAccessReader extends AbstractDataInput implements FileDataInput
 {
-    public static final long CACHE_FLUSH_INTERVAL_IN_BYTES = (long) Math.pow(2, 27); // 128mb
-
     // default buffer size, 64Kb
     public static final int DEFAULT_BUFFER_SIZE = 65536;
-
-    // absolute filesystem path to the file
-    private final String filePath;
 
     // buffer which will cache file blocks
     protected ByteBuffer buffer;
@@ -44,81 +37,82 @@ public class RandomAccessReader extends AbstractDataInput implements FileDataInp
     // `markedPointer` folds the offset of the last file mark
     protected long bufferOffset, markedPointer;
 
-    // channel linked with the file, used to retrieve data and force updates.
-    protected final FileChannel channel;
+    protected final ChannelProxy channel;
 
+    // this can be overridden at construction to a value shorter than the true length of the file;
+    // if so, it acts as an imposed limit on reads, rather than a convenience property
     private final long fileLength;
 
     protected final PoolingSegmentedFile owner;
 
-    protected RandomAccessReader(File file, int bufferSize, PoolingSegmentedFile owner) throws FileNotFoundException
+    protected RandomAccessReader(ChannelProxy channel, int bufferSize, long overrideLength, boolean useDirectBuffer, PoolingSegmentedFile owner)
     {
+        this.channel = channel.sharedCopy();
         this.owner = owner;
-
-        filePath = file.getAbsolutePath();
-
-        try
-        {
-            channel = FileChannel.open(file.toPath(), StandardOpenOption.READ);
-        }
-        catch (IOException e)
-        {
-            throw new FileNotFoundException(filePath);
-        }
 
         // allocating required size of the buffer
         if (bufferSize <= 0)
             throw new IllegalArgumentException("bufferSize must be positive");
 
         // we can cache file length in read-only mode
-        try
-        {
-            fileLength = channel.size();
-        }
-        catch (IOException e)
-        {
-            throw new FSReadError(e, filePath);
-        }
-        buffer = allocateBuffer(bufferSize);
+        fileLength = overrideLength <= 0 ? channel.size() : overrideLength;
+
+        buffer = allocateBuffer(bufferSize, useDirectBuffer);
         buffer.limit(0);
     }
 
-    protected ByteBuffer allocateBuffer(int bufferSize)
+    protected ByteBuffer allocateBuffer(int bufferSize, boolean useDirectBuffer)
     {
-        return ByteBuffer.allocate((int) Math.min(fileLength, bufferSize));
+        int size = (int) Math.min(fileLength, bufferSize);
+        return useDirectBuffer
+                ? ByteBuffer.allocate(size)
+                : ByteBuffer.allocateDirect(size);
     }
 
-    public static RandomAccessReader open(File file, PoolingSegmentedFile owner)
+    public static RandomAccessReader open(ChannelProxy channel, long overrideSize, PoolingSegmentedFile owner)
     {
-        return open(file, DEFAULT_BUFFER_SIZE, owner);
+        return open(channel, DEFAULT_BUFFER_SIZE, overrideSize, owner);
     }
 
     public static RandomAccessReader open(File file)
     {
-        return open(file, DEFAULT_BUFFER_SIZE, null);
+        try (ChannelProxy channel = new ChannelProxy(file))
+        {
+            return open(channel);
+        }
+    }
+
+    public static RandomAccessReader open(ChannelProxy channel)
+    {
+        return open(channel, -1L);
+    }
+
+    public static RandomAccessReader open(ChannelProxy channel, long overrideSize)
+    {
+        return open(channel, DEFAULT_BUFFER_SIZE, overrideSize, null);
     }
 
     @VisibleForTesting
-    static RandomAccessReader open(File file, int bufferSize, PoolingSegmentedFile owner)
+    static RandomAccessReader open(ChannelProxy channel, int bufferSize, PoolingSegmentedFile owner)
     {
-        try
-        {
-            return new RandomAccessReader(file, bufferSize, owner);
-        }
-        catch (IOException e)
-        {
-            throw new RuntimeException(e);
-        }
+        return open(channel, bufferSize, -1L, owner);
+    }
+
+    private static RandomAccessReader open(ChannelProxy channel, int bufferSize, long overrideSize, PoolingSegmentedFile owner)
+    {
+        return new RandomAccessReader(channel, bufferSize, overrideSize, false, owner);
     }
 
     @VisibleForTesting
     static RandomAccessReader open(SequentialWriter writer)
     {
-        return open(new File(writer.getPath()), DEFAULT_BUFFER_SIZE, null);
+        try (ChannelProxy channel = new ChannelProxy(writer.getPath()))
+        {
+            return open(channel, DEFAULT_BUFFER_SIZE, null);
+        }
     }
 
-    // channel extends FileChannel, impl SeekableByteChannel.  Safe to cast.
-    public FileChannel getChannel()
+    public ChannelProxy getChannel()
     {
         return channel;
     }
@@ -132,21 +126,19 @@ public class RandomAccessReader extends AbstractDataInput implements FileDataInp
         buffer.clear();
         assert bufferOffset < fileLength;
 
-        try
+        long position = bufferOffset;
+        long limit = bufferOffset;
+        while (buffer.hasRemaining() && limit < fileLength)
         {
-            channel.position(bufferOffset); // setting channel position
-            while (buffer.hasRemaining())
-            {
-                int n = channel.read(buffer);
-                if (n < 0)
-                    break;
-            }
-            buffer.flip();
+            int n = channel.read(buffer, position);
+            if (n < 0)
+                break;
+            position += n;
+            limit = bufferOffset + buffer.position();
         }
-        catch (IOException e)
-        {
-            throw new FSReadError(e, filePath);
-        }
+        if (limit > fileLength)
+            buffer.position((int)(fileLength - bufferOffset));
+        buffer.flip();
     }
 
     @Override
@@ -162,7 +154,7 @@ public class RandomAccessReader extends AbstractDataInput implements FileDataInp
 
     public String getPath()
     {
-        return filePath;
+        return channel.filePath();
     }
 
     public int getTotalBufferSize()
@@ -239,22 +231,16 @@ public class RandomAccessReader extends AbstractDataInput implements FileDataInp
     public void deallocate()
     {
         bufferOffset += buffer.position();
-        buffer = null; // makes sure we don't use this after it's ostensibly closed
+        FileUtils.clean(buffer);
 
-        try
-        {
-            channel.close();
-        }
-        catch (IOException e)
-        {
-            throw new FSReadError(e, filePath);
-        }
+        buffer = null; // makes sure we don't use this after it's ostensibly closed
+        channel.close();
     }
 
     @Override
     public String toString()
     {
-        return getClass().getSimpleName() + "(" + "filePath='" + filePath + "')";
+        return getClass().getSimpleName() + "(" + "filePath='" + channel + "')";
     }
 
     /**
@@ -279,7 +265,7 @@ public class RandomAccessReader extends AbstractDataInput implements FileDataInp
         if (newPosition >= length()) // it is save to call length() in read-only mode
         {
             if (newPosition > length())
-                throw new IllegalArgumentException(String.format("unable to seek to position %d in %s (%d bytes) in read-only mode",
+                throw new IllegalArgumentException(String.format("Unable to seek to position %d in %s (%d bytes) in read-only mode",
                                                              newPosition, getPath(), length()));
             buffer.limit(0);
             bufferOffset = newPosition;
@@ -365,7 +351,7 @@ public class RandomAccessReader extends AbstractDataInput implements FileDataInp
         }
         catch (Exception e)
         {
-            throw new FSReadError(e, filePath);
+            throw new FSReadError(e, channel.toString());
         }
     }
 

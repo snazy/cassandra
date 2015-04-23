@@ -54,7 +54,7 @@ if NOT DEFINED JAVA_HOME goto :err
 REM -----------------------------------------------------------------------------
 REM JVM Opts we'll use in legacy run or installation
 set JAVA_OPTS=-ea^
- -javaagent:"%CASSANDRA_HOME%\lib\jamm-0.2.8.jar"^
+ -javaagent:"%CASSANDRA_HOME%\lib\jamm-0.3.0.jar"^
  -Xms2G^
  -Xmx2G^
  -XX:+HeapDumpOnOutOfMemoryError^
@@ -65,11 +65,14 @@ set JAVA_OPTS=-ea^
  -XX:MaxTenuringThreshold=1^
  -XX:CMSInitiatingOccupancyFraction=75^
  -XX:+UseCMSInitiatingOccupancyOnly^
- -Dcom.sun.management.jmxremote.port=7199^
- -Dcom.sun.management.jmxremote.ssl=false^
- -Dcom.sun.management.jmxremote.authenticate=false^
  -Dlogback.configurationFile=logback.xml^
- -Djava.library.path=%CASSANDRA_HOME%\lib\sigar-bin
+ -Djava.library.path=%CASSANDRA_HOME%\lib\sigar-bin^
+ -Dcassandra.jmx.local.port=7199
+REM **** JMX REMOTE ACCESS SETTINGS SEE: https://wiki.apache.org/cassandra/JmxSecurity ***
+REM -Dcom.sun.management.jmxremote.port=7199^
+REM -Dcom.sun.management.jmxremote.ssl=false^
+REM -Dcom.sun.management.jmxremote.authenticate=true^
+REM -Dcom.sun.management.jmxremote.password.file=C:\jmxremote.password
 
 REM ***** CLASSPATH library setting *****
 REM Ensure that any user defined CLASSPATH variables are not used on startup
@@ -85,6 +88,29 @@ goto :eof
 
 REM -----------------------------------------------------------------------------
 :okClasspath
+
+REM JSR223 - collect all JSR223 engines' jars
+for /D %%P in ("%CASSANDRA_HOME%\lib\jsr223\*.*") do (
+	for %%i in ("%%P\*.jar") do call :append "%%i"
+)
+
+REM JSR223/JRuby - set ruby lib directory
+if EXIST "%CASSANDRA_HOME%\lib\jsr223\jruby\ruby" (
+    set JAVA_OPTS=%JAVA_OPTS% "-Djruby.lib=%CASSANDRA_HOME%\lib\jsr223\jruby"
+)
+REM JSR223/JRuby - set ruby JNI libraries root directory
+if EXIST "%CASSANDRA_HOME%\lib\jsr223\jruby\jni" (
+    set JAVA_OPTS=%JAVA_OPTS% "-Djffi.boot.library.path=%CASSANDRA_HOME%\lib\jsr223\jruby\jni"
+)
+REM JSR223/Jython - set python.home system property
+if EXIST "%CASSANDRA_HOME%\lib\jsr223\jython\jython.jar" (
+    set JAVA_OPTS=%JAVA_OPTS% "-Dpython.home=%CASSANDRA_HOME%\lib\jsr223\jython"
+)
+REM JSR223/Scala - necessary system property
+if EXIST "%CASSANDRA_HOME%\lib\jsr223\scala\scala-compiler.jar" (
+    set JAVA_OPTS=%JAVA_OPTS% "-Dscala.usejavacp=true"
+)
+
 REM Include the build\classes\main directory so it works in development
 set CASSANDRA_CLASSPATH=%CLASSPATH%;"%CASSANDRA_HOME%\build\classes\main";"%CASSANDRA_HOME%\build\classes\thrift"
 set CASSANDRA_PARAMS=-Dcassandra -Dcassandra-foreground=yes

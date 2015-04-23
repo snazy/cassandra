@@ -30,6 +30,7 @@ import org.apache.cassandra.cql3.ColumnIdentifier;
 import org.apache.cassandra.cql3.Operator;
 import org.apache.cassandra.cql3.UntypedResultSet;
 import org.apache.cassandra.db.ColumnFamilyType;
+import org.apache.cassandra.schema.LegacySchemaTables;
 import org.apache.cassandra.db.WriteType;
 import org.apache.cassandra.db.composites.CellNameType;
 import org.apache.cassandra.db.composites.CellNames;
@@ -89,7 +90,9 @@ public class ThriftConversion
     // for methods that have a return value.
     public static RuntimeException rethrow(RequestExecutionException e) throws UnavailableException, TimedOutException
     {
-        if (e instanceof RequestTimeoutException)
+        if (e instanceof RequestFailureException)
+            throw toThrift((RequestFailureException)e);
+        else if (e instanceof RequestTimeoutException)
             throw toThrift((RequestTimeoutException)e);
         else
             throw new UnavailableException();
@@ -125,6 +128,12 @@ public class ThriftConversion
                 toe.setPaxos_in_progress(true);
         }
         return toe;
+    }
+
+    // Thrift does not support RequestFailureExceptions, so we translate them into timeouts
+    public static TimedOutException toThrift(RequestFailureException e)
+    {
+        return new TimedOutException();
     }
 
     public static List<org.apache.cassandra.db.IndexExpression> indexExpressionsFromThrift(List<IndexExpression> exprs)
@@ -330,9 +339,9 @@ public class ThriftConversion
         List<Map<String, ByteBuffer>> cols = new ArrayList<>(columnsRes.rows.size());
         for (CqlRow row : columnsRes.rows)
             cols.add(convertThriftCqlRow(row));
-        UntypedResultSet colsRow = UntypedResultSet.create(cols);
+        UntypedResultSet colsRows = UntypedResultSet.create(cols);
 
-        return CFMetaData.fromSchemaNoTriggers(cfRow, colsRow);
+        return LegacySchemaTables.createTableFromTableRowAndColumnRows(cfRow, colsRows);
     }
 
     private static Map<String, ByteBuffer> convertThriftCqlRow(CqlRow row)
@@ -424,7 +433,7 @@ public class ThriftConversion
     throws SyntaxException, ConfigurationException
     {
         if (thriftDefs == null)
-            return Collections.emptyList();
+            return new ArrayList<>();
 
         List<ColumnDefinition> defs = new ArrayList<>(thriftDefs.size());
         for (ColumnDef thriftColumnDef : thriftDefs)

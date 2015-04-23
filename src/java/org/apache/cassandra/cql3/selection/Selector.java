@@ -18,11 +18,13 @@
 package org.apache.cassandra.cql3.selection;
 
 import java.nio.ByteBuffer;
+import java.util.Collections;
 
 import org.apache.cassandra.config.CFMetaData;
 import org.apache.cassandra.cql3.AssignmentTestable;
 import org.apache.cassandra.cql3.ColumnIdentifier;
 import org.apache.cassandra.cql3.ColumnSpecification;
+import org.apache.cassandra.cql3.functions.Function;
 import org.apache.cassandra.cql3.selection.Selection.ResultSetBuilder;
 import org.apache.cassandra.db.marshal.AbstractType;
 import org.apache.cassandra.exceptions.InvalidRequestException;
@@ -45,6 +47,11 @@ public abstract class Selector implements AssignmentTestable
             return false;
         }
 
+        public Iterable<Function> getFunctions()
+        {
+            return Collections.emptySet();
+        }
+
         /**
          * Returns the column specification corresponding to the output value of the selector instances created by
          * this factory.
@@ -65,7 +72,7 @@ public abstract class Selector implements AssignmentTestable
          *
          * @return a new <code>Selector</code> instance
          */
-        public abstract Selector newInstance();
+        public abstract Selector newInstance() throws InvalidRequestException;
 
         /**
          * Checks if this factory creates selectors instances that creates aggregates.
@@ -120,18 +127,20 @@ public abstract class Selector implements AssignmentTestable
     /**
      * Add the current value from the specified <code>ResultSetBuilder</code>.
      *
+     * @param protocolVersion protocol version used for serialization
      * @param rs the <code>ResultSetBuilder</code>
      * @throws InvalidRequestException if a problem occurs while add the input value
      */
-    public abstract void addInput(ResultSetBuilder rs) throws InvalidRequestException;
+    public abstract void addInput(int protocolVersion, ResultSetBuilder rs) throws InvalidRequestException;
 
     /**
      * Returns the selector output.
      *
+     * @param protocolVersion protocol version used for serialization
      * @return the selector output
      * @throws InvalidRequestException if a problem occurs while computing the output value
      */
-    public abstract ByteBuffer getOutput() throws InvalidRequestException;
+    public abstract ByteBuffer getOutput(int protocolVersion) throws InvalidRequestException;
 
     /**
      * Returns the <code>Selector</code> output type.

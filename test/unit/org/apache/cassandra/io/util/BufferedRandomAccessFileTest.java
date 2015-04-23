@@ -33,7 +33,6 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.apache.cassandra.Util.expectEOF;
 import static org.apache.cassandra.Util.expectException;
@@ -344,7 +343,8 @@ public class BufferedRandomAccessFileTest
             for (final int offset : Arrays.asList(0, 8))
             {
                 File file1 = writeTemporaryFile(new byte[16]);
-                try (final RandomAccessReader file = RandomAccessReader.open(file1, bufferSize, null))
+                try (final ChannelProxy channel = new ChannelProxy(file1);
+                     final RandomAccessReader file = RandomAccessReader.open(channel, bufferSize, null))
                 {
                     expectEOF(new Callable<Object>()
                     {
@@ -361,7 +361,8 @@ public class BufferedRandomAccessFileTest
             for (final int n : Arrays.asList(1, 2, 4, 8))
             {
                 File file1 = writeTemporaryFile(new byte[16]);
-                try (final RandomAccessReader file = RandomAccessReader.open(file1, bufferSize, null))
+                try (final ChannelProxy channel = new ChannelProxy(file1);
+                     final RandomAccessReader file = RandomAccessReader.open(channel, bufferSize, null))
                 {
                     expectEOF(new Callable<Object>()
                     {
@@ -379,7 +380,10 @@ public class BufferedRandomAccessFileTest
     @Test
     public void testNotEOF() throws IOException
     {
-        assertEquals(1, RandomAccessReader.open(writeTemporaryFile(new byte[1])).read(new byte[2]));
+        try (final RandomAccessReader reader = RandomAccessReader.open(writeTemporaryFile(new byte[1])))
+        {
+            assertEquals(1, reader.read(new byte[2]));
+        }
     }
 
     @Test

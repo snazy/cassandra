@@ -25,7 +25,6 @@ import java.util.*;
 
 import org.apache.cassandra.db.*;
 import org.apache.cassandra.db.columniterator.OnDiskAtomIterator;
-import org.apache.cassandra.db.compaction.ICompactionScanner;
 import org.apache.cassandra.io.sstable.format.SSTableReader;
 import org.apache.cassandra.io.sstable.format.SSTableWriter;
 import org.apache.cassandra.service.ActiveRepairService;
@@ -82,18 +81,20 @@ public class SSTableUtils
         return datafile;
     }
 
-    public static void assertContentEquals(SSTableReader lhs, SSTableReader rhs)
+    public static void assertContentEquals(SSTableReader lhs, SSTableReader rhs) throws Exception
     {
-        ICompactionScanner slhs = lhs.getScanner();
-        ICompactionScanner srhs = rhs.getScanner();
-        while (slhs.hasNext())
+        try (ISSTableScanner slhs = lhs.getScanner();
+             ISSTableScanner srhs = rhs.getScanner())
         {
-            OnDiskAtomIterator ilhs = slhs.next();
-            assert srhs.hasNext() : "LHS contained more rows than RHS";
-            OnDiskAtomIterator irhs = srhs.next();
-            assertContentEquals(ilhs, irhs);
+            while (slhs.hasNext())
+            {
+                OnDiskAtomIterator ilhs = slhs.next();
+                assert srhs.hasNext() : "LHS contained more rows than RHS";
+                OnDiskAtomIterator irhs = srhs.next();
+                assertContentEquals(ilhs, irhs);
+            }
+            assert !srhs.hasNext() : "RHS contained more rows than LHS";
         }
-        assert !srhs.hasNext() : "RHS contained more rows than LHS";
     }
 
     public static void assertContentEquals(OnDiskAtomIterator lhs, OnDiskAtomIterator rhs)

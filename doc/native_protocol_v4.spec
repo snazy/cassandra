@@ -37,8 +37,8 @@ Table of Contents
       4.2.7. AUTH_CHALLENGE
       4.2.8. AUTH_SUCCESS
   5. Compression
-  6. Collection types
-  7. User Defined and tuple types
+  6. Data Type Serialization Formats
+  7. User Defined Type Serialization
   8. Result paging
   9. Error codes
   10. Changes from v3
@@ -124,6 +124,15 @@ Table of Contents
           a tracing ID. The tracing ID is a [uuid] and is the first thing in
           the frame body. The rest of the body will then be the usual body
           corresponding to the response opcode.
+    0x04: Custom payload flag. For a request or response frame, this indicates
+          that generic key-value custom payload for a custom QueryHandler
+          implementation is present in the frame. Such custom payload is simply
+          ignored by the default QueryHandler implementation.
+          Currently, only QUERY, PREPARE, EXECUTE and BATCH requests support
+          payload.
+          If both trace-flag and payload-flag are set, the generic key-value
+          payload appears after trace's data.
+          Type of custom payload is [bytes map] (see below).
 
   The rest of the flags is currently unused and ignored.
 
@@ -197,6 +206,11 @@ Table of Contents
     [string list]  A [short] n, followed by n [string].
     [bytes]        A [int] n, followed by n bytes if n >= 0. If n < 0,
                    no byte should follow and the value represented is `null`.
+    [value]        A [int] n, followed by n bytes if n >= 0.
+                   If n == -1 no byte should follow and the value represented is `null`.
+                   If n == -2 no byte should follow and the value represented is
+                   `not set` not resulting in any change to the existing value.
+                   n < -2 is an invalid value and results in an error.
     [short bytes]  A [short] n, followed by n bytes if n >= 0.
 
     [option]       A pair of <id><value> where <id> is a [short] representing
@@ -228,6 +242,8 @@ Table of Contents
                       are [string].
     [string multimap] A [short] n, followed by n pair <k><v> where <k> is a
                       [string] and <v> is a [string list].
+    [bytes map]       A [short] n, followed by n pair <k><v> where <k> is a
+                      [string] and <v> is a [bytes].
 
 
 4. Messages
@@ -295,7 +311,7 @@ Table of Contents
       in particular influence what the remainder of the message contains.
       A flag is set if the bit corresponding to its `mask` is set. Supported
       flags are, given there mask:
-        0x01: Values. In that case, a [short] <n> followed by <n> [bytes]
+        0x01: Values. In that case, a [short] <n> followed by <n> [value]
               values are provided. Those value are used for bound variables in
               the query. Optionally, if the 0x40 flag is present, each value
               will be preceded by a [string] name, representing the name of
@@ -407,7 +423,7 @@ Table of Contents
        - <n> is a [short] indicating the number (possibly 0) of following values.
        - <name_i> is the optional name of the following <value_i>. It must be present
          if and only if the 0x40 flag is provided for the batch.
-       - <value_i> is the [bytes] to use for bound variable i (of bound variable <name_i>
+       - <value_i> is the [value] to use for bound variable i (of bound variable <name_i>
          if the 0x40 flag is used).
     - <consistency> is the [consistency] level for the operation.
     - <serial_consistency> is only present if the 0x10 flag is set. In that case,
@@ -574,6 +590,8 @@ Table of Contents
             0x000E    Varint
             0x000F    Timeuuid
             0x0010    Inet
+            0x0011    Date
+            0x0012    Time
             0x0020    List: the value is an [option], representing the type
                             of the elements of the list.
             0x0021    Map: the value is two [option], representing the types of the
@@ -614,23 +632,66 @@ Table of Contents
 
 4.2.5.4. Prepared
 
-  The result to a PREPARE message. The rest of the body of a Prepared result is:
+  The result to a PREPARE message. The body of a Prepared result is:
     <id><metadata><result_metadata>
   where:
     - <id> is [short bytes] representing the prepared query ID.
-    - <metadata> is defined exactly as for a Rows RESULT (See section 4.2.5.2; you
-      can however assume that the Has_more_pages flag is always off) and
-      is the specification for the variable bound in this prepare statement.
-    - <result_metadata> is defined exactly as <metadata> but correspond to the
-      metadata for the resultSet that execute this query will yield. Note that
-      <result_metadata> may be empty (have the No_metadata flag and 0 columns, See
-      section 4.2.5.2) and will be for any query that is not a Select. There is
-      in fact never a guarantee that this will non-empty so client should protect
-      themselves accordingly. The presence of this information is an
-      optimization that allows to later execute the statement that has been
-      prepared without requesting the metadata (Skip_metadata flag in EXECUTE).
-      Clients can safely discard this metadata if they do not want to take
-      advantage of that optimization.
+    - <metadata> is composed of:
+        <flags><columns_count><pk_count>[<pk_index_1>...<pk_index_n>][<global_table_spec>?<col_spec_1>...<col_spec_n>]
+      where:
+        - <flags> is an [int]. The bits of <flags> provides information on the
+          formatting of the remaining informations. A flag is set if the bit
+          corresponding to its `mask` is set. Supported masks and their flags
+          are:
+            0x0001    Global_tables_spec: if set, only one table spec (keyspace
+                      and table name) is provided as <global_table_spec>. If not
+                      set, <global_table_spec> is not present.
+        - <columns_count> is an [int] representing the number of bind markers
+          in the prepared statement.  It defines the number of <col_spec_i>
+          elements.
+        - <pk_count> is an [int] representing the number of <pk_index_i>
+          elements to follow. If this value is zero, at least one of the
+          partition key columns in the table that the statement acts on
+          did not have a corresponding bind marker (or the bind marker
+          was wrapped in a function call).
+        - <pk_index_i> is a short that represents the index of the bind marker
+          that corresponds to the partition key column in position i.
+          For example, a <pk_index> sequence of [2, 0, 1] indicates that the
+          table has three partition key columns; the full partition key
+          can be constructed by creating a composite of the values for
+          the bind markers at index 2, at index 0, and at index 1.
+          This allows implementations with token-aware routing to correctly
+          construct the partition key without needing to inspect table
+          metadata.
+        - <global_table_spec> is present if the Global_tables_spec is set in
+          <flags>. If present, it is composed of two [string]s. The first
+          [string] is the name of the keyspace that the statement acts on.
+          The second [string] is the name of the table that the columns
+          represented by the bind markers belong to.
+        - <col_spec_i> specifies the bind markers in the prepared statement.
+          There are <column_count> such column specifications, each with the
+          following format:
+            (<ksname><tablename>)?<name><type>
+          The initial <ksname> and <tablename> are two [string] that are only
+          present if the Global_tables_spec flag is not set. The <name> field
+          is a [string] that holds the name of the bind marker (if named),
+          or the name of the column, field, or expression that the bind marker
+          corresponds to (if the bind marker is "anonymous").  The <type>
+          field is an [option] that represents the expected type of values for
+          the bind marker.  See the Rows documentation (section 4.2.5.2) for
+          full details on the <type> field.
+
+    - <result_metadata> is defined exactly the same as <metadata> in the Rows
+      documentation (section 4.2.5.2).  This describes the metadata for the
+      result set that will be returned when this prepared statement is executed.
+      Note that <result_metadata> may be empty (have the No_metadata flag and
+      0 columns, See section 4.2.5.2) and will be for any query that is not a
+      Select. In fact, there is never a guarantee that this will non-empty, so
+      implementations should protect themselves accordingly. This result metadata
+      is an optimization that allows implementations to later execute the
+      prepared statement without requesting the metadata (see the Skip_metadata
+      flag in EXECUTE).  Clients can safely discard this metadata if they do not
+      want to take advantage of that optimization.
 
   Note that prepared query ID return is global to the node on which the query
   has been prepared. It can be used on any connection to that node and this
@@ -669,18 +730,28 @@ Table of Contents
       the rest of the message will be <change_type><target><options> where:
         - <change_type> is a [string] representing the type of changed involved.
           It will be one of "CREATED", "UPDATED" or "DROPPED".
-        - <target> is a [string] that can be one of "KEYSPACE", "TABLE" or "TYPE"
-          and describes what has been modified ("TYPE" stands for modifications
-          related to user types).
-        - <options> depends on the preceding <target>. If <target> is
-          "KEYSPACE", then <options> will be a single [string] representing the
-          keyspace changed. Otherwise, if <target> is "TABLE" or "TYPE", then
-          <options> will be 2 [string]: the first one will be the keyspace
-          containing the affected object, and the second one will be the name
-          of said affected object (so either the table name or the user type
-          name).
+        - <target> is a [string] that can be one of "KEYSPACE", "TABLE", "TYPE",
+          "FUNCTION" or "AGGREGATE" and describes what has been modified
+          ("TYPE" stands for modifications related to user types, "FUNCTION"
+          for modifications related to user defined functions, "AGGREGATE"
+          for modifications related to user defined aggregates).
+        - <options> depends on the preceding <target>:
+          - If <target> is "KEYSPACE", then <options> will be a single [string]
+            representing the keyspace changed.
+          - If <target> is "TABLE" or "TYPE", then
+            <options> will be 2 [string]: the first one will be the keyspace
+            containing the affected object, and the second one will be the name
+            of said affected object (either the table, user type, function, or
+            aggregate name).
+          - If <target> is "FUNCTION" or "AGGREGATE", multiple arguments follow:
+            - [string] keyspace containing the user defined function / aggregate
+            - [string] the function/aggregate name
+            - [string list] one string for each argument type (as CQL type)
+    - "TRACE_COMPLETE": notification that a trace session has completed at least
+      on the coordinator. After the event type, the rest of the message will
+      contain the trace session-ID [uuid] as the only argument.
 
-  All EVENT message have a streamId of -1 (Section 2.3).
+  All EVENT messages have a streamId of -1 (Section 2.3).
 
   Please note that "NEW_NODE" and "UP" events are sent based on internal Gossip
   communication and as such may be sent a short delay before the binary
@@ -735,37 +806,148 @@ Table of Contents
       avaivable on some installation.
 
 
-6. Collection types
+6. Data Type Serialization Formats
 
-  This section describe the serialization format for the collection types:
-  list, map and set. This serialization format is both useful to decode values
-  returned in RESULT messages but also to encode values for EXECUTE ones.
+  This sections describes the serialization formats for all CQL data types
+  supported by Cassandra through the native protocol.  These serialization
+  formats should be used by client drivers to encode values for EXECUTE
+  messages.  Cassandra will use these formats when returning values in
+  RESULT messages.
 
-  The serialization formats are:
-     List: a [int] n indicating the size of the list, followed by n elements.
-           Each element is [bytes] representing the serialized element
-           value.
-     Map: a [int] n indicating the size of the map, followed by n entries.
-          Each entry is composed of two [bytes] representing the key and
-          the value of the entry map.
-     Set: a [int] n indicating the size of the set, followed by n elements.
-          Each element is [bytes] representing the serialized element
-          value.
+  All values are represented as [bytes] in EXECUTE and RESULT messages.
+  The [bytes] format includes an int prefix denoting the length of the value.
+  For that reason, the serialization formats described here will not include
+  a length component.
+
+  For legacy compatibility reasons, note that most non-string types support
+  "empty" values (i.e. a value with zero length).  An empty value is distinct
+  from NULL, which is encoded with a negative length.
+
+  As with the rest of the native protocol, all encodings are big-endian.
+
+6.1. ascii
+
+  A sequence of bytes in the ASCII range [0, 127].  Bytes with values outside of
+  this range will result in a validation error.
+
+6.2 bigint
+
+  An eight-byte two's complement integer.
+
+6.3 blob
+
+  Any sequence of bytes.
+
+6.4 boolean
+
+  A single byte.  A value of 0 denotes "false"; any other value denotes "true".
+  (However, it is recommended that a value of 1 be used to represent "true".)
+
+6.5 decimal
+
+  The decimal format represents an arbitrary-precision number.  It contains an
+  [int] "scale" component followed by a varint encoding (see section 6.17)
+  of the unscaled value.  The encoded value represents "<unscaled>E<-scale>".
+  In other words, "<unscaled> * 10 ^ (-1 * <scale>)".
+
+6.6 double
+
+  An eight-byte floating point number in the IEEE 754 binary64 format.
+
+6.7 float
+
+  An four-byte floating point number in the IEEE 754 binary32 format.
+
+6.8 inet
+
+  A 4 byte or 16 byte sequence denoting an IPv4 or IPv6 address, respectively.
+
+6.9 int
+
+  A four-byte two's complement integer.
+
+6.10 list
+
+  A [int] n indicating the number of elements in the list, followed by n
+  elements.  Each element is [bytes] representing the serialized value.
+
+6.11 map
+
+  A [int] n indicating the number of key/value pairs in the map, followed by
+  n entries.  Each entry is composed of two [bytes] representing the key
+  and value.
+
+6.12 set
+
+  A [int] n indicating the number of elements in the set, followed by n
+  elements.  Each element is [bytes] representing the serialized value.
+
+6.13 text
+
+  A sequence of bytes conforming to the UTF-8 specifications.
+
+6.14 timestamp
+
+  An eight-byte two's complement integer representing a millisecond-precision
+  offset from the unix epoch (00:00:00, January 1st, 1970).  Negative values
+  represent a negative offset from the epoch.
+
+6.15 uuid
+
+  A 16 byte sequence representing any valid UUID as defined by RFC 4122.
+
+6.16 varchar
+
+  An alias of the "text" type.
+
+6.17 varint
+
+  A variable-length two's complement encoding of a signed integer.
+
+  The following examples may help implementors of this spec:
+
+  Value | Encoding
+  ------|---------
+      0 |     0x00
+      1 |     0x01
+    127 |     0x7F
+    128 |   0x0080
+    129 |   0x0081
+     -1 |     0xFF
+   -128 |     0x80
+   -129 |   0xFF7F
+
+  Note that positive numbers must use a most-significant byte with a value
+  less than 0x80, because a most-significant bit of 1 indicates a negative
+  value.  Implementors should pad positive values that have a MSB >= 0x80
+  with a leading 0x00 byte.
+
+6.18 timeuuid
+
+  A 16 byte sequence representing a version 1 UUID as defined by RFC 4122.
+
+6.19 tuple
+
+  A sequence of [bytes] values representing the items in a tuple.  The encoding
+  of each element depends on the data type for that position in the tuple.
+  Null values may be represented by using length -1 for the [bytes]
+  representation of an element.
+
+  Within a tuple, all data types should use the v3 protocol serialization format.
 
 
-7. User defined and tuple types
+7. User Defined Types
 
-  This section describes the serialization format for User defined types (UDT) and
-  tuple values. UDT (resp. tuple) values are the values of the User Defined Types
-  (resp. tuple type) as defined in section 4.2.5.2.
+  This section describes the serialization format for User defined types (UDT),
+  as described in section 4.2.5.2.
 
   A UDT value is composed of successive [bytes] values, one for each field of the UDT
   value (in the order defined by the type). A UDT value will generally have one value
   for each field of the type it represents, but it is allowed to have less values than
   the type has fields.
 
-  A tuple value has the exact same serialization format, i.e. a succession of
-  [bytes] values representing the components of the tuple.
+  Within a user-defined type value, all data types should use the v3 protocol
+  serialization format.
 
 
 8. Result paging
@@ -847,9 +1029,9 @@ Table of Contents
                              - "BATCH": the write was a (logged) batch write.
                                If this type is received, it means the batch log
                                has been successfully written (otherwise a
-                               "BATCH_LOG" type would have been send instead).
+                               "BATCH_LOG" type would have been sent instead).
                              - "UNLOGGED_BATCH": the write was an unlogged
-                               batch. Not batch log write has been attempted.
+                               batch. No batch log write has been attempted.
                              - "COUNTER": the write was a counter write
                                (batched or not).
                              - "BATCH_LOG": the timeout occured during the
@@ -873,6 +1055,56 @@ Table of Contents
                 <data_present> is a single byte. If its value is 0, it means
                                the replica that was asked for data has not
                                responded. Otherwise, the value is != 0.
+    0x1300    Read_failure: A non-timeout exception during a read request. The rest
+              of the ERROR message body will be
+                <cl><received><blockfor><numfailures><data_present>
+              where:
+                <cl> is the [consistency] level of the query having triggered
+                     the exception.
+                <received> is an [int] representing the number of nodes having
+                           answered the request.
+                <blockfor> is the number of replicas whose response is
+                           required to achieve <cl>.
+                <numfailures> is an [int] representing the number of nodes that
+                              experience a failure while executing the request.
+                <data_present> is a single byte. If its value is 0, it means
+                               the replica that was asked for data had not
+                               responded. Otherwise, the value is != 0.
+    0x1400    Function_failure: A (user defined) function failed during execution.
+              The rest of the ERROR message body will be
+                <keyspace><function><arg_types>
+              where:
+                <keyspace> is the keyspace [string] of the failed function
+                <function> is the name [string] of the failed function
+                <arg_types> [string list] one string for each argument type (as CQL type) of the failed function
+    0x1500    Write_failure: A non-timeout exception during a write request. The rest
+              of the ERROR message body will be
+                <cl><received><blockfor><numfailures><write_type>
+              where:
+                <cl> is the [consistency] level of the query having triggered
+                     the exception.
+                <received> is an [int] representing the number of nodes having
+                           answered the request.
+                <blockfor> is the number of replicas whose response is
+                           required to achieve <cl>.
+                <numfailures> is an [int] representing the number of nodes that
+                              experience a failure while executing the request.
+                <writeType> is a [string] that describe the type of the write
+                            that failed. The value of that string can be one
+                            of:
+                             - "SIMPLE": the write was a non-batched
+                               non-counter write.
+                             - "BATCH": the write was a (logged) batch write.
+                               If this type is received, it means the batch log
+                               has been successfully written (otherwise a
+                               "BATCH_LOG" type would have been sent instead).
+                             - "UNLOGGED_BATCH": the write was an unlogged
+                               batch. No batch log write has been attempted.
+                             - "COUNTER": the write was a counter write
+                               (batched or not).
+                             - "BATCH_LOG": the failure occured during the
+                               write to the batch log when a (logged) batch
+                               write was requested.
 
     0x2000    Syntax_error: The submitted query has a syntax error.
     0x2100    Unauthorized: The logged user doesn't have the right to perform
@@ -896,4 +1128,9 @@ Table of Contents
 
 10. Changes from v3
 
-
+  * The format of "SCHEMA_CHANGE" events (Section 4.2.6) (and implicitly "Schema_change" results (Section 4.2.5.5))
+    has been modified, and now includes changes related to user defined functions and user defined aggregates.
+  * Read_failure error code was added.
+  * Function_failure error code was added.
+  * Add custom payload to frames for custom QueryHandler implementations (ignored by Cassandra's standard QueryHandler)
+  * Add "TRACE_COMPLETE" event (section 4.2.6).

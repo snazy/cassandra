@@ -110,13 +110,14 @@ class TestCqlshOutput(BaseTestCase):
             for line in output:
                 self.assertNoHasColors(line)
                 self.assertNotRegexpMatches(line, r'^cqlsh\S*>')
-            self.assertTrue(6 <= len(output) <= 8,
-                            msg='output: %r' % '\n'.join(output))
+            self.assertEqual(len(output), 6,
+                             msg='output: %r' % '\n'.join(output))
             self.assertEqual(output[0], '')
             self.assertNicelyFormattedTableHeader(output[1])
             self.assertNicelyFormattedTableRule(output[2])
             self.assertNicelyFormattedTableData(output[3])
             self.assertEqual(output[4].strip(), '')
+            self.assertEqual(output[5].strip(), '(1 rows)')
 
     def test_color_output(self):
         for termname in ('xterm', 'unknown-garbage'):
@@ -544,7 +545,7 @@ class TestCqlshOutput(BaseTestCase):
             self.assertEqual(outputlines[2], 'cqlsh:system> ')
             midline = ColoredText(outputlines[1])
             self.assertEqual(midline.plain(),
-                             'code=2200 [Invalid query] message="Keyspace \'nonexistentkeyspace\' does not exist"')
+                             'InvalidRequest: code=2200 [Invalid query] message="Keyspace \'nonexistentkeyspace\' does not exist"')
             self.assertColorFromTags(midline,
                              "RRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRR")
 

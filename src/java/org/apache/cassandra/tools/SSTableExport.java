@@ -22,12 +22,10 @@ import java.io.IOException;
 import java.io.PrintStream;
 import java.util.*;
 
-import org.apache.cassandra.db.compaction.ICompactionScanner;
 import org.apache.cassandra.io.sstable.format.SSTableReader;
 import org.apache.commons.cli.*;
 
 import org.apache.cassandra.config.CFMetaData;
-import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.config.Schema;
 import org.apache.cassandra.db.*;
 import org.apache.cassandra.db.composites.CellNameType;
@@ -315,7 +313,7 @@ public class SSTableExport
 
     // This is necessary to accommodate the test suite since you cannot open a Reader more
     // than once from within the same process.
-    static void export(SSTableReader reader, PrintStream outs, String[] excludes, CFMetaData metadata) throws IOException
+    static void export(SSTableReader reader, PrintStream outs, String[] excludes) throws IOException
     {
         Set<String> excludeSet = new HashSet<String>();
 
@@ -323,7 +321,7 @@ public class SSTableExport
             excludeSet = new HashSet<>(Arrays.asList(excludes));
 
         SSTableIdentityIterator row;
-        ICompactionScanner scanner = reader.getScanner();
+        ISSTableScanner scanner = reader.getScanner();
         try
         {
             outs.println("[");
@@ -363,12 +361,11 @@ public class SSTableExport
      * @param desc     the descriptor of the sstable to read from
      * @param outs     PrintStream to write the output to
      * @param excludes keys to exclude from export
-     * @param metadata Metadata to print keys in a proper format
      * @throws IOException on failure to read/write input/output
      */
-    public static void export(Descriptor desc, PrintStream outs, String[] excludes, CFMetaData metadata) throws IOException
+    public static void export(Descriptor desc, PrintStream outs, String[] excludes) throws IOException
     {
-        export(SSTableReader.open(desc), outs, excludes, metadata);
+        export(SSTableReader.open(desc), outs, excludes);
     }
 
     /**
@@ -376,12 +373,11 @@ public class SSTableExport
      *
      * @param desc     the descriptor of the sstable to read from
      * @param excludes keys to exclude from export
-     * @param metadata Metadata to print keys in a proper format
      * @throws IOException on failure to read/write SSTable/standard out
      */
-    public static void export(Descriptor desc, String[] excludes, CFMetaData metadata) throws IOException
+    public static void export(Descriptor desc, String[] excludes) throws IOException
     {
-        export(desc, System.out, excludes, metadata);
+        export(desc, System.out, excludes);
     }
 
     /**
@@ -389,7 +385,6 @@ public class SSTableExport
      * export the contents of the SSTable to JSON.
      *
      * @param args command lines arguments
-     * @throws IOException            on failure to open/read/write files or output streams
      * @throws ConfigurationException on configuration failure (wrong params given)
      */
     public static void main(String[] args) throws ConfigurationException
@@ -421,7 +416,7 @@ public class SSTableExport
         String[] excludes = cmd.getOptionValues(EXCLUDEKEY_OPTION);
         String ssTableFileName = new File(cmd.getArgs()[0]).getAbsolutePath();
 
-        DatabaseDescriptor.loadSchemas();
+        Schema.instance.loadFromDisk(false);
         Descriptor descriptor = Descriptor.fromFilename(ssTableFileName);
 
         // Start by validating keyspace name
@@ -465,7 +460,7 @@ public class SSTableExport
                 if ((keys != null) && (keys.length > 0))
                     export(descriptor, System.out, Arrays.asList(keys), excludes, cfStore.metadata);
                 else
-                    export(descriptor, excludes, cfStore.metadata);
+                    export(descriptor, excludes);
             }
         }
         catch (IOException e)

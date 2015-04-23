@@ -43,11 +43,15 @@ import org.apache.commons.lang3.StringUtils;
  * application wants to make available to the rest of the nodes in the cluster.
  * Whenever a piece of state needs to be disseminated to the rest of cluster wrap
  * the state in an instance of <i>ApplicationState</i> and add it to the Gossiper.
- * <p></p>
+ * <p>
  * e.g. if we want to disseminate load information for node A do the following:
- * <p></p>
+ * </p>
+ * <pre>
+ * {@code
  * ApplicationState loadState = new ApplicationState(<string representation of load>);
  * Gossiper.instance.addApplicationState("LOAD STATE", loadState);
+ * }
+ * </pre>
  */
 
 public class VersionedValue implements Comparable<VersionedValue>
@@ -70,6 +74,7 @@ public class VersionedValue implements Comparable<VersionedValue>
     public final static String REMOVED_TOKEN = "removed";
 
     public final static String HIBERNATE = "hibernate";
+    public final static String SHUTDOWN = "shutdown";
 
     // values for ApplicationState.REMOVAL_COORDINATOR
     public final static String REMOVAL_COORDINATOR = "REMOVER";
@@ -206,6 +211,16 @@ public class VersionedValue implements Comparable<VersionedValue>
         public VersionedValue hibernate(boolean value)
         {
             return new VersionedValue(VersionedValue.HIBERNATE + VersionedValue.DELIMITER + value);
+        }
+
+        public VersionedValue rpcReady(boolean value)
+        {
+            return new VersionedValue(String.valueOf(value));
+        }
+
+        public VersionedValue shutdown(boolean value)
+        {
+            return new VersionedValue(VersionedValue.SHUTDOWN + VersionedValue.DELIMITER + value);
         }
 
         public VersionedValue datacenter(String dcId)

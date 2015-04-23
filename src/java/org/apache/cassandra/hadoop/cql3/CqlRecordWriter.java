@@ -25,6 +25,9 @@ import java.util.concurrent.ConcurrentHashMap;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
+import org.apache.cassandra.schema.LegacySchemaTables;
+import org.apache.cassandra.db.SystemKeyspace;
 import org.apache.cassandra.db.marshal.AbstractType;
 import org.apache.cassandra.db.marshal.CompositeType;
 import org.apache.cassandra.db.marshal.LongType;
@@ -40,7 +43,6 @@ import org.apache.cassandra.hadoop.HadoopCompat;
 import org.apache.cassandra.thrift.*;
 import org.apache.cassandra.utils.ByteBufferUtil;
 import org.apache.cassandra.utils.FBUtilities;
-import org.apache.cassandra.utils.JVMStabilityInspector;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.mapreduce.TaskAttemptContext;
 import org.apache.hadoop.util.Progressable;
@@ -104,22 +106,26 @@ class CqlRecordWriter extends AbstractColumnFamilyRecordWriter<Map<String, ByteB
         try
         {
             Cassandra.Client client = ConfigHelper.getClientFromOutputAddressList(conf);
-            client.set_keyspace(ConfigHelper.getOutputKeyspace(conf));
-            String user = ConfigHelper.getOutputKeyspaceUserName(conf);
-            String password = ConfigHelper.getOutputKeyspacePassword(conf);
-            if ((user != null) && (password != null))
-                AbstractColumnFamilyOutputFormat.login(user, password, client);
-            retrievePartitionKeyValidator(client);
-            String cqlQuery = CqlConfigHelper.getOutputCql(conf).trim();
-            if (cqlQuery.toLowerCase().startsWith("insert"))
-                throw new UnsupportedOperationException("INSERT with CqlRecordWriter is not supported, please use UPDATE/DELETE statement");
-            cql = appendKeyWhereClauses(cqlQuery);
-
             if (client != null)
             {
+                client.set_keyspace(ConfigHelper.getOutputKeyspace(conf));
+                String user = ConfigHelper.getOutputKeyspaceUserName(conf);
+                String password = ConfigHelper.getOutputKeyspacePassword(conf);
+                if ((user != null) && (password != null))
+                    AbstractColumnFamilyOutputFormat.login(user, password, client);
+                retrievePartitionKeyValidator(client);
+                String cqlQuery = CqlConfigHelper.getOutputCql(conf).trim();
+                if (cqlQuery.toLowerCase().startsWith("insert"))
+                    throw new UnsupportedOperationException("INSERT with CqlRecordWriter is not supported, please use UPDATE/DELETE statement");
+                cql = appendKeyWhereClauses(cqlQuery);
+
                 TTransport transport = client.getOutputProtocol().getTransport();
                 if (transport.isOpen())
                     transport.close();
+            }
+            else
+            {
+                throw new IllegalArgumentException("Invalid configuration specified " + conf);
             }
         }
         catch (Exception e)
@@ -251,7 +257,6 @@ class CqlRecordWriter extends AbstractColumnFamilyRecordWriter<Map<String, ByteB
                     }
                     catch (Exception e)
                     {
-                        JVMStabilityInspector.inspectThrowable(e);
                         closeInternal();
                         if (!iter.hasNext())
                         {
@@ -297,10 +302,6 @@ class CqlRecordWriter extends AbstractColumnFamilyRecordWriter<Map<String, ByteB
                 {
                     result = client.prepare_cql3_query(ByteBufferUtil.bytes(cql), Compression.NONE);
                 }
-                catch (InvalidRequestException e)
-                {
-                    throw new RuntimeException("failed to prepare cql query " + cql, e);
-                }
                 catch (TException e)
                 {
                     throw new RuntimeException("failed to prepare cql query " + cql, e);
@@ -331,18 +332,20 @@ class CqlRecordWriter extends AbstractColumnFamilyRecordWriter<Map<String, ByteB
         return partitionKey;
     }
 
+    // FIXME
     /** retrieve the key validator from system.schema_columnfamilies table */
     private void retrievePartitionKeyValidator(Cassandra.Client client) throws Exception
     {
         String keyspace = ConfigHelper.getOutputKeyspace(conf);
         String cfName = ConfigHelper.getOutputColumnFamily(conf);
-        String query = "SELECT key_validator," +
-        		       "       key_aliases," +
-        		       "       column_aliases " +
-                       "FROM system.schema_columnfamilies " +
-                       "WHERE keyspace_name='%s' and columnfamily_name='%s'";
-        String formatted = String.format(query, keyspace, cfName);
-        CqlResult result = client.execute_cql3_query(ByteBufferUtil.bytes(formatted), Compression.NONE, ConsistencyLevel.ONE);
+        String query = String.format("SELECT key_validator, key_aliases, column_aliases " +
+                                     "FROM %s.%s " +
+                                     "WHERE keyspace_name = '%s' and columnfamily_name = '%s'",
+                                     SystemKeyspace.NAME,
+                                     LegacySchemaTables.COLUMNFAMILIES,
+                                     keyspace,
+                                     cfName);
+        CqlResult result = client.execute_cql3_query(ByteBufferUtil.bytes(query), Compression.NONE, ConsistencyLevel.ONE);
 
         Column rawKeyValidator = result.rows.get(0).columns.get(0);
         String validator = ByteBufferUtil.string(ByteBuffer.wrap(rawKeyValidator.getValue()));

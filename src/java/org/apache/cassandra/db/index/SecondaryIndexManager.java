@@ -50,7 +50,6 @@ import org.apache.cassandra.db.SystemKeyspace;
 import org.apache.cassandra.db.compaction.CompactionManager;
 import org.apache.cassandra.db.composites.CellName;
 import org.apache.cassandra.db.filter.ExtendedFilter;
-import org.apache.cassandra.exceptions.ConfigurationException;
 import org.apache.cassandra.exceptions.InvalidRequestException;
 import org.apache.cassandra.io.sstable.ReducingKeyIterator;
 import org.apache.cassandra.io.sstable.format.SSTableReader;
@@ -156,6 +155,7 @@ public class SecondaryIndexManager
      */
     public void maybeBuildSecondaryIndexes(Collection<SSTableReader> sstables, Set<String> idxNames)
     {
+        idxNames = filterByColumn(idxNames);
         if (idxNames.isEmpty())
             return;
 
@@ -274,15 +274,7 @@ public class SecondaryIndexManager
 
         assert cdef.getIndexType() != null;
 
-        SecondaryIndex index;
-        try
-        {
-            index = SecondaryIndex.createInstance(baseCfs, cdef);
-        }
-        catch (ConfigurationException e)
-        {
-            throw new RuntimeException(e);
-        }
+        SecondaryIndex index = SecondaryIndex.createInstance(baseCfs, cdef);
 
         // Keep a single instance of the index per-cf for row level indexes
         // since we want all columns to be under the index
@@ -667,6 +659,15 @@ public class SecondaryIndexManager
         return result;
     }
 
+    public SecondaryIndex getIndexByName(String idxName)
+    {
+        for (SecondaryIndex index : allIndexes)
+            if (idxName.equals(index.getIndexName()))
+                return index;
+
+        return null;
+    }
+
     public void setIndexBuilt(Set<String> idxNames)
     {
         for (SecondaryIndex index : getIndexesByNames(idxNames))
@@ -703,6 +704,24 @@ public class SecondaryIndexManager
         return !oldCell.name().equals(newCell.name())
             || !oldCell.value().equals(newCell.value())
             || oldCell.timestamp() != newCell.timestamp();
+    }
+
+    private Set<String> filterByColumn(Set<String> idxNames)
+    {
+        Set<SecondaryIndex> indexes = getIndexesByNames(idxNames);
+        Set<String> filtered = new HashSet<>(idxNames.size());
+        for (SecondaryIndex candidate : indexes)
+        {
+            for (ColumnDefinition column : baseCfs.metadata.allColumns())
+            {
+                if (candidate.indexes(column))
+                {
+                    filtered.add(candidate.getIndexName());
+                    break;
+                }
+            }
+        }
+        return filtered;
     }
 
     public static interface Updater

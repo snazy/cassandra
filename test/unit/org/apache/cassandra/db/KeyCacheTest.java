@@ -18,13 +18,13 @@
 package org.apache.cassandra.db;
 
 import java.util.HashMap;
+import java.util.Iterator;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 
 import com.google.common.util.concurrent.Uninterruptibles;
-import org.apache.cassandra.io.sstable.format.SSTableReader;
 import org.junit.AfterClass;
 import org.junit.BeforeClass;
 import org.junit.Test;
@@ -32,16 +32,20 @@ import org.junit.Test;
 import org.apache.cassandra.SchemaLoader;
 import org.apache.cassandra.Util;
 import org.apache.cassandra.cache.KeyCacheKey;
+import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.config.KSMetaData;
+import org.apache.cassandra.concurrent.ScheduledExecutors;
 import org.apache.cassandra.db.composites.*;
 import org.apache.cassandra.db.compaction.CompactionManager;
 import org.apache.cassandra.db.filter.QueryFilter;
 import org.apache.cassandra.exceptions.ConfigurationException;
+import org.apache.cassandra.io.sstable.format.SSTableReader;
 import org.apache.cassandra.locator.SimpleStrategy;
 import org.apache.cassandra.service.CacheService;
-import org.apache.cassandra.service.StorageService;
 import org.apache.cassandra.utils.ByteBufferUtil;
+import org.apache.cassandra.utils.FBUtilities;
 
+import org.apache.cassandra.utils.concurrent.Refs;
 import static org.junit.Assert.assertEquals;
 
 public class KeyCacheTest
@@ -88,8 +92,10 @@ public class KeyCacheTest
 
         // really? our caches don't implement the map interface? (hence no .addAll)
         Map<KeyCacheKey, RowIndexEntry> savedMap = new HashMap<KeyCacheKey, RowIndexEntry>();
-        for (KeyCacheKey k : CacheService.instance.keyCache.getKeySet())
+        for (Iterator<KeyCacheKey> iter = CacheService.instance.keyCache.keyIterator();
+             iter.hasNext();)
         {
+            KeyCacheKey k = iter.next();
             if (k.desc.ksname.equals(KEYSPACE1) && k.desc.cfname.equals(COLUMN_FAMILY2))
                 savedMap.put(k, CacheService.instance.keyCache.get(k));
         }
@@ -166,20 +172,22 @@ public class KeyCacheTest
         assertKeyCacheSize(2, KEYSPACE1, COLUMN_FAMILY1);
 
         Set<SSTableReader> readers = cfs.getDataTracker().getSSTables();
-        for (SSTableReader reader : readers)
-            reader.acquireReference();
+        Refs<SSTableReader> refs = Refs.tryRef(readers);
+        if (refs == null)
+            throw new IllegalStateException();
 
         Util.compactAll(cfs, Integer.MAX_VALUE).get();
+        boolean noEarlyOpen = DatabaseDescriptor.getSSTablePreempiveOpenIntervalInMB() < 0;
+
         // after compaction cache should have entries for new SSTables,
         // but since we have kept a reference to the old sstables,
         // if we had 2 keys in cache previously it should become 4
-        assertKeyCacheSize(4, KEYSPACE1, COLUMN_FAMILY1);
+        assertKeyCacheSize(noEarlyOpen ? 2 : 4, KEYSPACE1, COLUMN_FAMILY1);
 
-        for (SSTableReader reader : readers)
-            reader.releaseReference();
+        refs.release();
 
-        Uninterruptibles.sleepUninterruptibly(10, TimeUnit.MILLISECONDS);
-        while (StorageService.tasks.getActiveCount() + StorageService.tasks.getQueue().size() > 0);
+        Uninterruptibles.sleepUninterruptibly(10, TimeUnit.MILLISECONDS);;
+        while (ScheduledExecutors.nonPeriodicTasks.getActiveCount() + ScheduledExecutors.nonPeriodicTasks.getQueue().size() > 0);
 
         // after releasing the reference this should drop to 2
         assertKeyCacheSize(2, KEYSPACE1, COLUMN_FAMILY1);
@@ -201,14 +209,16 @@ public class KeyCacheTest
                                                        10,
                                                        System.currentTimeMillis()));
 
-        assertKeyCacheSize(2, KEYSPACE1, COLUMN_FAMILY1);
+        assertKeyCacheSize(noEarlyOpen ? 4 : 2, KEYSPACE1, COLUMN_FAMILY1);
     }
 
     private void assertKeyCacheSize(int expected, String keyspace, String columnFamily)
     {
         int size = 0;
-        for (KeyCacheKey k : CacheService.instance.keyCache.getKeySet())
+        for (Iterator<KeyCacheKey> iter = CacheService.instance.keyCache.keyIterator();
+             iter.hasNext();)
         {
+            KeyCacheKey k = iter.next();
             if (k.desc.ksname.equals(keyspace) && k.desc.cfname.equals(columnFamily))
                 size++;
         }

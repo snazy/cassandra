@@ -20,14 +20,16 @@ package org.apache.cassandra.tools;
 
 import java.io.File;
 import java.util.*;
+import java.util.concurrent.TimeUnit;
 
+import org.apache.cassandra.config.Schema;
 import org.apache.cassandra.io.sstable.format.SSTableReader;
 import org.apache.commons.cli.*;
 
-import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.db.ColumnFamilyStore;
 import org.apache.cassandra.db.Directories;
 import org.apache.cassandra.db.Keyspace;
+import org.apache.cassandra.db.compaction.CompactionManager;
 import org.apache.cassandra.db.compaction.SSTableSplitter;
 import org.apache.cassandra.io.sstable.*;
 import org.apache.cassandra.utils.JVMStabilityInspector;
@@ -52,7 +54,7 @@ public class StandaloneSplitter
         try
         {
             // load keyspace descriptions.
-            DatabaseDescriptor.loadSchemas();
+            Schema.instance.loadFromDisk(false);
 
             String ksName = null;
             String cfName = null;
@@ -108,7 +110,6 @@ public class StandaloneSplitter
             // Do not load sstables since they might be broken
             Keyspace keyspace = Keyspace.openWithoutSSTables(ksName);
             ColumnFamilyStore cfs = keyspace.getColumnFamilyStore(cfName);
-
             String snapshotName = "pre-split-" + System.currentTimeMillis();
 
             List<SSTableReader> sstables = new ArrayList<>();
@@ -116,7 +117,7 @@ public class StandaloneSplitter
             {
                 try
                 {
-                    SSTableReader sstable = SSTableReader.openNoValidation(fn.getKey(), fn.getValue(), cfs.metadata);
+                    SSTableReader sstable = SSTableReader.openNoValidation(fn.getKey(), fn.getValue(), cfs);
                     if (!isSSTableLargerEnough(sstable, options.sizeInMB)) {
                         System.out.println(String.format("Skipping %s: it's size (%.3f MB) is less than the split size (%d MB)",
                                 sstable.getFilename(), ((sstable.onDiskLength() * 1.0d) / 1024L) / 1024L, options.sizeInMB));
@@ -145,7 +146,7 @@ public class StandaloneSplitter
             if (options.snapshot)
                 System.out.println(String.format("Pre-split sstables snapshotted into snapshot %s", snapshotName));
 
-            cfs.getDataTracker().markCompacting(sstables);
+            cfs.getDataTracker().markCompacting(sstables, false, true);
             for (SSTableReader sstable : sstables)
             {
                 try
@@ -159,6 +160,7 @@ public class StandaloneSplitter
                         e.printStackTrace(System.err);
                 }
             }
+            CompactionManager.instance.finishCompactionsAndShutdown(5, TimeUnit.MINUTES);
             SSTableDeletingTask.waitForDeletions();
             System.exit(0); // We need that to stop non daemonized threads
         }

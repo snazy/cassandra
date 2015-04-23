@@ -81,7 +81,7 @@ public class SigarLibrary
         }
         catch (SigarException sigarException)
         {
-            logger.warn("Could not determine if max processes was acceptable. Error message: " + sigarException);
+            logger.warn("Could not determine if max processes was acceptable. Error message: {}", sigarException);
             return false;
         }
     }
@@ -102,7 +102,7 @@ public class SigarLibrary
         }
         catch (SigarException sigarException)
         {
-            logger.warn("Could not determine if max open file handle limit is correctly configured. Error message: " + sigarException);
+            logger.warn("Could not determine if max open file handle limit is correctly configured. Error message: {}", sigarException);
             return false;
         }
     }
@@ -110,7 +110,7 @@ public class SigarLibrary
     private boolean hasAcceptableAddressSpace()
     {
         // Check is invalid on Windows
-        if (!FBUtilities.isUnix())
+        if (FBUtilities.isWindows())
             return true;
 
         try
@@ -127,7 +127,7 @@ public class SigarLibrary
         }
         catch (SigarException sigarException)
         {
-            logger.warn("Could not determine if VirtualMemoryMax was acceptable. Error message: " + sigarException);
+            logger.warn("Could not determine if VirtualMemoryMax was acceptable. Error message: {}", sigarException);
             return false;
         }
     }
@@ -140,16 +140,16 @@ public class SigarLibrary
             long swapSize = swap.getTotal();
             if (swapSize > 0)
             {
-                return false;
+                return true;
             }
             else
             {
-                return true;
+                return false;
             }
         }
         catch (SigarException sigarException)
         {
-            logger.warn("Could not determine if swap configuration is acceptable. Error message: " + sigarException);
+            logger.warn("Could not determine if swap configuration is acceptable. Error message: {}", sigarException);
             return false;
         }
     }
@@ -165,7 +165,7 @@ public class SigarLibrary
             if (swapEnabled || !goodAddressSpace || !goodFileLimits || !goodProcNumber)
             {
                 logger.warn("Cassandra server running in degraded mode. Is swap disabled? : {},  Address space adequate? : {}, " +
-                            " nofile limit adequate? : {}, nproc limit adequate? : {} ", swapEnabled, goodAddressSpace,
+                            " nofile limit adequate? : {}, nproc limit adequate? : {} ", !swapEnabled, goodAddressSpace,
                             goodFileLimits, goodProcNumber );
             }
             else

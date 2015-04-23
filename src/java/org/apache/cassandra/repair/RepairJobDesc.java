@@ -100,7 +100,8 @@ public class RepairJobDesc
             UUIDSerializer.serializer.serialize(desc.sessionId, out, version);
             out.writeUTF(desc.keyspace);
             out.writeUTF(desc.columnFamily);
-            AbstractBounds.serializer.serialize(desc.range, out, version);
+            MessagingService.validatePartitioner(desc.range);
+            AbstractBounds.tokenSerializer.serialize(desc.range, out, version);
         }
 
         public RepairJobDesc deserialize(DataInput in, int version) throws IOException
@@ -114,7 +115,7 @@ public class RepairJobDesc
             UUID sessionId = UUIDSerializer.serializer.deserialize(in, version);
             String keyspace = in.readUTF();
             String columnFamily = in.readUTF();
-            Range<Token> range = (Range<Token>)AbstractBounds.serializer.deserialize(in, version);
+            Range<Token> range = (Range<Token>)AbstractBounds.tokenSerializer.deserialize(in, MessagingService.globalPartitioner(), version);
             return new RepairJobDesc(parentSessionId, sessionId, keyspace, columnFamily, range);
         }
 
@@ -130,7 +131,7 @@ public class RepairJobDesc
             size += UUIDSerializer.serializer.serializedSize(desc.sessionId, version);
             size += TypeSizes.NATIVE.sizeof(desc.keyspace);
             size += TypeSizes.NATIVE.sizeof(desc.columnFamily);
-            size += AbstractBounds.serializer.serializedSize(desc.range, version);
+            size += AbstractBounds.tokenSerializer.serializedSize(desc.range, version);
             return size;
         }
     }

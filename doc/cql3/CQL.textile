@@ -1,6 +1,6 @@
 <link rel="StyleSheet" href="CQL.css" type="text/css" media="screen">
 
-h1. Cassandra Query Language (CQL) v3.2.0
+h1. Cassandra Query Language (CQL) v3.3.0
 
 
  <span id="tableOfContents">
@@ -120,16 +120,27 @@ p. A @<variable>@ can be either anonymous (a question mark (@?@)) or named (an i
 
 p. The @<properties>@ production is use by statement that create and alter keyspaces and tables. Each @<property>@ is either a _simple_ one, in which case it just has a value, or a _map_ one, in which case it's value is a map grouping sub-options. The following will refer to one or the other as the _kind_ (_simple_ or _map_) of the property.
 
-p. A @<tablename>@ will be used to identify a table. This is an identifier representing the table name that can be preceded by a keyspace name. The keyspace name, if provided, allow to identify a table in another keyspace than the currently active one (the currently active keyspace is set through the <a href="#useStmt"><tt>USE</tt></a> statement).
+p. A @<tablename>@ will be used to identify a table. This is an identifier representing the table name that can be preceded by a keyspace name. The keyspace name, if provided, allow to identify a table in another keyspace than the currently active one (the currently active keyspace is set through the <a href=":#useStmt"><tt>USE</tt></a> statement).
 
 p. For supported @<function>@, see the section on "functions":#functions.
 
+p. Strings can be either enclosed with single quotes or two dollar characters. The second syntax has been introduced to allow strings that contain single quotes. Typical candidates for such strings are source code fragments for user-defined functions.
+
+__Sample:__
+
+bc(sample).. 
+  'some string value'
+
+  $$double-dollar string can contain single ' quotes$$
+p. 
 
 h3(#preparedStatement). Prepared Statement
 
 CQL supports _prepared statements_. Prepared statement is an optimization that allows to parse a query only once but execute it multiple times with different concrete values.
 
 In a statement, each time a column value is expected (in the data manipulation and query statements), a @<variable>@ (see above) can be used instead. A statement with bind variables must then be _prepared_. Once it has been prepared, it can executed by providing concrete values for the bind variables. The exact procedure to prepare a statement and execute a prepared statement depends on the CQL driver used and is beyond the scope of this document.
+
+In addition to providing column values, bind markers may be used to provide values for @LIMIT@, @TIMESTAMP@, and @TTL@ clauses.  If anonymous bind markers are used, the names for the query parameters will be @[limit]@, @[timestamp]@, and @[ttl]@, respectively.
 
 
 h2(#dataDefinition). Data Definition
@@ -192,7 +203,7 @@ ALTER KEYSPACE Excelsior
           WITH replication = {'class': 'SimpleStrategy', 'replication_factor' : 4};
 
 p. 
-The @ALTER KEYSPACE@ statement alter the properties of an existing keyspace. The supported @<properties>@ are the same that for the "@CREATE TABLE@":#createKeyspaceStmt statement.
+The @ALTER KEYSPACE@ statement alters the properties of an existing keyspace. The supported @<properties>@ are the same as for the "@CREATE KEYSPACE@":#createKeyspaceStmt statement.
 
 
 h3(#dropKeyspaceStmt). DROP KEYSPACE
@@ -328,6 +339,7 @@ Table creation supports the following other @<property>@:
 |@compaction@                 | _map_    | _see below_ | The compaction options to use, see below.|
 |@compression@                | _map_    | _see below_ | Compression options, see below. |
 |@caching@                    | _simple_ | keys_only   | Whether to cache keys ("key cache") and/or rows ("row cache") for this table. Valid values are: @all@, @keys_only@, @rows_only@ and @none@. |
+|@default_time_to_live@       | _simple_ | 0           | The default expiration time ("TTL") in seconds for a table.|
 
 
 h4(#compactionOptions). @compaction@ options
@@ -564,7 +576,6 @@ __Syntax:__
 bc(syntax).. 
 <drop-trigger-stmt> ::= DROP TRIGGER ( IF EXISTS )? ( <triggername> )?
                             ON <tablename>
-
 p. 
 __Sample:__
 
@@ -572,6 +583,157 @@ bc(sample).
 DROP TRIGGER myTrigger ON myTable;
 
 @DROP TRIGGER@ statement removes the registration of a trigger created using @CREATE TRIGGER@.
+
+h3(#createFunctionStmt). CREATE FUNCTION
+
+__Syntax:__
+
+bc(syntax).. 
+<create-function-stmt> ::= CREATE ( OR REPLACE )? 
+                            ( ( NON )? DETERMINISTIC )?
+                            FUNCTION ( IF NOT EXISTS )?
+                            ( ( <keyspace> '.' )? <function-name> )?
+                            '(' <arg-name> <arg-type> ( ',' <arg-name> <arg-type> )* ')'
+                            RETURNS <type>
+                            LANGUAGE <language>
+                            AS <body>
+p. 
+__Sample:__
+
+bc(sample). 
+CREATE OR REPLACE FUNCTION somefunction
+    ( somearg int, anotherarg text, complexarg frozen<someUDT>, listarg list<bigint> )
+    RETURNS text
+    LANGUAGE java
+    AS $$
+       // some Java code
+    $$;
+CREATE FUNCTION akeyspace.fname IF NOT EXISTS
+    ( someArg int )
+    RETURNS text
+    LANGUAGE java
+    AS $$
+       // some Java code
+    $$;
+
+@CREATE FUNCTION@ creates or replaces a user-defined function.
+
+Functions are either @DETERMINISTIC@ or @NON DETERMINISTIC@. A deterministic function always returns the same value for the same input values. A non-deterministic function may not. Examples of deterministic functions are math functions like _add_ or _sin_. Examples of non-deterministic functions are: _now_ or _random_. Functions are assumed to be deterministic by default.
+
+h4(#functionSignature). Function Signature
+
+Signatures are used to distinguish individual functions. The signature consists of:
+
+# The fully qualified function name - i.e _keyspace_ plus _function-name_
+# The concatenated list of all argument types
+
+Note that keyspace names, function names and argument types are subject to the default naming conventions and case-sensitivity rules.
+
+@CREATE FUNCTION@ with the optional @OR REPLACE@ keywords either creates a function or replaces an existing one with the same signature. A @CREATE FUNCTION@ without @OR REPLACE@ fails if a function with the same signature already exists.
+
+If the optional @IF NOT EXISTS@ keywords are used, the function will only be created if another function with the same signature does not exist.
+
+@OR REPLACE@ and @IF NOT EXIST@ cannot be used together.
+
+Functions belong to a keyspace. If no keyspace is specified in @<function-name>@, the current keyspace is used (i.e. the keyspace specified using the "@USE@":#useStmt statement). It is not possible to create a user-defined function in one of the system keyspaces.
+
+See the section on "user-defined functions":#udfs for more information.
+
+h3(#dropFunctionStmt). DROP FUNCTION
+
+__Syntax:__
+
+bc(syntax).. 
+<drop-function-stmt> ::= DROP FUNCTION ( IF EXISTS )?
+                         ( ( <keyspace> '.' )? <function-name> )?
+                         ( '(' <arg-type> ( ',' <arg-type> )* ')' )?
+
+p. 
+__Sample:__
+
+bc(sample). 
+DROP FUNCTION myfunction;
+DROP FUNCTION mykeyspace.afunction;
+DROP FUNCTION afunction ( int );
+DROP FUNCTION afunction ( text );
+
+@DROP FUNCTION@ statement removes a function created using @CREATE FUNCTION@.
+You must specify the argument types ("signature":#functionSignature) of the function to drop if there are multiple functions with the same name but a different signature (overloaded functions).
+
+@DROP FUNCTION@ with the optional @IF EXISTS@ keywords drops a function if it exists.
+
+h3(#createAggregateStmt). CREATE AGGREGATE
+
+__Syntax:__
+
+bc(syntax).. 
+<create-aggregate-stmt> ::= CREATE ( OR REPLACE )? 
+                            AGGREGATE ( IF NOT EXISTS )?
+                            ( ( <keyspace> '.' )? <aggregate-name> )?
+                            '(' <arg-type> ( ',' <arg-type> )* ')'
+                            SFUNC ( <keyspace> '.' )? <state-functionname>
+                            STYPE <state-type>
+                            ( FINALFUNC ( <keyspace> '.' )? <final-functionname> )?
+                            ( INITCOND <init-cond> )?
+p. 
+__Sample:__
+
+bc(sample). 
+CREATE AGGREGATE myaggregate ( val text )
+  SFUNC myaggregate_state
+  STYPE text
+  FINALFUNC myaggregate_final
+  INITCOND 'foo';
+
+See the section on "user-defined aggregates":#udas for a complete example.
+
+@CREATE AGGREGATE@ creates or replaces a user-defined aggregate.
+
+@CREATE AGGREGATE@ with the optional @OR REPLACE@ keywords either creates an aggregate or replaces an existing one with the same signature. A @CREATE AGGREGATE@ without @OR REPLACE@ fails if an aggregate with the same signature already exists.
+
+@CREATE AGGREGATE@ with the optional @IF NOT EXISTS@ keywords either creates an aggregate if it does not already exist.
+
+@OR REPLACE@ and @IF NOT EXIST@ cannot be used together.
+
+Aggregates belong to a keyspace. If no keyspace is specified in @<aggregate-name>@, the current keyspace is used (i.e. the keyspace specified using the "@USE@":#useStmt statement). It is not possible to create a user-defined aggregate in one of the system keyspaces.
+
+Signatures for user-defined aggregates follow the "same rules":#functionSignature as for user-defined functions.
+
+@STYPE@ defines the type of the state value and must be specified.
+
+The optional @INITCOND@ defines the initial state value for the aggregate. It defaults to @null@.
+
+@SFUNC@ references an existing function to be used as the state modifying function. The type of first argument of the state function must match @STYPE@. The remaining argument types of the state function must match the argument types of the aggregate function.
+
+The optional @FINALFUNC@ is called just before the aggregate result is returned. It must take only one argument with type @STYPE@. The return type of the @FINALFUNC@ may be a different type.
+
+If no @FINALFUNC@ is defined, the overall return type of the aggregate function is @STYPE@.  If a @FINALFUNC@ is defined, it is the return type of that function.
+
+See the section on "user-defined aggregates":#udas for more information.
+
+h3(#dropAggregateStmt). DROP AGGREGATE
+
+__Syntax:__
+
+bc(syntax).. 
+<drop-function-stmt> ::= DROP AGGREGATE ( IF EXISTS )?
+                         ( ( <keyspace> '.' )? <functionname> )?
+                         ( '(' <arg-type> ( ',' <arg-type> )* ')' )?
+p. 
+
+__Sample:__
+
+bc(sample). 
+DROP AGGREGATE myAggregate;
+DROP AGGREGATE myKeyspace.anAggregate;
+DROP AGGREGATE someAggregate ( int );
+DROP AGGREGATE someAggregate ( text );
+
+The @DROP AGGREGATE@ statement removes an aggregate created using @CREATE AGGREGATE@.  You must specify the argument types of the aggregate to drop if there are multiple aggregates with the same name but a different signature (overloaded aggregates).
+
+@DROP AGGREGATE@ with the optional @IF EXISTS@ keywords drops an aggregate if it exists, and does nothing if a function with the signature does not exist.
+
+Signatures for user-defined aggregates follow the "same rules":#functionSignature as for user-defined functions.
 
 h2(#dataManipulation). Data Manipulation
 
@@ -581,10 +743,14 @@ __Syntax:__
 
 bc(syntax).. 
 <insertStatement> ::= INSERT INTO <tablename>
-                             '(' <identifier> ( ',' <identifier> )* ')'
-                      VALUES '(' <term-or-literal> ( ',' <term-or-literal> )* ')'
+                      ( ( <name-list> VALUES <value-list> )
+                      | ( JSON <string> ))
                       ( IF NOT EXISTS )?
                       ( USING <option> ( AND <option> )* )?
+
+<names-list> ::= '(' <identifier> ( ',' <identifier> )* ')'
+
+<value-list> ::= '(' <term-or-literal> ( ',' <term-or-literal> )* ')'
 
 <term-or-literal> ::= <term>
                     | <collection-literal>
@@ -594,12 +760,14 @@ bc(syntax)..
 p. 
 __Sample:__
 
-bc(sample). 
+bc(sample).. 
 INSERT INTO NerdMovies (movie, director, main_actor, year)
                 VALUES ('Serenity', 'Joss Whedon', 'Nathan Fillion', 2005)
 USING TTL 86400;
 
-The @INSERT@ statement writes one or more columns for a given row in a table. Note that since a row is identified by its @PRIMARY KEY@, at least the columns composing it must be specified.
+INSERT INTO NerdMovies JSON '{"movie": "Serenity", "director": "Joss Whedon", "year": 2005}'
+p. 
+The @INSERT@ statement writes one or more columns for a given row in a table. Note that since a row is identified by its @PRIMARY KEY@, at least the columns composing it must be specified.  The list of columns to insert to must be supplied when using the @VALUES@ syntax.  When using the @JSON@ syntax, they are optional.  See the section on "@INSERT JSON@":#insertJson for more details.
 
 Note that unlike in SQL, @INSERT@ does not check the prior existence of the row by default: the row is created if none existed before, and updated otherwise. Furthermore, there is no mean to know which of creation or update happened.
 
@@ -663,7 +831,7 @@ The @id = id + <collection-literal>@ and @id[value1] = value2@ forms of @<assign
 h4(#updateOptions). @<options>@
 
 The @UPDATE@ and @INSERT@ statements allows to specify the following options for the insertion:
-* @TIMESTAMP@: sets the timestamp for the operation. If not specified, the current time of the insertion (in microseconds) is used. This is usually a suitable default.
+* @TIMESTAMP@: sets the timestamp for the operation. If not specified, the coordinator will use the current time (in microseconds) at the start of statement execution as the timestamp. This is usually a suitable default.
 * @TTL@: allows to specify an optional Time To Live (in seconds) for the inserted values. If set, the inserted values are automatically removed from the database after the specified time. Note that the TTL concerns the inserted values, not the column themselves. This means that any subsequent update of the column will also reset the TTL (to whatever TTL is specified in that update). By default, values never expire. A TTL of 0 or a negative one is equivalent to no TTL.
 
 
@@ -764,7 +932,7 @@ h3(#selectStmt). SELECT
 __Syntax:__
 
 bc(syntax).. 
-<select-stmt> ::= SELECT <select-clause>
+<select-stmt> ::= SELECT ( JSON )? <select-clause>
                   FROM <tablename>
                   ( WHERE <where-clause> )?
                   ( ORDER BY <order-by> )?
@@ -800,6 +968,8 @@ __Sample:__
 bc(sample).. 
 SELECT name, occupation FROM users WHERE userid IN (199, 200, 207);
 
+SELECT JSON name, occupation FROM users WHERE userid = 199;
+
 SELECT name AS user_name, occupation AS user_occupation FROM users;
 
 SELECT time, value
@@ -813,13 +983,13 @@ SELECT COUNT(*) FROM users;
 SELECT COUNT(*) AS user_count FROM users;
 
 p. 
-The @SELECT@ statements reads one or more columns for one or more rows in a table. It returns a result-set of rows, where each row contains the collection of columns corresponding to the query.
+The @SELECT@ statements reads one or more columns for one or more rows in a table. It returns a result-set of rows, where each row contains the collection of columns corresponding to the query.  If the @JSON@ keyword is used, the results for each row will contain only a single column named "json".  See the section on "@SELECT JSON@":#selectJson for more details.
 
 h4(#selectSelection). @<select-clause>@
 
 The @<select-clause>@ determines which columns needs to be queried and returned in the result-set. It consists of either the comma-separated list of <selector> or the wildcard character (@*@) to select all the columns defined for the table.
 
-A @<selector>@ is either a column name to retrieve, or a @<function>@ of one or multiple column names. The functions allows are the same that for @<term>@ and are describe in the "function section":#function. In addition to these generic functions, the @WRITETIME@ (resp. @TTL@) function allows to select the timestamp of when the column was inserted (resp. the time to live (in seconds) for the column (or null if the column has no expiration set)).
+A @<selector>@ is either a column name to retrieve or a @<function>@ of one or more @<term>@s. The function allowed are the same as for @<term>@ and are described in the "function section":#functions. In addition to these generic functions, the @WRITETIME@ (resp. @TTL@) function allows to select the timestamp of when the column was inserted (resp. the time to live (in seconds) for the column (or null if the column has no expiration set)).
 
 Any @<selector>@ can be aliased using @AS@ keyword (see examples). Please note that @<where-clause>@ and @<order-by>@ clause should refer to the columns by their original names and not by their aliases.
 
@@ -941,12 +1111,14 @@ bc(syntax)..
                 | blob
                 | boolean
                 | counter
+                | date
                 | decimal
                 | double
                 | float
                 | inet
                 | int
                 | text
+                | time
                 | timestamp
                 | timeuuid
                 | uuid
@@ -967,13 +1139,15 @@ p. The following table gives additional informations on the native data types, a
 |@blob@     |   blobs              |Arbitrary bytes (no validation)|
 |@boolean@  |   booleans           |true or false|
 |@counter@  |   integers           |Counter column (64-bit signed value). See "Counters":#counters for details|
+|@date@     |   integers, strings  |A date (with no corresponding time value).  See "Working with dates":#usingdates below for more information.|
 |@decimal@  |   integers, floats   |Variable-precision decimal|
 |@double@   |   integers           |64-bit IEEE-754 floating point|
 |@float@    |   integers, floats   |32-bit IEEE-754 floating point|
 |@inet@     |   strings            |An IP address. It can be either 4 bytes long (IPv4) or 16 bytes long (IPv6). There is no @inet@ constant, IP address should be inputed as strings|
 |@int@      |   integers           |32-bit signed int|
 |@text@     |   strings            |UTF8 encoded string|
-|@timestamp@|   integers, strings  |A timestamp. Strings constant are allow to input timestamps as dates, see "Working with dates":#usingdates below for more information.|
+|@time@     |   integers, strings  |A time with nanosecond precision.  See "Working with time":#usingtime below for more information.|
+|@timestamp@|   integers, strings  |A timestamp. Strings constant are allow to input timestamps as dates, see "Working with timestamps":#usingtimestamps below for more information.|
 |@timeuuid@ |   uuids              |Type 1 UUID. This is generally used as a "conflict-free" timestamp. Also see the "functions on Timeuuid":#timeuuidFun|
 |@uuid@     |   uuids              |Type 1 or type 4 UUID|
 |@varchar@  |   strings            |UTF8 encoded string|
@@ -981,7 +1155,7 @@ p. The following table gives additional informations on the native data types, a
 
 For more information on how to use the collection types, see the "Working with collections":#collections section below.
 
-h3(#usingdates). Working with dates
+h3(#usingtimestamps). Working with timestamps
 
 Values of the @timestamp@ type are encoded as 64-bit signed integers representing a number of milliseconds since the standard base time known as "the epoch": January 1 1970 at 00:00:00 GMT.
 
@@ -1013,6 +1187,31 @@ The time of day may also be omitted, if the date is the only piece that matters:
 * @2011-02-03+0000@
 
 In that case, the time of day will default to 00:00:00, in the specified or default time zone.
+
+
+h3(#usingdates). Working with dates
+
+Values of the @date@ type are encoded as 32-bit unsigned integers representing a number of days with "the epoch" at the center of the range (2^31). Epoch is January 1st, 1970
+
+A date can be input in CQL as an unsigned integer as defined above.
+
+They can also be input as string literals in the following format:
+
+* @2014-01-01@
+
+
+h3(#usingtime). Working with time
+
+Values of the @time@ type are encoded as 64-bit signed integers representing the number of nanoseconds since midnight.
+
+A time can be input in CQL as simple long integers, giving the number of nanoseconds since midnight.
+
+They can also be input as string literals in any of the following formats:
+
+* @08:12:54@
+* @08:12:54.123@
+* @08:12:54.123456@
+* @08:12:54.123456789@
 
 
 h3(#counters). Counters
@@ -1140,7 +1339,7 @@ As with "maps":#map, TTLs if used only apply to the newly inserted/updated _valu
 
 h2(#functions). Functions
 
-CQL3 supports a few functions (more to come). Currently, it only support functions on values (functions that transform one or more column values into a new value) and in particular aggregation functions are not supported. The functions supported are described below:
+CQL3 distinguishes between built-in functions (so called 'native functions') and "user-defined functions":#udfs.  CQL3 includes several native functions, described below:
 
 h3(#tokenFun). Token
 
@@ -1179,7 +1378,7 @@ will never return any result by design, since the value returned by @now()@ is g
 
 h4. @minTimeuuid@ and @maxTimeuuid@
 
-The @minTimeuuid@ (resp. @maxTimeuuid@) function takes a @timestamp@ value @t@ (which can be "either a timestamp or a date string":#usingdates) and return a _fake_ @timeuuid@ corresponding to the _smallest_ (resp. _biggest_) possible @timeuuid@ having for timestamp @t@. So for instance:
+The @minTimeuuid@ (resp. @maxTimeuuid@) function takes a @timestamp@ value @t@ (which can be "either a timestamp or a date string":#usingtimestamps) and return a _fake_ @timeuuid@ corresponding to the _smallest_ (resp. _biggest_) possible @timeuuid@ having for timestamp @t@. So for instance:
  
 bc(sample). 
 SELECT * FROM myTable WHERE t > maxTimeuuid('2013-01-01 00:05+0000') AND t < minTimeuuid('2013-02-02 10:00+0000')
@@ -1196,6 +1395,151 @@ h3(#blobFun). Blob conversion functions
 
 A number of functions are provided to "convert" the native types into binary data (@blob@). For every @<native-type>@ @type@ supported by CQL3 (a notable exceptions is @blob@, for obvious reasons), the function @typeAsBlob@ takes a argument of type @type@ and return it as a @blob@.  Conversely, the function @blobAsType@ takes a 64-bit @blob@ argument and convert it to a @bigint@ value.  And so for instance, @bigintAsBlob(3)@ is @0x0000000000000003@ and @blobAsBigint(0x0000000000000003)@ is @3@.
 
+h2(#udfs). User-Defined Functions
+
+User-defined functions allow execution of user-provided code in Cassandra. By default, Cassandra supports defining functions in _Java_ and _JavaScript_. Support for other JSR 223 compliant scripting languages (such as Python, Ruby, and Scala) can be added by adding a JAR to the classpath.
+
+UDFs are part of the Cassandra schema.  As such, they are automatically propagated to all nodes in the cluster.
+
+UDFs can be _overloaded_ - i.e. multiple UDFs with different argument types but the same function name. Example:
+
+bc(sample). 
+CREATE FUNCTION sample ( arg int ) ...;
+CREATE FUNCTION sample ( arg text ) ...;
+
+User-defined functions are susceptible to all of the normal problems with the chosen programming language.  Accordingly, implementations should be safe against null pointer exceptions, illegal arguments, or any other potential source of exceptions.  An exception during function execution will result in the entire statement failing.
+
+It is valid to use _complex_ types like collections, tuple types and user-defined types as argument and return types. Tuple types and user-defined types are handled by the conversion functions of the DataStax Java Driver. Please see the documentation of the Java Driver for details on handling tuple types and user-defined types.
+
+Arguments for functions can be literals or terms. Prepared statement placeholders can be used, too.
+
+Note that you can use the double-quoted string syntax to enclose the UDF source code. For example:
+
+bc(sample).. 
+CREATE FUNCTION some_function ( arg int )
+  RETURNS int
+  LANGUAGE java
+  AS $$ return arg; $$;
+
+SELECT some_function(column) FROM atable ...;
+UPDATE atable SET col = some_function(?) ...;
+p. 
+
+bc(sample). 
+CREATE TYPE custom_type (txt text, i int);
+CREATE FUNCTION fct_using_udt ( udtarg frozen<customType> )
+  RETURNS text
+  LANGUAGE java
+  AS $$ return udtarg.getString("txt"); $$;
+
+User-defined functions can be used in "@SELECT@":#selectStmt, "@INSERT@":#insertStmt and "@UPDATE@":#updateStmt statements.
+
+See "@CREATE FUNCTION@":#createFunctionStmt and "@DROP FUNCTION@":#dropFunctionStmt.
+
+h2(#udas). User-Defined Aggregates
+
+User-defined aggregates allow creation of custom aggregate functions using "UDFs":#udfs. Common examples of aggregate functions are _count_, _min_, and _max_.
+
+Each aggregate requires an _initial state_ (@INITCOND@, which defaults to @null@) of type @STYPE@. The first argument of the state function must have type @STYPE@. The remaining arguments of the state function must match the types of the user-defined aggregate arguments. The state function is called once for each row, and the value returned by the state function becomes the new state. After all rows are processed, the optional @FINALFUNC@ is executed with last state value as its argument.
+
+@STYPE@ is mandatory in order to be able to distinguish possibly overloaded versions of the state and/or final function (since the overload can appear after creation of the aggregate).
+
+User-defined aggregates can be used in "@SELECT@":#selectStmt statement.
+
+A complete working example for user-defined aggregates (assuming that a keyspace has been selected using the "@USE@":#useStmt statement):
+
+bc(sample).. 
+CREATE FUNCTION averageState ( state tuple<int,bigint>, val int )
+  RETURNS tuple<int,bigint>
+  LANGUAGE java
+  AS '
+    if (val != null) {
+      state.setInt(0, state.getInt(0)+1);
+      state.setLong(1, state.getLong(1)+val.intValue());
+    }
+    return state;
+  ';
+
+CREATE FUNCTION averageFinal ( state tuple<int,bigint> )
+  RETURNS double
+  LANGUAGE java
+  AS '
+    double r = 0;
+    if (state.getInt(0) == 0) return null;
+    r = state.getLong(1);
+    r /= state.getInt(0);
+    return Double.valueOf(r);
+  ';
+
+CREATE AGGREGATE average ( int )
+  SFUNC averageState
+  STYPE tuple<int,bigint>
+  FINALFUNC averageFinal
+  INITCOND (0, 0);
+
+CREATE TYPE atable (
+  pk int PRIMARY KEY,
+  val int);
+INSERT INTO atable (pk, val) VALUES (1,1);
+INSERT INTO atable (pk, val) VALUES (2,2);
+INSERT INTO atable (pk, val) VALUES (3,3);
+INSERT INTO atable (pk, val) VALUES (4,4);
+SELECT average(val) FROM atable;
+p. 
+
+See "@CREATE AGGREGATE@":#createAggregateStmt and "@DROP AGGREGATE@":#dropAggregateStmt.
+
+h2(#json). JSON Support
+
+Cassandra 3.0 introduces JSON support to "@SELECT@":#selectStmt and "@INSERT@":#insertStmt statements.  This support does not fundamentally alter the CQL API (for example, the schema is still enforced), it simply provides a convenient way to work with JSON documents.
+
+h3(#selectJson). SELECT JSON
+
+With @SELECT@ statements, the new @JSON@ keyword can be used to return each row as a single @JSON@ encoded map.  The remainder of the @SELECT@ statment behavior is the same.
+
+The result map keys are the same as the column names in a normal result set.  For example, a statement like "@SELECT JSON a, ttl(b) FROM ...@" would result in a map with keys @"a"@ and @"ttl(b)"@.  However, this is one notable exception: for symmetry with @INSERT JSON@ behavior, case-sensitive column names with upper-case letters will be surrounded with double quotes.  For example, "@SELECT JSON myColumn FROM ...@" would result in a map key @"\"myColumn\""@ (note the escaped quotes).
+
+The map values will @JSON@-encoded representations (as described below) of the result set values.
+
+h3(#insertJson). INSERT JSON
+
+With @INSERT@ statements, the new @JSON@ keyword can be used to enable inserting a @JSON@ encoded map as a single row.  The format of the @JSON@ map should generally match that returned by a @SELECT JSON@ statement on the same table.  In particular, case-sensitive column names should be surrounded with double quotes.  For example, to insert into a table with two columns named "myKey" and "value", you would do the following:
+
+bc(sample). 
+INSERT INTO mytable JSON '{"\"myKey\"": 0, "value": 0}'
+
+Any columns which are ommitted from the @JSON@ map will be defaulted to a @NULL@ value (which will result in a tombstone being created).
+
+h3(#jsonEncoding). JSON Encoding of Cassandra Data Types
+
+Where possible, Cassandra will represent and accept data types in their native @JSON@ representation.  Cassandra will also accept string representations matching the CQL literal format for all data types.  The following table describes the encodings that Cassandra will accept in @INSERT JSON@ values (and @fromJson()@ arguments) as well as the format Cassandra will use when returning data for @SELECT JSON@ statements (and @fromJson()@):
+
+|_. type    |_. formats accepted   |_. return format |_. notes|
+|@ascii@    |string                |string           |Uses JSON's @\u@ character escape|
+|@bigint@   |integer, string       |integer          |String must be valid 64 bit integer|
+|@blob@     |string                |string           |String should be 0x followed by an even number of hex digits|
+|@boolean@  |boolean, string       |boolean          |String must be "true" or "false"|
+|@date@     |string                |string           |Date in format @YYYY-MM-DD@, timezone UTC|
+|@decimal@  |integer, float, string|float            |May exceed 32 or 64-bit IEEE-754 floating point precision in client-side decoder|
+|@double@   |integer, float, string|float            |String must be valid integer or float|
+|@float@    |integer, float, string|float            |String must be valid integer or float|
+|@inet@     |string                |string           |IPv4 or IPv6 address|
+|@int@      |integer, string       |integer          |String must be valid 32 bit integer|
+|@text@     |string                |string           |Uses JSON's @\u@ character escape|
+|@time@     |string                |string           |Time of day in format @HH-MM-SS[.fffffffff]@|
+|@timestamp@|integer, string       |string           |A timestamp. Strings constant are allow to input timestamps as dates, see "Working with dates":#usingdates below for more information.  Datestamps with format @YYYY-MM-DD HH:MM:SS.SSS@ are returned.|
+|@timeuuid@ |string                |string           |Type 1 UUID. See "Constants":#constants for the UUID format|
+|@uuid@     |string                |string           |See "Constants":#constants for the UUID format|
+|@varchar@  |string                |string           |Uses JSON's @\u@ character escape|
+|@varint@   |integer, string       |integer          |Variable length; may overflow 32 or 64 bit integers in client-side decoder|
+
+h3(#fromJson). The fromJson() Function
+
+The @fromJson()@ function may be used similarly to @INSERT JSON@, but for a single column value.  It may only be used in the @VALUES@ clause of an @INSERT@ statement or as one of the column values in an @UPDATE@, @DELETE@, or @SELECT@ statement.  For example, it cannot be used in the selection clause of a @SELECT@ statement.
+
+h3(#toJson). The toJson() Function
+
+The @toJson()@ function may be used similarly to @SELECT JSON@, but for a single column value.  It may only be used in the selection clause of a @SELECT@ statement.
 
 h2(#appendixA). Appendix A: CQL Keywords
 
@@ -1203,6 +1547,7 @@ CQL distinguishes between _reserved_ and _non-reserved_ keywords. Reserved keywo
 
 |_. Keyword      |_. Reserved? |
 | @ADD@          | yes |
+| @AGGREGATE@    | no  |
 | @ALL@          | no  |
 | @ALTER@        | yes |
 | @AND@          | yes |
@@ -1228,41 +1573,52 @@ CQL distinguishes between _reserved_ and _non-reserved_ keywords. Reserved keywo
 | @DECIMAL@      | no  |
 | @DELETE@       | yes |
 | @DESC@         | yes |
+| @DETERMINISTIC@ | no  |
 | @DOUBLE@       | no  |
 | @DROP@         | yes |
 | @EACH_QUORUM@  | yes |
+| @FUNCTION@     | no  |
+| @FINALFUNC@    | no  |
 | @FLOAT@        | no  |
 | @FROM@         | yes |
 | @GRANT@        | yes |
 | @IN@           | yes |
 | @INDEX@        | yes |
 | @CUSTOM@       | no  |
+| @INITCOND@     | no  |
 | @INSERT@       | yes |
 | @INT@          | no  |
 | @INTO@         | yes |
 | @KEY@          | no  |
 | @KEYSPACE@     | yes |
+| @LANGUAGE@     | no  |
 | @LEVEL@        | no  |
 | @LIMIT@        | yes |
 | @LOCAL_ONE@    | yes |
 | @LOCAL_QUORUM@ | yes |
 | @MODIFY@       | yes |
 | @NORECURSIVE@  | yes |
+| @NON@          | no  |
 | @NOSUPERUSER@  | no  |
 | @OF@           | yes |
 | @ON@           | yes |
 | @ONE@          | yes |
+| @OR@           | yes |
 | @ORDER@        | yes |
 | @PASSWORD@     | no  |
 | @PERMISSION@   | no  |
 | @PERMISSIONS@  | no  |
 | @PRIMARY@      | yes |
 | @QUORUM@       | yes |
+| @REPLACE@      | yes |
+| @RETURNS@      | no  |
 | @REVOKE@       | yes |
 | @SCHEMA@       | yes |
 | @SELECT@       | yes |
 | @SET@          | yes |
+| @SFUNC@        | no  |
 | @STORAGE@      | no  |
+| @STYPE@        | no  |
 | @SUPERUSER@    | no  |
 | @TABLE@        | yes |
 | @TEXT@         | no  |
@@ -1287,6 +1643,8 @@ CQL distinguishes between _reserved_ and _non-reserved_ keywords. Reserved keywo
 | @WITH@         | yes |
 | @WRITETIME@    | no  |
 | @DISTINCT@     | no  |
+| @DATE@         | no  |
+| @TIME@         | no  |
 
 h2(#appendixB). Appendix B: CQL Reserved Types
 
@@ -1305,6 +1663,12 @@ The following type names are not currently used by CQL, but are reserved for pot
 h2(#changes). Changes
 
 The following describes the changes in each version of CQL.
+
+h3. 3.3.0
+
+* User-defined functions are now supported through "@CREATE FUNCTION@":#createFunctionStmt and "@DROP FUNCTION@":#dropFunctionStmt, 
+* User-defined aggregates are now supported through "@CREATE AGGREGATE@":#createAggregateStmt and "@DROP AGGREGATE@":#dropAggregateStmt.
+* Allows double-dollar enclosed strings literals as an alternative to single-quote enclosed strings.
 
 h3. 3.2.0
 
@@ -1335,7 +1699,7 @@ h3. 3.1.4
 
 h3. 3.1.3
 
-* Millisecond precision formats have been added to the timestamp parser (see "working with dates":#usingdates).
+* Millisecond precision formats have been added to the timestamp parser (see "working with dates":#usingtimestamps).
 
 h3. 3.1.2
 
@@ -1350,7 +1714,7 @@ h3. 3.1.1
 h3. 3.1.0
 
 * "ALTER TABLE":#alterTableStmt @DROP@ option has been reenabled for CQL3 tables and has new semantics now: the space formerly used by dropped columns will now be eventually reclaimed (post-compaction). You should not readd previously dropped columns unless you use timestamps with microsecond precision (see "CASSANDRA-3919":https://issues.apache.org/jira/browse/CASSANDRA-3919 for more details).
-* @SELECT@ statement now supports aliases in select clause. Aliases in WHERE and ORDER BY clauses are not supported. See the "section on select"#selectStmt for details.
+* @SELECT@ statement now supports aliases in select clause. Aliases in WHERE and ORDER BY clauses are not supported. See the "section on select":#selectStmt for details.
 * @CREATE@ statements for @KEYSPACE@, @TABLE@ and @INDEX@ now supports an @IF NOT EXISTS@ condition. Similarly, @DROP@ statements support a @IF EXISTS@ condition.
 * @INSERT@ statements optionally supports a @IF NOT EXISTS@ condition and @UPDATE@ supports @IF@ conditions.
 
@@ -1375,9 +1739,8 @@ h3. 3.0.2
 
 h3. 3.0.1
 
-* "Date strings":#usingdates (and timestamps) are no longer accepted as valid @timeuuid@ values. Doing so was a bug in the sense that date string are not valid @timeuuid@, and it was thus resulting in "confusing behaviors":https://issues.apache.org/jira/browse/CASSANDRA-4936.  However, the following new methods have been added to help working with @timeuuid@: @now@, @minTimeuuid@, @maxTimeuuid@ , @dateOf@ and @unixTimestampOf@. See the "section dedicated to these methods":#usingtimeuuid for more detail.
+* "Date strings":#usingtimestamps (and timestamps) are no longer accepted as valid @timeuuid@ values. Doing so was a bug in the sense that date string are not valid @timeuuid@, and it was thus resulting in "confusing behaviors":https://issues.apache.org/jira/browse/CASSANDRA-4936.  However, the following new methods have been added to help working with @timeuuid@: @now@, @minTimeuuid@, @maxTimeuuid@ , @dateOf@ and @unixTimestampOf@. See the "section dedicated to these methods":#usingtimeuuid for more detail.
 * "Float constants"#constants now support the exponent notation. In other words, @4.2E10@ is now a valid floating point value.
-
 
 h2. Versioning
 

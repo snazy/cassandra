@@ -20,6 +20,8 @@ package org.apache.cassandra.cql3.statements;
 import org.apache.cassandra.auth.Permission;
 import org.apache.cassandra.config.*;
 import org.apache.cassandra.cql3.*;
+import org.apache.cassandra.cql3.functions.Function;
+import org.apache.cassandra.cql3.functions.Functions;
 import org.apache.cassandra.db.marshal.*;
 import org.apache.cassandra.exceptions.*;
 import org.apache.cassandra.service.ClientState;
@@ -72,6 +74,15 @@ public class DropTypeStatement extends SchemaAlteringStatement
         // we drop and 2) existing tables referencing the type (maybe in a nested
         // way).
 
+        for (Function function : Functions.all())
+        {
+            if (isUsedBy(function.returnType()))
+                throw new InvalidRequestException(String.format("Cannot drop user type %s as it is still used by function %s", name, function));
+            for (AbstractType<?> argType : function.argTypes())
+                if (isUsedBy(argType))
+                    throw new InvalidRequestException(String.format("Cannot drop user type %s as it is still used by function %s", name, function));
+        }
+
         for (KSMetaData ksm2 : Schema.instance.getKeyspaceDefinitions())
         {
             for (UserType ut : ksm2.userTypes.getAllTypes().values())
@@ -121,7 +132,7 @@ public class DropTypeStatement extends SchemaAlteringStatement
             else if (toCheck instanceof SetType)
                 return isUsedBy(((SetType)toCheck).getElementsType());
             else
-                return isUsedBy(((MapType)toCheck).getKeysType()) || isUsedBy(((MapType)toCheck).getKeysType());
+                return isUsedBy(((MapType)toCheck).getKeysType()) || isUsedBy(((MapType)toCheck).getValuesType());
         }
         return false;
     }

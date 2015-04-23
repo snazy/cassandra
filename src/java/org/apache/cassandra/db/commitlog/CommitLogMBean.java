@@ -24,25 +24,35 @@ import java.util.List;
 public interface CommitLogMBean
 {
     /**
-     * Get the number of completed tasks
-     * @see org.apache.cassandra.metrics.CommitLogMetrics#completedTasks
+     *  Command to execute to archive a commitlog segment.  Blank to disabled.
      */
-    @Deprecated
-    public long getCompletedTasks();
+    public String getArchiveCommand();
 
     /**
-     * Get the number of tasks waiting to be executed
-     * @see org.apache.cassandra.metrics.CommitLogMetrics#pendingTasks
+     * Command to execute to make an archived commitlog live again
      */
-    @Deprecated
-    public long getPendingTasks();
+    public String getRestoreCommand();
 
     /**
-     * Get the current size used by all the commitlog segments.
-     * @see org.apache.cassandra.metrics.CommitLogMetrics#totalCommitLogSize
+     * Directory to scan the recovery files in
      */
-    @Deprecated
-    public long getTotalCommitlogSize();
+    public String getRestoreDirectories();
+
+    /**
+     * Restore mutations created up to and including this timestamp in GMT
+     * Format: yyyy:MM:dd HH:mm:ss (2012:04:31 20:43:12)
+     *
+     * Recovery will continue through the segment when the first client-supplied
+     * timestamp greater than this time is encountered, but only mutations less than
+     * or equal to this timestamp will be applied.
+     */
+    public long getRestorePointInTime();
+
+    /**
+     * get precision of the timestamp used in the restore (MILLISECONDS, MICROSECONDS, ...)
+     * to determine if passed the restore point in time.
+     */
+    public String getRestorePrecision();
 
     /**
      * Recover a single file.

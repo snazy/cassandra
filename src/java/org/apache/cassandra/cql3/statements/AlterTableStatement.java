@@ -247,7 +247,10 @@ public class AlterTableStatement extends SchemaAlteringStatement
                         for (ColumnDefinition columnDef : cfm.regularAndStaticColumns())
                         {
                             if (columnDef.name.equals(columnName))
+                            {
                                 toDelete = columnDef;
+                                break;
+                            }
                         }
                         assert toDelete != null;
                         cfm.removeColumnDefinition(toDelete);
@@ -257,9 +260,13 @@ public class AlterTableStatement extends SchemaAlteringStatement
                 break;
             case OPTS:
                 if (cfProps == null)
-                    throw new InvalidRequestException(String.format("ALTER TABLE WITH invoked, but no parameters found"));
+                    throw new InvalidRequestException("ALTER TABLE WITH invoked, but no parameters found");
 
                 cfProps.validate();
+
+                if (meta.isCounter() && cfProps.getDefaultTimeToLive() > 0)
+                    throw new InvalidRequestException("Cannot set default_time_to_live on a table with counters");
+
                 cfProps.applyToCFMetadata(cfm);
                 break;
             case RENAME:

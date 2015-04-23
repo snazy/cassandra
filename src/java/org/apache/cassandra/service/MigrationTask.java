@@ -26,7 +26,7 @@ import org.slf4j.LoggerFactory;
 
 import org.apache.cassandra.db.Mutation;
 import org.apache.cassandra.exceptions.ConfigurationException;
-import org.apache.cassandra.db.DefsTables;
+import org.apache.cassandra.schema.LegacySchemaTables;
 import org.apache.cassandra.gms.FailureDetector;
 import org.apache.cassandra.net.IAsyncCallback;
 import org.apache.cassandra.net.MessageIn;
@@ -48,13 +48,22 @@ class MigrationTask extends WrappedRunnable
 
     public void runMayThrow() throws Exception
     {
-        MessageOut message = new MessageOut<>(MessagingService.Verb.MIGRATION_REQUEST, null, MigrationManager.MigrationsSerializer.instance);
+        // There is a chance that quite some time could have passed between now and the MM#maybeScheduleSchemaPull(),
+        // potentially enough for the endpoint node to restart - which is an issue if it does restart upgraded, with
+        // a higher major.
+        if (!MigrationManager.shouldPullSchemaFrom(endpoint))
+        {
+            logger.info("Skipped sending a migration request: node {} has a higher major version now.", endpoint);
+            return;
+        }
 
         if (!FailureDetector.instance.isAlive(endpoint))
         {
-            logger.error("Can't send migration request: node {} is down.", endpoint);
+            logger.debug("Can't send schema pull request: node {} is down.", endpoint);
             return;
         }
+
+        MessageOut message = new MessageOut<>(MessagingService.Verb.MIGRATION_REQUEST, null, MigrationManager.MigrationsSerializer.instance);
 
         IAsyncCallback<Collection<Mutation>> cb = new IAsyncCallback<Collection<Mutation>>()
         {
@@ -63,7 +72,7 @@ class MigrationTask extends WrappedRunnable
             {
                 try
                 {
-                    DefsTables.mergeSchema(message.payload);
+                    LegacySchemaTables.mergeSchema(message.payload);
                 }
                 catch (IOException e)
                 {
@@ -75,7 +84,6 @@ class MigrationTask extends WrappedRunnable
                 }
             }
 
-            @Override
             public boolean isLatencyForSnitch()
             {
                 return false;

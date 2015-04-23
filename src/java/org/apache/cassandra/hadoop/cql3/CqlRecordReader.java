@@ -22,17 +22,7 @@ import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.net.InetAddress;
 import java.nio.ByteBuffer;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Collection;
-import java.util.Date;
-import java.util.HashMap;
-import java.util.Iterator;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
-import java.util.UUID;
+import java.util.*;
 
 import com.google.common.base.Function;
 import com.google.common.base.Joiner;
@@ -40,10 +30,7 @@ import com.google.common.base.Splitter;
 import com.google.common.collect.AbstractIterator;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.Maps;
-
 import org.apache.commons.lang3.StringUtils;
-
-import org.apache.cassandra.hadoop.HadoopCompat;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -55,6 +42,8 @@ import com.datastax.driver.core.Row;
 import com.datastax.driver.core.Session;
 import com.datastax.driver.core.TupleValue;
 import com.datastax.driver.core.UDTValue;
+import org.apache.cassandra.schema.LegacySchemaTables;
+import org.apache.cassandra.db.SystemKeyspace;
 import org.apache.cassandra.db.marshal.AbstractType;
 import org.apache.cassandra.dht.IPartitioner;
 import org.apache.cassandra.hadoop.ColumnFamilySplit;
@@ -68,22 +57,24 @@ import org.apache.hadoop.mapreduce.RecordReader;
 import org.apache.hadoop.mapreduce.TaskAttemptContext;
 
 /**
+ * <p>
  * CqlRecordReader reads the rows return from the CQL query
  * It uses CQL auto-paging.
- * <p/>
+ * </p>
+ * <p>
  * Return a Long as a local CQL row key starts from 0;
- * <p/>
+ * </p>
+ * {@code
  * Row as C* java driver CQL result set row
  * 1) select clause must include partition key columns (to calculate the progress based on the actual CF row processed)
  * 2) where clause must include token(partition_key1, ...  , partition_keyn) > ? and 
  *       token(partition_key1, ... , partition_keyn) <= ?  (in the right order) 
+ * }
  */
 public class CqlRecordReader extends RecordReader<Long, Row>
         implements org.apache.hadoop.mapred.RecordReader<Long, Row>, AutoCloseable
 {
     private static final Logger logger = LoggerFactory.getLogger(CqlRecordReader.class);
-
-    public static final int DEFAULT_CQL_PAGE_LIMIT = 1000;
 
     private ColumnFamilySplit split;
     private RowIterator rowIterator;
@@ -103,6 +94,7 @@ public class CqlRecordReader extends RecordReader<Long, Row>
 
     // partition keys -- key aliases
     private LinkedHashMap<String, Boolean> partitionBoundColumns = Maps.newLinkedHashMap();
+    protected int nativeProtocolVersion = 1;
 
     public CqlRecordReader()
     {
@@ -142,6 +134,9 @@ public class CqlRecordReader extends RecordReader<Long, Row>
 
         if (session == null)
           throw new RuntimeException("Can't create connection session");
+
+        //get negotiated serialization protocol
+        nativeProtocolVersion = cluster.getConfiguration().getProtocolOptions().getProtocolVersion();
 
         // If the user provides a CQL query then we will use it without validation
         // otherwise we will fall back to building a query using the:
@@ -231,17 +226,25 @@ public class CqlRecordReader extends RecordReader<Long, Row>
 
     public long getPos() throws IOException
     {
-        return (long) rowIterator.totalRead;
+        return rowIterator.totalRead;
     }
 
     public Long createKey()
     {
-        return new Long(0L);
+        return Long.valueOf(0L);
     }
 
     public Row createValue()
     {
         return new WrappedRow();
+    }
+
+    /**
+     * Return native version protocol of the cluster connection
+     * @return serialization protocol version.
+     */
+    public int getNativeProtocolVersion() {
+        return nativeProtocolVersion;
     }
 
     /** CQL row iterator 
@@ -601,8 +604,15 @@ public class CqlRecordReader extends RecordReader<Long, Row>
 
     private void fetchKeys()
     {
-        String query = "SELECT column_name, component_index, type FROM system.schema_columns WHERE keyspace_name='" +
-                       keyspace + "' and columnfamily_name='" + cfName + "'";
+        String query = String.format("SELECT column_name, component_index, type " +
+                                     "FROM %s.%s " +
+                                     "WHERE keyspace_name = '%s' AND columnfamily_name = '%s'",
+                                     SystemKeyspace.NAME,
+                                     LegacySchemaTables.COLUMNS,
+                                     keyspace,
+                                     cfName);
+
+        // get CF meta data
         List<Row> rows = session.execute(query).all();
         if (rows.isEmpty())
         {

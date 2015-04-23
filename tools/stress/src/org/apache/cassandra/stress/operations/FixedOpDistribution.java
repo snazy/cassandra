@@ -25,7 +25,6 @@ import org.apache.cassandra.stress.Operation;
 
 public class FixedOpDistribution implements OpDistribution
 {
-
     final Operation operation;
 
     public FixedOpDistribution(Operation operation)
@@ -38,9 +37,13 @@ public class FixedOpDistribution implements OpDistribution
         return operation;
     }
 
-    public int maxBatchSize()
+    public void initTimers()
     {
-        return (int) operation.partitionCount.maxValue();
+        operation.timer.init();
     }
 
+    public void closeTimers()
+    {
+        operation.timer.close();
+    }
 }

@@ -17,18 +17,42 @@
 */
 package org.apache.cassandra.io.util;
 
+import com.google.common.util.concurrent.RateLimiter;
+
 import org.apache.cassandra.io.compress.CompressedRandomAccessReader;
 import org.apache.cassandra.io.compress.CompressedSequentialWriter;
+import org.apache.cassandra.io.compress.CompressedThrottledReader;
 import org.apache.cassandra.io.compress.CompressionMetadata;
 
 public class CompressedPoolingSegmentedFile extends PoolingSegmentedFile implements ICompressedFile
 {
     public final CompressionMetadata metadata;
 
-    public CompressedPoolingSegmentedFile(String path, CompressionMetadata metadata)
+    public CompressedPoolingSegmentedFile(ChannelProxy channel, CompressionMetadata metadata)
     {
-        super(path, metadata.dataLength, metadata.compressedFileLength);
+        super(new Cleanup(channel, metadata), channel, metadata.dataLength, metadata.compressedFileLength);
         this.metadata = metadata;
+    }
+
+    private CompressedPoolingSegmentedFile(CompressedPoolingSegmentedFile copy)
+    {
+        super(copy);
+        this.metadata = copy.metadata;
+    }
+
+    protected static final class Cleanup extends PoolingSegmentedFile.Cleanup
+    {
+        final CompressionMetadata metadata;
+        protected Cleanup(ChannelProxy channel, CompressionMetadata metadata)
+        {
+            super(channel);
+            this.metadata = metadata;
+        }
+        public void tidy()
+        {
+            super.tidy();
+            metadata.close();
+        }
     }
 
     public static class Builder extends CompressedSegmentedFile.Builder
@@ -43,20 +67,32 @@ public class CompressedPoolingSegmentedFile extends PoolingSegmentedFile impleme
             // only one segment in a standard-io file
         }
 
-        public SegmentedFile complete(String path)
+        public SegmentedFile complete(ChannelProxy channel, long overrideLength, boolean isFinal)
         {
-            return new CompressedPoolingSegmentedFile(path, metadata(path, false));
-        }
-
-        public SegmentedFile openEarly(String path)
-        {
-            return new CompressedPoolingSegmentedFile(path, metadata(path, true));
+            return new CompressedPoolingSegmentedFile(channel, metadata(channel.filePath(), overrideLength, isFinal));
         }
     }
 
-    protected RandomAccessReader createReader(String path)
+    public void dropPageCache(long before)
     {
-        return CompressedRandomAccessReader.open(path, metadata, this);
+        if (before >= metadata.dataLength)
+            super.dropPageCache(0);
+        super.dropPageCache(metadata.chunkFor(before).offset);
+    }
+
+    public RandomAccessReader createReader()
+    {
+        return CompressedRandomAccessReader.open(channel, metadata, null);
+    }
+
+    public RandomAccessReader createThrottledReader(RateLimiter limiter)
+    {
+        return CompressedThrottledReader.open(channel, metadata, limiter);
+    }
+
+    protected RandomAccessReader createPooledReader()
+    {
+        return CompressedRandomAccessReader.open(channel, metadata, this);
     }
 
     public CompressionMetadata getMetadata()
@@ -64,10 +100,8 @@ public class CompressedPoolingSegmentedFile extends PoolingSegmentedFile impleme
         return metadata;
     }
 
-    @Override
-    public void cleanup()
+    public CompressedPoolingSegmentedFile sharedCopy()
     {
-        super.cleanup();
-        metadata.close();
+        return new CompressedPoolingSegmentedFile(this);
     }
 }

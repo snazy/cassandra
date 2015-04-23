@@ -22,8 +22,10 @@ import java.util.Comparator;
 
 import org.apache.cassandra.dht.IPartitioner;
 import org.apache.cassandra.dht.Token;
-import org.apache.cassandra.service.StorageService;
+import org.apache.cassandra.dht.Token.KeyBound;
 import org.apache.cassandra.utils.ByteBufferUtil;
+import org.apache.cassandra.utils.MurmurHash;
+import org.apache.cassandra.utils.IFilter.FilterKey;
 
 /**
  * Represents a decorated key, handy for certain operations
@@ -34,7 +36,7 @@ import org.apache.cassandra.utils.ByteBufferUtil;
  * if this matters, you can subclass RP to use a stronger hash, or use a non-lossy tokenization scheme (as in the
  * OrderPreservingPartitioner classes).
  */
-public abstract class DecoratedKey implements RowPosition
+public abstract class DecoratedKey implements RowPosition, FilterKey
 {
     public static final Comparator<DecoratedKey> comparator = new Comparator<DecoratedKey>()
     {
@@ -95,15 +97,20 @@ public abstract class DecoratedKey implements RowPosition
         return cmp == 0 ? ByteBufferUtil.compareUnsigned(key, otherKey.getKey()) : cmp;
     }
 
-    public boolean isMinimum(IPartitioner partitioner)
+    public IPartitioner getPartitioner()
     {
-        // A DecoratedKey can never be the minimum position on the ring
-        return false;
+        return getToken().getPartitioner();
+    }
+
+    public KeyBound minValue()
+    {
+        return getPartitioner().getMinimumToken().minKeyBound();
     }
 
     public boolean isMinimum()
     {
-        return isMinimum(StorageService.getPartitioner());
+        // A DecoratedKey can never be the minimum position on the ring
+        return false;
     }
 
     public RowPosition.Kind kind()
@@ -124,4 +131,10 @@ public abstract class DecoratedKey implements RowPosition
     }
 
     public abstract ByteBuffer getKey();
+
+    public void filterHash(long[] dest)
+    {
+        ByteBuffer key = getKey();
+        MurmurHash.hash3_x64_128(key, key.position(), key.remaining(), 0, dest);
+    }
 }

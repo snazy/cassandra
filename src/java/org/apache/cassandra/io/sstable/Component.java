@@ -47,8 +47,8 @@ public class Component
         COMPRESSION_INFO("CompressionInfo.db"),
         // statistical metadata about the content of the sstable
         STATS("Statistics.db"),
-        // holds sha1 sum of the data file (to be checked by sha1sum)
-        DIGEST("Digest.sha1"),
+        // holds adler32 checksum of the data file
+        DIGEST("Digest.adler32"),
         // holds the CRC32 for chunks in an a uncompressed file.
         CRC("CRC.db"),
         // holds SSTable Index Summary (sampling of Index component)
@@ -111,7 +111,9 @@ public class Component
     }
 
     /**
+     * {@code
      * Filename of the form "<ksname>/<cfname>-[tmp-][<version>-]<gen>-<component>",
+     * }
      * @return A Descriptor for the SSTable, and a Component for this particular file.
      * TODO move descriptor into Component field
      */

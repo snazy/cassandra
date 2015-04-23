@@ -65,12 +65,17 @@ public class DataRange
 
     public static DataRange allData(IPartitioner partitioner)
     {
-        return forKeyRange(new Range<Token>(partitioner.getMinimumToken(), partitioner.getMinimumToken()));
+        return forTokenRange(new Range<Token>(partitioner.getMinimumToken(), partitioner.getMinimumToken()));
     }
 
-    public static DataRange forKeyRange(Range<Token> keyRange)
+    public static DataRange forTokenRange(Range<Token> keyRange)
     {
-        return new DataRange(keyRange.toRowBounds(), new IdentityQueryFilter());
+        return forKeyRange(Range.makeRowRange(keyRange));
+    }
+
+    public static DataRange forKeyRange(Range<RowPosition> keyRange)
+    {
+        return new DataRange(keyRange, new IdentityQueryFilter());
     }
 
     public AbstractBounds<RowPosition> keyRange()
@@ -88,11 +93,23 @@ public class DataRange
         return keyRange.right;
     }
 
+    /**
+     * Returns true if tombstoned partitions should not be included in results or count towards the limit.
+     * See CASSANDRA-8490 for more details on why this is needed (and done this way).
+     * */
+    public boolean ignoredTombstonedPartitions()
+    {
+        if (!(columnFilter instanceof SliceQueryFilter))
+            return false;
+
+        return ((SliceQueryFilter) columnFilter).compositesToGroup == SliceQueryFilter.IGNORE_TOMBSTONED_PARTITIONS;
+    }
+
     // Whether the bounds of this DataRange actually wraps around.
     public boolean isWrapAround()
     {
         // On range can ever wrap
-        return keyRange instanceof Range && ((Range)keyRange).isWrapAround();
+        return keyRange instanceof Range && ((Range<?>)keyRange).isWrapAround();
     }
 
     public boolean contains(RowPosition pos)
@@ -112,11 +129,19 @@ public class DataRange
         return selectFullRow;
     }
 
+    /**
+     * Returns a column filter that should be used for a particular row key.  Note that in the case of paging,
+     * slice starts and ends may change depending on the row key.
+     */
     public IDiskAtomFilter columnFilter(ByteBuffer rowKey)
     {
         return columnFilter;
     }
 
+    /**
+     * Sets a new limit on the number of (grouped) cells to fetch. This is currently only used when the query limit applies
+     * to CQL3 rows.
+     */
     public void updateColumnsLimit(int count)
     {
         columnFilter.updateColumnsLimit(count);
@@ -124,23 +149,28 @@ public class DataRange
 
     public static class Paging extends DataRange
     {
+        // The slice of columns that we want to fetch for each row, ignoring page start/end issues.
         private final SliceQueryFilter sliceFilter;
         private final Comparator<Composite> comparator;
-        private final Composite columnStart;
-        private final Composite columnFinish;
 
-        private Paging(AbstractBounds<RowPosition> range, SliceQueryFilter filter, Composite columnStart, Composite columnFinish, Comparator<Composite> comparator)
+        // used to restrict the start of the slice for the first partition in the range
+        private final Composite firstPartitionColumnStart;
+
+        // used to restrict the end of the slice for the last partition in the range
+        private final Composite lastPartitionColumnFinish;
+
+        private Paging(AbstractBounds<RowPosition> range, SliceQueryFilter filter, Composite firstPartitionColumnStart, Composite lastPartitionColumnFinish, Comparator<Composite> comparator)
         {
             super(range, filter);
 
             // When using a paging range, we don't allow wrapped ranges, as it's unclear how to handle them properly.
             // This is ok for now since we only need this in range slice queries, and the range are "unwrapped" in that case.
-            assert !(range instanceof Range) || !((Range)range).isWrapAround() || range.right.isMinimum() : range;
+            assert !(range instanceof Range) || !((Range<?>)range).isWrapAround() || range.right.isMinimum() : range;
 
             this.sliceFilter = filter;
             this.comparator = comparator;
-            this.columnStart = columnStart;
-            this.columnFinish = columnFinish;
+            this.firstPartitionColumnStart = firstPartitionColumnStart;
+            this.lastPartitionColumnFinish = lastPartitionColumnFinish;
         }
 
         public Paging(AbstractBounds<RowPosition> range, SliceQueryFilter filter, Composite columnStart, Composite columnFinish, CellNameType comparator)
@@ -184,11 +214,11 @@ public class DataRange
 
         private ColumnSlice[] slicesForKey(ByteBuffer key)
         {
-            // We don't call that until it's necessary, so assume we have to do some hard work
+            // Also note that firstPartitionColumnStart and lastPartitionColumnFinish, when used, only "restrict" the filter slices,
             // it doesn't expand on them. As such, we can ignore the case where they are empty and we do
             // as it screw up with the logic below (see #6592)
-            Composite newStart = equals(startKey(), key) && !columnStart.isEmpty() ? columnStart : null;
-            Composite newFinish = equals(stopKey(), key) && !columnFinish.isEmpty() ? columnFinish : null;
+            Composite newStart = equals(startKey(), key) && !firstPartitionColumnStart.isEmpty() ? firstPartitionColumnStart : null;
+            Composite newFinish = equals(stopKey(), key) && !lastPartitionColumnFinish.isEmpty() ? lastPartitionColumnFinish : null;
 
             List<ColumnSlice> newSlices = new ArrayList<ColumnSlice>(sliceFilter.slices.length); // in the common case, we'll have the same number of slices
 

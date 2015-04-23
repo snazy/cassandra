@@ -111,14 +111,14 @@ public class CompressedInputStreamTest
 
         // read buffer using CompressedInputStream
         CompressionInfo info = new CompressionInfo(chunks, param);
-        CompressedInputStream input = new CompressedInputStream(new ByteArrayInputStream(toRead), info, true);
+        CompressedInputStream input = new CompressedInputStream(new ByteArrayInputStream(toRead), info);
         DataInputStream in = new DataInputStream(input);
 
         for (int i = 0; i < sections.size(); i++)
         {
             input.position(sections.get(i).left);
-            long exp = in.readLong();
-            assert exp == valuesToCheck[i] : "expected " + valuesToCheck[i] + " but was " + exp;
+            long readValue = in.readLong();
+            assert readValue == valuesToCheck[i] : "expected " + valuesToCheck[i] + " but was " + readValue;
         }
     }
 }

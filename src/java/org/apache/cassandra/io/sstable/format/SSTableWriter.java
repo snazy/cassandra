@@ -53,6 +53,22 @@ public abstract class SSTableWriter extends SSTable
 {
     private static final Logger logger = LoggerFactory.getLogger(SSTableWriter.class);
 
+    public static enum FinishType
+    {
+        CLOSE(null, true),
+        NORMAL(SSTableReader.OpenReason.NORMAL, true),
+        EARLY(SSTableReader.OpenReason.EARLY, false), // no renaming
+        FINISH_EARLY(SSTableReader.OpenReason.NORMAL, true); // tidy up an EARLY finish
+        public final SSTableReader.OpenReason openReason;
+
+        public final boolean isFinal;
+        FinishType(SSTableReader.OpenReason openReason, boolean isFinal)
+        {
+            this.openReason = openReason;
+            this.isFinal = isFinal;
+        }
+    }
+
     protected final long repairedAt;
     protected final long keyCount;
     protected final MetadataCollector metadataCollector;
@@ -81,9 +97,18 @@ public abstract class SSTableWriter extends SSTable
     public static SSTableWriter create(Descriptor descriptor, long keyCount, long repairedAt, int sstableLevel)
     {
         CFMetaData metadata = Schema.instance.getCFMetaData(descriptor);
-        MetadataCollector collector = new MetadataCollector(metadata.comparator).sstableLevel(sstableLevel);
+        return create(metadata, descriptor, keyCount, repairedAt, sstableLevel, DatabaseDescriptor.getPartitioner());
+    }
 
-        return create(descriptor, keyCount, repairedAt, metadata, DatabaseDescriptor.getPartitioner(), collector);
+    public static SSTableWriter create(CFMetaData metadata,
+                                       Descriptor descriptor,
+                                       long keyCount,
+                                       long repairedAt,
+                                       int sstableLevel,
+                                       IPartitioner partitioner)
+    {
+        MetadataCollector collector = new MetadataCollector(metadata.comparator).sstableLevel(sstableLevel);
+        return create(descriptor, keyCount, repairedAt, metadata, partitioner, collector);
     }
 
     public static SSTableWriter create(String filename, long keyCount, long repairedAt, int sstableLevel)
@@ -150,10 +175,10 @@ public abstract class SSTableWriter extends SSTable
 
     public SSTableReader closeAndOpenReader(long maxDataAge)
     {
-        return closeAndOpenReader(maxDataAge, repairedAt);
+        return finish(FinishType.NORMAL, maxDataAge, repairedAt);
     }
 
-    public abstract SSTableReader closeAndOpenReader(long maxDataAge, long repairedAt);
+    public abstract SSTableReader finish(FinishType finishType, long maxDataAge, long repairedAt);
 
     public abstract SSTableReader openEarly(long maxDataAge);
 
@@ -187,12 +212,7 @@ public abstract class SSTableWriter extends SSTable
     /**
      * After failure, attempt to close the index writer and data file before deleting all temp components for the sstable
      */
-    public void abort()
-    {
-        abort(true);
-    }
-
-    public abstract void abort(boolean closeBf);
+    public abstract void abort();
 
 
     public static abstract class Factory

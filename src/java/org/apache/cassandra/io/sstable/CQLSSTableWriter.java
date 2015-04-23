@@ -21,19 +21,21 @@ import java.io.Closeable;
 import java.io.File;
 import java.io.IOException;
 import java.nio.ByteBuffer;
-import java.util.Arrays;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 
 import com.google.common.collect.ImmutableMap;
-import com.google.common.collect.Iterables;
 
-import org.apache.cassandra.cql3.statements.*;
+import org.apache.cassandra.config.CFMetaData;
+import org.apache.cassandra.config.Config;
+import org.apache.cassandra.config.KSMetaData;
+import org.apache.cassandra.config.Schema;
 import org.apache.cassandra.cql3.*;
-import org.apache.cassandra.config.*;
-import org.apache.cassandra.db.*;
+import org.apache.cassandra.cql3.statements.CreateTableStatement;
+import org.apache.cassandra.cql3.statements.ParsedStatement;
+import org.apache.cassandra.cql3.statements.UpdateStatement;
+import org.apache.cassandra.db.ArrayBackedSortedColumns;
+import org.apache.cassandra.db.Cell;
+import org.apache.cassandra.db.ColumnFamily;
 import org.apache.cassandra.db.composites.Composite;
 import org.apache.cassandra.db.marshal.AbstractType;
 import org.apache.cassandra.dht.IPartitioner;
@@ -77,6 +79,11 @@ import org.apache.cassandra.utils.Pair;
  */
 public class CQLSSTableWriter implements Closeable
 {
+    static
+    {
+        Config.setClientMode(true);
+    }
+
     private final AbstractSSTableSimpleWriter writer;
     private final UpdateStatement insert;
     private final List<ColumnSpecification> boundNames;
@@ -214,9 +221,9 @@ public class CQLSSTableWriter implements Closeable
         {
             for (ByteBuffer key : keys)
             {
-                if (writer.currentKey() == null || !key.equals(writer.currentKey().getKey()))
+                if (writer.shouldStartNewRow() || !key.equals(writer.currentKey().getKey()))
                     writer.newRow(key);
-                insert.addUpdateForKey(writer.currentColumnFamily(), key, clusteringPrefix, params);
+                insert.addUpdateForKey(writer.currentColumnFamily(), key, clusteringPrefix, params, false);
             }
             return this;
         }
@@ -272,7 +279,7 @@ public class CQLSSTableWriter implements Closeable
     public static class Builder
     {
         private File directory;
-        private IPartitioner partitioner = new Murmur3Partitioner();
+        private IPartitioner partitioner = Murmur3Partitioner.instance;
 
         protected SSTableFormat.Type formatType = null;
 
@@ -348,19 +355,11 @@ public class CQLSSTableWriter implements Closeable
                     KSMetaData ksm = Schema.instance.getKSMetaData(this.schema.ksName);
                     if (ksm == null)
                     {
-                        ksm = KSMetaData.newKeyspace(this.schema.ksName,
-                                AbstractReplicationStrategy.getClass("org.apache.cassandra.locator.SimpleStrategy"),
-                                ImmutableMap.of("replication_factor", "1"),
-                                true,
-                                Collections.singleton(this.schema));
-                        Schema.instance.load(ksm);
+                        createKeyspaceWithTable(this.schema);
                     }
                     else if (Schema.instance.getCFMetaData(this.schema.ksName, this.schema.cfName) == null)
                     {
-                        Schema.instance.load(this.schema);
-                        ksm = KSMetaData.cloneWith(ksm, Iterables.concat(ksm.cfMetaData().values(), Collections.singleton(this.schema)));
-                        Schema.instance.setKeyspaceDefinition(ksm);
-                        Keyspace.open(ksm.name).initCf(this.schema.cfId, this.schema.cfName, false);
+                        addTableToKeyspace(ksm, this.schema);
                     }
                     return this;
                 }
@@ -369,6 +368,35 @@ public class CQLSSTableWriter implements Closeable
             {
                 throw new IllegalArgumentException(e.getMessage(), e);
             }
+        }
+
+        /**
+         * Creates the keyspace with the specified table.
+         *
+         * @param the table the table that must be created.
+         */
+        private static void createKeyspaceWithTable(CFMetaData table)
+        {
+            KSMetaData ksm;
+            ksm = KSMetaData.newKeyspace(table.ksName,
+                                         AbstractReplicationStrategy.getClass("org.apache.cassandra.locator.SimpleStrategy"),
+                                         ImmutableMap.of("replication_factor", "1"),
+                                         true,
+                                         Collections.singleton(table));
+            Schema.instance.load(ksm);
+        }
+
+        /**
+         * Adds the table to the to the specified keyspace.
+         *
+         * @param keyspace the keyspace to add to
+         * @param table the table to add
+         */
+        private static void addTableToKeyspace(KSMetaData keyspace, CFMetaData table)
+        {
+            KSMetaData clone = keyspace.cloneWithTableAdded(table);
+            Schema.instance.load(table);
+            Schema.instance.setKeyspaceDefinition(clone);
         }
 
         /**
@@ -445,8 +473,7 @@ public class CQLSSTableWriter implements Closeable
          * added in SSTable sorted order (and an exception will be thrown if that
          * is not the case during insertion). The SSTable sorted order means that
          * rows are added such that their partition key respect the partitioner
-         * order and for a given partition, that the rows respect the clustering
-         * columns order.
+         * order.
          * <p>
          * You should thus only use this option is you know that you can provide
          * the rows in order, which is rarely the case. If you can provide the
@@ -513,6 +540,8 @@ public class CQLSSTableWriter implements Closeable
      */
     private static class BufferedWriter extends SSTableSimpleUnsortedWriter
     {
+        private boolean needsSync = false;
+
         public BufferedWriter(File directory, CFMetaData metadata, IPartitioner partitioner, long bufferSizeInMB)
         {
             super(directory, metadata, partitioner, bufferSizeInMB);
@@ -539,6 +568,33 @@ public class CQLSSTableWriter implements Closeable
                     }
                 }
             };
+        }
+
+        @Override
+        protected void replaceColumnFamily() throws IOException
+        {
+            needsSync = true;
+        }
+
+        /**
+         * If we have marked that the column family is being replaced, when we start the next row,
+         * we should sync out the previous partition and create a new row based on the current value.
+         */
+        @Override
+        boolean shouldStartNewRow() throws IOException
+        {
+            if (needsSync)
+            {
+                needsSync = false;
+                super.sync();
+                return true;
+            }
+            return super.shouldStartNewRow();
+        }
+
+        protected void addColumn(Cell cell) throws IOException
+        {
+            throw new UnsupportedOperationException();
         }
 
         static class SyncException extends RuntimeException

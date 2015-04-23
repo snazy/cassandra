@@ -76,18 +76,18 @@ public class CachingOptions
             {
                 if (!(value.equals("ALL") || value.equals("NONE")))
                 {
-                    throw new ConfigurationException("'keys' can only have values 'ALL' or 'NONE'");
+                    throw new ConfigurationException("'keys' can only have values 'ALL' or 'NONE', but was '" + value + "'");
                 }
             }
             else if (entry.getKey().equals("rows_per_partition"))
             {
                 if (!(value.equals("ALL") || value.equals("NONE") || StringUtils.isNumeric(value)))
                 {
-                    throw new ConfigurationException("'rows_per_partition' can only have values 'ALL', 'NONE' or be numeric.");
+                    throw new ConfigurationException("'rows_per_partition' can only have values 'ALL', 'NONE' or be numeric, but was '" + value + "'.");
                 }
             }
             else
-                throw new ConfigurationException("Only supported CachingOptions parameters are 'keys' and 'rows_per_partition'");
+                throw new ConfigurationException("Only supported CachingOptions parameters are 'keys' and 'rows_per_partition', but was '" + entry.getKey() + "'");
         }
     }
 
@@ -188,7 +188,7 @@ public class CachingOptions
 
         public boolean isEnabled()
         {
-            return type.equals(Type.ALL);
+            return type == Type.ALL;
         }
 
         @Override
@@ -223,7 +223,7 @@ public class CachingOptions
 
         public RowCache(Type type)
         {
-            this(type, type.equals(Type.ALL) ? Integer.MAX_VALUE : 0);
+            this(type, (type == Type.ALL) ? Integer.MAX_VALUE : 0);
         }
         public RowCache(Type type, int rowsToCache)
         {
@@ -246,17 +246,17 @@ public class CachingOptions
         }
         public boolean isEnabled()
         {
-            return type.equals(Type.ALL) || type.equals(Type.HEAD);
+            return (type == Type.ALL) || (type == Type.HEAD);
         }
         public boolean cacheFullPartitions()
         {
-            return type.equals(Type.ALL);
+            return type == Type.ALL;
         }
         @Override
         public String toString()
         {
-            if (type.equals(Type.ALL)) return "ALL";
-            if (type.equals(Type.NONE)) return "NONE";
+            if (type == Type.ALL) return "ALL";
+            if (type == Type.NONE) return "NONE";
             return String.valueOf(rowsToCache);
         }
 

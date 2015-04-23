@@ -34,22 +34,22 @@ final class AggregateFunctionSelector extends AbstractFunctionSelector<Aggregate
         return true;
     }
 
-    public void addInput(ResultSetBuilder rs) throws InvalidRequestException
+    public void addInput(int protocolVersion, ResultSetBuilder rs) throws InvalidRequestException
     {
         // Aggregation of aggregation is not supported
         for (int i = 0, m = argSelectors.size(); i < m; i++)
         {
             Selector s = argSelectors.get(i);
-            s.addInput(rs);
-            args.set(i, s.getOutput());
+            s.addInput(protocolVersion, rs);
+            args.set(i, s.getOutput(protocolVersion));
             s.reset();
         }
-        this.aggregate.addInput(args);
+        this.aggregate.addInput(protocolVersion, args);
     }
 
-    public ByteBuffer getOutput() throws InvalidRequestException
+    public ByteBuffer getOutput(int protocolVersion) throws InvalidRequestException
     {
-        return aggregate.compute();
+        return aggregate.compute(protocolVersion);
     }
 
     public void reset()
@@ -57,7 +57,7 @@ final class AggregateFunctionSelector extends AbstractFunctionSelector<Aggregate
         aggregate.reset();
     }
 
-    AggregateFunctionSelector(Function fun, List<Selector> argSelectors)
+    AggregateFunctionSelector(Function fun, List<Selector> argSelectors) throws InvalidRequestException
     {
         super((AggregateFunction) fun, argSelectors);
 

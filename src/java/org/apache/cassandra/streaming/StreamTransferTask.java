@@ -22,10 +22,15 @@ import java.util.concurrent.*;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import com.google.common.base.Throwables;
+import com.google.common.collect.Iterables;
+
 import org.apache.cassandra.concurrent.NamedThreadFactory;
 import org.apache.cassandra.io.sstable.format.SSTableReader;
 import org.apache.cassandra.streaming.messages.OutgoingFileMessage;
 import org.apache.cassandra.utils.Pair;
+import org.apache.cassandra.utils.concurrent.Ref;
+import org.apache.cassandra.utils.concurrent.RefCounted;
 
 /**
  * StreamTransferTask sends sections of SSTable files in certain ColumnFamily.
@@ -47,10 +52,10 @@ public class StreamTransferTask extends StreamTask
         super(session, cfId);
     }
 
-    public synchronized void addTransferFile(SSTableReader sstable, long estimatedKeys, List<Pair<Long, Long>> sections, long repairedAt)
+    public synchronized void addTransferFile(SSTableReader sstable, Ref ref, long estimatedKeys, List<Pair<Long, Long>> sections, long repairedAt)
     {
         assert sstable != null && cfId.equals(sstable.metadata.cfId);
-        OutgoingFileMessage message = new OutgoingFileMessage(sstable, sequenceNumber.getAndIncrement(), estimatedKeys, sections, repairedAt, session.keepSSTableLevel());
+        OutgoingFileMessage message = new OutgoingFileMessage(sstable, ref, sequenceNumber.getAndIncrement(), estimatedKeys, sections, repairedAt, session.keepSSTableLevel());
         files.put(message.header.sequenceNumber, message);
         totalSize += message.header.size();
     }
@@ -71,7 +76,7 @@ public class StreamTransferTask extends StreamTask
 
             OutgoingFileMessage file = files.remove(sequenceNumber);
             if (file != null)
-                file.sstable.releaseReference();
+                file.ref.release();
 
             signalComplete = files.isEmpty();
         }
@@ -91,8 +96,22 @@ public class StreamTransferTask extends StreamTask
             future.cancel(false);
         timeoutTasks.clear();
 
+        Throwable fail = null;
         for (OutgoingFileMessage file : files.values())
-            file.sstable.releaseReference();
+        {
+            try
+            {
+                file.ref.release();
+            }
+            catch (Throwable t)
+            {
+                if (fail == null) fail = t;
+                else fail.addSuppressed(t);
+            }
+        }
+        files.clear();
+        if (fail != null)
+            Throwables.propagate(fail);
     }
 
     public synchronized int getTotalNumberOfFiles()
