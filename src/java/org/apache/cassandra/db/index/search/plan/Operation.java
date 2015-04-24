@@ -408,11 +408,8 @@ public class Operation extends AbstractIterator<Token> implements SkippableItera
                                                                                  currentMemtable.search(primaryExpression),
                                                                                  primaryIndexes);
                 unions.add(primaryIndex);
+                updateRangeStart(primaryIndex);
                 tokenCount += primaryIndex.getCount();
-
-                if (rangeStart == null || rangeStart.compareTo(primaryIndex.getMinimum()) < 0)
-                    rangeStart = primaryIndex.getMinimum();
-
                 continue;
             }
 
@@ -432,14 +429,8 @@ public class Operation extends AbstractIterator<Token> implements SkippableItera
             SkippableIterator<Long, Token> index = new SuffixIterator(e, currentMemtable.search(e), readers);
 
             unions.add(index);
+            updateRangeStart(index);
             tokenCount += index.getCount();
-
-            Long currentMin = index.getMinimum();
-            if (currentMin == null)
-                continue;
-
-            if (rangeStart == null || rangeStart.compareTo(index.getMinimum()) < 0)
-                rangeStart = index.getMinimum();
         }
 
         // OR case doesn't require merging between expressions,
@@ -457,6 +448,16 @@ public class Operation extends AbstractIterator<Token> implements SkippableItera
         });
 
         return unions;
+    }
+
+    private void updateRangeStart(SkippableIterator<Long, Token> index)
+    {
+        Long currentMin = index.getMinimum();
+        if (currentMin == null)
+            return;
+
+        if (rangeStart == null || rangeStart.compareTo(currentMin) < 0)
+            rangeStart = currentMin;
     }
 
     private static AbstractAnalyzer getAnalyzer(Pair<ColumnDefinition, IndexMode> column)
@@ -569,7 +570,10 @@ public class Operation extends AbstractIterator<Token> implements SkippableItera
 
     @Override
     public void close() throws IOException
-    {}
+    {
+        for (SkippableIterator<Long, Token> index : indexes)
+            FileUtils.closeQuietly(index);
+    }
 
     private static class OperationJoin extends AbstractIterator<Token> implements SkippableIterator<Long, Token>
     {
@@ -692,6 +696,9 @@ public class Operation extends AbstractIterator<Token> implements SkippableItera
 
         @Override
         public void close() throws IOException
-        {}
+        {
+            FileUtils.closeQuietly(a);
+            FileUtils.closeQuietly(b);
+        }
     }
 }

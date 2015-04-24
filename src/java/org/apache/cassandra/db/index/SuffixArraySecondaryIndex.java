@@ -366,6 +366,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex
     public void removeIndex(ByteBuffer columnName, long truncateUntil)
     {
         columnDefComponents.remove(columnName);
+        indexedColumns.remove(columnName);
         dropIndexData(columnName, truncateUntil);
     }
 
@@ -808,12 +809,15 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex
     /** a pared-down version of DataTracker and DT.View. need one for each index of each column family */
     private class SADataTracker
     {
+        private final ByteBuffer columnName;
+
         // by using using DT.View, we do get some baggage fields (memtable, compacting, and so on)
         // but always pass in empty list for those fields, we should be ok
         private final AtomicReference<SAView> view = new AtomicReference<>();
 
         public SADataTracker(ByteBuffer name, Set<SSTableReader> ssTables)
         {
+            columnName = name;
             view.set(new SAView(name, ssTables));
         }
 
@@ -835,16 +839,31 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex
 
             for (SSTableReader sstable : oldSSTables)
             {
-                CopyOnWriteArrayList<SSTableIndex> indexes = currentIndexes.remove(sstable.descriptor);
+                CopyOnWriteArrayList<SSTableIndex> indexes = currentIndexes.get(sstable.descriptor);
                 if (indexes == null)
                     continue;
 
-                for (SSTableIndex index : indexes)
+                int removalIndex = -1;
+                // iteration on index instead of objects is deliberate
+                // because SSTableIndex.equals only checks descriptor and doesn't check the name
+                // that simplifies logical operation merging, so we can't do indexes.remove(index).
+                for (int i = 0; i < indexes.size(); i++)
                 {
+                    SSTableIndex index = indexes.get(i);
+
+                    if (!index.isFor(columnName))
+                        continue;
+
                     // reference count has already been decremented by marking as obsolete
+                    // so we only need to release index if it wasn't previously marked as obsolete
                     if (!index.isObsolete())
                         index.release();
+
+                    removalIndex = i;
                 }
+
+                if (removalIndex > 0)
+                    indexes.remove(removalIndex);
             }
         }
 
