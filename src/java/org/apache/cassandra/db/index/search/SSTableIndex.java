@@ -74,6 +74,11 @@ public class SSTableIndex
         return sstable;
     }
 
+    public boolean isFor(ByteBuffer columnName)
+    {
+        return sstable.metadata.comparator.compare(column, columnName) == 0;
+    }
+
     public boolean reference()
     {
         while (true)

@@ -10,6 +10,7 @@ import org.apache.cassandra.db.index.utils.LazyMergeSortIterator.OperationType;
 import org.apache.cassandra.db.marshal.AbstractType;
 import org.apache.cassandra.dht.IPartitioner;
 import org.apache.cassandra.dht.LongToken;
+import org.apache.cassandra.io.util.FileUtils;
 import org.apache.cassandra.thrift.IndexExpression;
 
 public class QueryPlan
@@ -166,23 +167,30 @@ public class QueryPlan
         final int maxRows = Math.min(filter.maxColumns(), Math.min(MAX_ROWS, filter.maxRows()));
         final List<Row> rows = new ArrayList<>(maxRows);
 
-        operationTree.skipTo(((LongToken) range.keyRange().left.getToken()).token);
-
-        intersection:
-        while (operationTree.hasNext())
+        try
         {
-            for (DecoratedKey key : operationTree.next())
+            operationTree.skipTo(((LongToken) range.keyRange().left.getToken()).token);
+
+            intersection:
+            while (operationTree.hasNext())
             {
-                if ((!lastKey.isMinimum(partitioner) && lastKey.compareTo(key) < 0) || rows.size() >= maxRows)
-                    break intersection;
+                for (DecoratedKey key : operationTree.next())
+                {
+                    if ((!lastKey.isMinimum(partitioner) && lastKey.compareTo(key) < 0) || rows.size() >= maxRows)
+                        break intersection;
 
-                if (!range.contains(key))
-                    continue;
+                    if (!range.contains(key))
+                        continue;
 
-                Row row = getRow(key, filter);
-                if (row != null && operationTree.satisfiedBy(row))
-                    rows.add(row);
+                    Row row = getRow(key, filter);
+                    if (row != null && operationTree.satisfiedBy(row))
+                        rows.add(row);
+                }
             }
+        }
+        finally
+        {
+            FileUtils.closeQuietly(operationTree);
         }
 
         return rows;
