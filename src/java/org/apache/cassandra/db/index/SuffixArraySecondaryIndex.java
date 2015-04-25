@@ -42,7 +42,6 @@ import org.apache.cassandra.thrift.IndexExpression;
 import org.apache.cassandra.utils.*;
 
 import com.google.common.base.Function;
-import com.google.common.base.Predicate;
 import com.google.common.collect.*;
 import com.google.common.util.concurrent.Futures;
 import org.cliffc.high_scale_lib.NonBlockingHashMap;
@@ -98,8 +97,6 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex
 
     private final ConcurrentMap<ByteBuffer, SADataTracker> intervalTrees;
 
-    private final ConcurrentMap<Descriptor, CopyOnWriteArrayList<SSTableIndex>> currentIndexes;
-
     private final AtomicReference<IndexMemtable> globalMemtable = new AtomicReference<>(new IndexMemtable(this));
 
     private AbstractType<?> keyComparator;
@@ -109,7 +106,6 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex
     {
         columnDefComponents = HashBiMap.create();
         intervalTrees = new ConcurrentHashMap<>();
-        currentIndexes = new ConcurrentHashMap<>();
         indexedColumns = new NonBlockingHashMap<>();
     }
 
@@ -836,35 +832,6 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex
                     break;
             }
             while (!view.compareAndSet(currentView, newView));
-
-            for (SSTableReader sstable : oldSSTables)
-            {
-                CopyOnWriteArrayList<SSTableIndex> indexes = currentIndexes.get(sstable.descriptor);
-                if (indexes == null)
-                    continue;
-
-                int removalIndex = -1;
-                // iteration on index instead of objects is deliberate
-                // because SSTableIndex.equals only checks descriptor and doesn't check the name
-                // that simplifies logical operation merging, so we can't do indexes.remove(index).
-                for (int i = 0; i < indexes.size(); i++)
-                {
-                    SSTableIndex index = indexes.get(i);
-
-                    if (!index.isFor(columnName))
-                        continue;
-
-                    // reference count has already been decremented by marking as obsolete
-                    // so we only need to release index if it wasn't previously marked as obsolete
-                    if (!index.isObsolete())
-                        index.release();
-
-                    removalIndex = i;
-                }
-
-                if (removalIndex > 0)
-                    indexes.remove(removalIndex);
-            }
         }
 
         public void dropData(long truncateUntil)
@@ -910,25 +877,34 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex
 
             String name = baseCfs.getComparator().getString(col);
 
-            Predicate<Interval<ByteBuffer, SSTableIndex>> predicate = new Predicate<Interval<ByteBuffer, SSTableIndex>>()
-            {
-                public boolean apply(Interval<ByteBuffer, SSTableIndex> interval)
-                {
-                    return !toRemove.contains(interval.data.getSSTable());
-                }
-            };
-
             List<Interval<ByteBuffer, SSTableIndex>> termIntervals = new ArrayList<>();
             List<Interval<ByteBuffer, SSTableIndex>> keyIntervals = new ArrayList<>();
 
-            // reuse entries from the previously constructed view to avoid reloading from disk or keep (yet another) cache of the sstreader -> intervals
+            // reuse entries from the previously constructed view to avoid reloading from disk or keep (yet another) cache of the sstable -> intervals
             if (previous != null)
             {
-                for (Interval<ByteBuffer, SSTableIndex> interval : Iterables.filter(previous.keyIntervalTree, predicate))
-                    keyIntervals.add(interval);
-
-                for (Interval<ByteBuffer, SSTableIndex> interval : Iterables.filter(previous.termIntervalTree, predicate))
+                for (Interval<ByteBuffer, SSTableIndex> interval : previous.keyIntervalTree)
                 {
+                    SSTableReader sstable = interval.data.getSSTable();
+                    if (toRemove.contains(sstable) || sstable.isMarkedCompacted())
+                    {
+                        // there is no need to release obsolete indexes as
+                        // such indexes have already been released/scheduled for deletion
+                        if (!interval.data.isObsolete())
+                            interval.data.release();
+
+                        continue;
+                    }
+
+                    keyIntervals.add(interval);
+                }
+
+                for (Interval<ByteBuffer, SSTableIndex> interval : previous.termIntervalTree)
+                {
+                    SSTableReader sstable = interval.data.getSSTable();
+                    if (toRemove.contains(sstable) || sstable.isMarkedCompacted())
+                        continue;
+
                     termIntervals.add(interval);
                     updateRange(interval.data);
                 }
@@ -936,6 +912,9 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex
 
             for (SSTableReader sstable : toAdd)
             {
+                if (sstable.isMarkedCompacted())
+                    continue;
+
                 String columnName = getColumnDefinition(col).getIndexName();
                 File indexFile = new File(sstable.descriptor.filenameFor(String.format(FILE_NAME_FORMAT, columnName)));
                 if (!indexFile.exists())
@@ -963,17 +942,6 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex
 
                     continue;
                 }
-
-                CopyOnWriteArrayList<SSTableIndex> openIndexes = currentIndexes.get(sstable.descriptor);
-                if (openIndexes == null)
-                {
-                    CopyOnWriteArrayList<SSTableIndex> newList = new CopyOnWriteArrayList<>();
-                    openIndexes = currentIndexes.putIfAbsent(sstable.descriptor, newList);
-                    if (openIndexes == null)
-                        openIndexes = newList;
-                }
-
-                openIndexes.add(index);
 
                 termIntervals.add(Interval.create(index.minSuffix(), index.maxSuffix(), index));
                 keyIntervals.add(Interval.create(index.minKey(), index.maxKey(), index));

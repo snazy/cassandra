@@ -192,10 +192,9 @@ public class Operation extends AbstractIterator<Token> implements SkippableItera
 
         boolean result = false;
 
-        for (int i = 0; i < analyzed.size(); i++)
+        int idx = 0;
+        for (Expression expression : analyzed)
         {
-            Expression expression = analyzed.get(i);
-
             Column column = row.cf.getColumn(expression.name);
             if (column == null)
             {
@@ -212,7 +211,7 @@ public class Operation extends AbstractIterator<Token> implements SkippableItera
 
             boolean current = expression.contains(column.value());
 
-            if (i == 0)
+            if (idx++ == 0)
             {
                 result = current;
                 continue;
