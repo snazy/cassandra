@@ -331,22 +331,22 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex
 
     public void candidatesForIndexing(Collection<SSTableReader> initialSstables)
     {
-        for (SSTableReader sstable : initialSstables)
-        {
-            SortedSet<ByteBuffer> missingIndexes = new TreeSet<>();
-            for (ColumnDefinition def : getColumnDefs())
-            {
-                File indexFile = new File(sstable.descriptor.filenameFor(String.format(FILE_NAME_FORMAT, def.getIndexName())));
-                if (!indexFile.exists())
-                    missingIndexes.add(def.name);
-            }
-
-            if (!missingIndexes.isEmpty())
-            {
-                logger.info("submitting rebuild of missing indexes, count = {}, for sttable {}", missingIndexes.size(), sstable);
-                CompactionManager.instance.submitIndexBuild(new IndexBuilder(sstable, missingIndexes));
-            }
-        }
+//        for (SSTableReader sstable : initialSstables)
+//        {
+//            SortedSet<ByteBuffer> missingIndexes = new TreeSet<>();
+//            for (ColumnDefinition def : getColumnDefs())
+//            {
+//                File indexFile = new File(sstable.descriptor.filenameFor(String.format(FILE_NAME_FORMAT, def.getIndexName())));
+//                if (!indexFile.exists())
+//                    missingIndexes.add(def.name);
+//            }
+//
+//            if (!missingIndexes.isEmpty())
+//            {
+//                logger.info("submitting rebuild of missing indexes, count = {}, for sttable {}", missingIndexes.size(), sstable);
+//                CompactionManager.instance.submitIndexBuild(new IndexBuilder(sstable, missingIndexes));
+//            }
+//        }
     }
 
     public void delete(DecoratedKey key)
