@@ -661,7 +661,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex
 
                     if (token.remaining() >= OnDiskSABuilder.MAX_TERM_SIZE)
                     {
-                        logger.error("Rejecting value (size {}, maximum {} bytes) for column {} (analyzed {}) at {} SSTable.",
+                        logger.info("Rejecting value (size {}, maximum {} bytes) for column {} (analyzed {}) at {} SSTable.",
                                      term.remaining(),
                                      OnDiskSABuilder.MAX_TERM_SIZE,
                                      baseCfs.getComparator().getString(column.name),
@@ -672,10 +672,9 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex
 
                     if (!TypeUtil.isValid(token, column.getValidator()))
                     {
-
                         if ((token = TypeUtil.tryUpcast(token, column.getValidator())) == null)
                         {
-                            logger.error("({}) Failed to add {} to index for key: {}, value size was {} bytes, validator is {}.",
+                            logger.info("({}) Failed to add {} to index for key: {}, value size was {} bytes, validator is {}.",
                                          outputFile,
                                          baseCfs.getComparator().getString(column.name),
                                          keyComparator.getString(key.key),
@@ -788,7 +787,7 @@ public class SuffixArraySecondaryIndex extends PerRowSecondaryIndex
             }
             catch (Exception e)
             {
-                logger.info("error occurred while searching suffix array indexes; ignoring", e);
+                logger.warn("error occurred while searching suffix array indexes; ignoring", e);
                 return Collections.emptyList();
             }
         }
