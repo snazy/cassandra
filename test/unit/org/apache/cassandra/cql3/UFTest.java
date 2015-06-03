@@ -25,6 +25,7 @@ import org.junit.Ignore;
 import org.junit.Test;
 
 import com.datastax.driver.core.*;
+import com.datastax.driver.core.exceptions.InvalidQueryException;
 import org.apache.cassandra.cql3.functions.FunctionName;
 import org.apache.cassandra.cql3.functions.Functions;
 import org.apache.cassandra.cql3.functions.UDFunction;
@@ -2139,7 +2140,6 @@ public class UFTest extends CQLTester
     }
 
     @Test
-    @Ignore("implement this unit test when Java Driver https://datastax-oss.atlassian.net/browse/JAVA-800 is fixed.")
     public void testFunctionExecutionExceptionNet() throws Throwable
     {
         createTable("CREATE TABLE %s (key int primary key, dval double)");
@@ -2165,7 +2165,7 @@ public class UFTest extends CQLTester
                 // Java driver neither throws FunctionExecutionException nor does it set the exception code correctly
                 Assert.assertTrue(version >= Server.VERSION_4);
             }
-            catch (InvalidRequestException e)
+            catch (InvalidQueryException e)
             {
                 Assert.assertTrue(version < Server.VERSION_4);
             }
