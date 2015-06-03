@@ -2139,7 +2139,7 @@ public class UFTest extends CQLTester
     }
 
     @Test
-    @Ignore("implement this unit test when Java Driver can handle new ExceptionCode.")
+    @Ignore("implement this unit test when Java Driver https://datastax-oss.atlassian.net/browse/JAVA-800 is fixed.")
     public void testFunctionExecutionExceptionNet() throws Throwable
     {
         createTable("CREATE TABLE %s (key int primary key, dval double)");
@@ -2150,13 +2150,25 @@ public class UFTest extends CQLTester
                                       "RETURNS NULL ON NULL INPUT " +
                                       "RETURNS double " +
                                       "LANGUAGE JAVA\n" +
-                                      "AS 'throw new RuntimeException()';");
+                                      "AS 'throw new RuntimeException();'");
 
         for (int version = Server.VERSION_2; version <= maxProtocolVersion; version++)
         {
-            // TODO replace with appropiate code
-            assertRowsNet(version,
-                          executeNet(version, "SELECT " + fName + "(dval) FROM %s WHERE key = 1"));
+            try
+            {
+                assertRowsNet(version,
+                              executeNet(version, "SELECT " + fName + "(dval) FROM %s WHERE key = 1"));
+                Assert.fail();
+            }
+            catch (com.datastax.driver.core.exceptions.FunctionExecutionException fee)
+            {
+                // Java driver neither throws FunctionExecutionException nor does it set the exception code correctly
+                Assert.assertTrue(version >= Server.VERSION_4);
+            }
+            catch (InvalidRequestException e)
+            {
+                Assert.assertTrue(version < Server.VERSION_4);
+            }
         }
     }
 
