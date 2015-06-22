@@ -269,12 +269,13 @@ public class BigTableWriter extends SSTableWriter
         assert boundary.indexLength > 0 && boundary.dataLength > 0;
         Descriptor link = makeTmpLinks();
         // open the reader early, giving it a FINAL descriptor type so that it is indistinguishable for other consumers
-        SegmentedFile ifile = iwriter.builder.complete(link.filenameFor(Component.PRIMARY_INDEX), boundary.indexLength);
-        SegmentedFile dfile = dbuilder.complete(link.filenameFor(Component.DATA), boundary.dataLength);
+        IndexSummary indexSummary = iwriter.summary.build(partitioner, boundary);
+        SegmentedFile ifile = iwriter.builder.buildIndex(link, indexSummary, boundary);
+        SegmentedFile dfile = dbuilder.buildData(link, stats, boundary);
         SSTableReader sstable = SSTableReader.internalOpen(descriptor.asType(Descriptor.Type.FINAL),
                                                            components, metadata,
                                                            partitioner, ifile,
-                                                           dfile, iwriter.summary.build(partitioner, boundary),
+                                                           dfile, indexSummary,
                                                            iwriter.bf.sharedCopy(), maxDataAge, stats, SSTableReader.OpenReason.EARLY, header);
 
         // now it's open, find the ACTUAL last readable key (i.e. for which the data file has also been flushed)
@@ -299,15 +300,16 @@ public class BigTableWriter extends SSTableWriter
 
         StatsMetadata stats = statsMetadata();
         // finalize in-memory state for the reader
-        SegmentedFile ifile = iwriter.builder.complete(desc.filenameFor(Component.PRIMARY_INDEX));
-        SegmentedFile dfile = dbuilder.complete(desc.filenameFor(Component.DATA));
+        IndexSummary indexSummary = iwriter.summary.build(partitioner);
+        SegmentedFile ifile = iwriter.builder.buildIndex(desc, indexSummary);
+        SegmentedFile dfile = dbuilder.buildData(desc, stats);
         SSTableReader sstable = SSTableReader.internalOpen(desc.asType(Descriptor.Type.FINAL),
                                                            components,
                                                            this.metadata,
                                                            partitioner,
                                                            ifile,
                                                            dfile,
-                                                           iwriter.summary.build(partitioner),
+                                                           indexSummary,
                                                            iwriter.bf.sharedCopy(),
                                                            maxDataAge,
                                                            stats,

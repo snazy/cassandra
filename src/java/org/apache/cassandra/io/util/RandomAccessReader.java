@@ -27,7 +27,7 @@ import org.apache.cassandra.utils.memory.BufferPool;
 
 public class RandomAccessReader extends AbstractDataInput implements FileDataInput
 {
-    public static final int DEFAULT_BUFFER_SIZE = 64 * 1024;
+    public static final int DEFAULT_BUFFER_SIZE = 4 * 1024;
 
     // the IO channel to the file, we do not own a reference to this due to
     // performance reasons (CASSANDRA-9379) so it's up to the owner of the RAR to
@@ -103,12 +103,7 @@ public class RandomAccessReader extends AbstractDataInput implements FileDataInp
 
     public static RandomAccessReader open(ChannelProxy channel)
     {
-        return open(channel, -1L);
-    }
-
-    public static RandomAccessReader open(ChannelProxy channel, long overrideSize)
-    {
-        return open(channel, DEFAULT_BUFFER_SIZE, overrideSize);
+        return open(channel, DEFAULT_BUFFER_SIZE, -1L);
     }
 
     public static RandomAccessReader open(ChannelProxy channel, int bufferSize, long overrideSize)
