@@ -224,17 +224,17 @@ public abstract class SegmentedFile extends SharedCloseableImpl
         private int bufferSize(Descriptor desc, IndexSummary indexSummary)
         {
             File file = new File(desc.filenameFor(Component.PRIMARY_INDEX));
-            return roundBufferSize(file.length() / indexSummary.size());
+            return roundBufferSize(file.length() / indexSummary.size() * 4);
         }
 
-        private int roundBufferSize(long lsize)
+        /** Round up to the next multiple of 4k but no more than 64k */
+        static int roundBufferSize(long size)
         {
-            int isize = Ints.saturatedCast(lsize);
+            if (size <= 0)
+                return 4096;
 
-            return Math.min(4096,
-                            Integer.bitCount(isize) == 1
-                            ? isize
-                            : 1 << (Integer.highestOneBit(isize) + 1));
+            size = (size + 4095) & ~4095;
+            return (int)Math.min(size, 1 << 16);
         }
 
         public void serializeBounds(DataOutput out) throws IOException
