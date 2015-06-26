@@ -186,7 +186,7 @@ public abstract class SegmentedFile extends SharedCloseableImpl
             ChannelProxy channelCopy = getChannel(path);
             try
             {
-                return complete(channelCopy, overrideLength);
+                return complete(channelCopy, bufferSize, overrideLength);
             }
             catch (Throwable t)
             {

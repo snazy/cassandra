@@ -61,7 +61,11 @@ public class RandomAccessReader extends AbstractDataInput implements FileDataInp
 
     protected int getBufferSize(int size)
     {
-        return (int)Math.min(fileLength, size);
+        if ((size & ~4095) != size)
+        { // should already be a page size multiple but if that's not case round it up
+            size = (size + 4095) & ~4095;
+        }
+        return size;
     }
 
     protected ByteBuffer allocateBuffer(int size, BufferType bufferType)
@@ -127,7 +131,14 @@ public class RandomAccessReader extends AbstractDataInput implements FileDataInp
 
         long position = bufferOffset;
         long limit = bufferOffset;
-        while (buffer.hasRemaining() && limit < fileLength)
+
+        long pageAligedPos = position & ~4095;
+        // Because the buffer capacity is a multiple of the page size, we read less
+        // the first time and then we should read at page boundaries only,
+        // unless the user seeks elsewhere
+        long upperLimit = Math.min(fileLength, pageAligedPos + buffer.capacity());
+        buffer.limit((int)(upperLimit - position));
+        while (buffer.hasRemaining() && limit < upperLimit)
         {
             int n = channel.read(buffer, position);
             if (n < 0)
