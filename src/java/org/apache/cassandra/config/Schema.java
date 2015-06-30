@@ -36,6 +36,7 @@ import org.apache.cassandra.db.commitlog.CommitLog;
 import org.apache.cassandra.db.compaction.CompactionManager;
 import org.apache.cassandra.db.marshal.AbstractType;
 import org.apache.cassandra.db.marshal.UserType;
+import org.apache.cassandra.db.sequences.Sequence;
 import org.apache.cassandra.io.sstable.Descriptor;
 import org.apache.cassandra.schema.*;
 import org.apache.cassandra.service.MigrationManager;
@@ -595,6 +596,24 @@ public class Schema
     {
         update(uda.name().keyspace, ks -> ks.withSwapped(ks.functions.without(uda.name(), uda.argTypes())));
         MigrationManager.instance.notifyDropAggregate(uda);
+    }
+
+    public void addSequence(Sequence seq)
+    {
+        update(seq.keyspace, ks -> ks.withSwapped(ks.sequences.with(seq)));
+        MigrationManager.instance.notifyCreateSequence(seq);
+    }
+
+    public void updateSequence(Sequence seq)
+    {
+        update(seq.keyspace, ks -> ks.withSwapped(ks.sequences.without(seq.name).with(seq)));
+        MigrationManager.instance.notifyUpdateSequence(seq);
+    }
+
+    public void dropSequence(Sequence seq)
+    {
+        update(seq.keyspace, ks -> ks.withSwapped(ks.sequences.without(seq.name)));
+        MigrationManager.instance.notifyDropSequence(seq);
     }
 
     private KeyspaceMetadata update(String keyspaceName, java.util.function.Function<KeyspaceMetadata, KeyspaceMetadata> transformation)

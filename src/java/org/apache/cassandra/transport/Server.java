@@ -70,7 +70,8 @@ public class Server implements CassandraDaemon.Server
     public static final int VERSION_2 = 2;
     public static final int VERSION_3 = 3;
     public static final int VERSION_4 = 4;
-    public static final int CURRENT_VERSION = VERSION_4;
+    public static final int VERSION_5 = 5;
+    public static final int CURRENT_VERSION = VERSION_5;
 
     private final ConnectionTracker connectionTracker = new ConnectionTracker();
 
@@ -489,6 +490,12 @@ public class Server implements CassandraDaemon.Server
                                                                  ksName, aggregateName, AbstractType.asCQLTypeStringList(argTypes)));
         }
 
+        public void onCreateSequence(String ksName, String sequenceName)
+        {
+            server.connectionTracker.send(new Event.SchemaChange(Event.SchemaChange.Change.CREATED, Event.SchemaChange.Target.AGGREGATE,
+                                                                 ksName, sequenceName));
+        }
+
         public void onUpdateKeyspace(String ksName)
         {
             server.connectionTracker.send(new Event.SchemaChange(Event.SchemaChange.Change.UPDATED, ksName));
@@ -516,6 +523,12 @@ public class Server implements CassandraDaemon.Server
                                                                  ksName, aggregateName, AbstractType.asCQLTypeStringList(argTypes)));
         }
 
+        public void onUpdateSequence(String ksName, String sequenceName)
+        {
+            server.connectionTracker.send(new Event.SchemaChange(Event.SchemaChange.Change.UPDATED, Event.SchemaChange.Target.SEQUENCE,
+                                                                 ksName, sequenceName));
+        }
+
         public void onDropKeyspace(String ksName)
         {
             server.connectionTracker.send(new Event.SchemaChange(Event.SchemaChange.Change.DROPPED, ksName));
@@ -541,6 +554,12 @@ public class Server implements CassandraDaemon.Server
         {
             server.connectionTracker.send(new Event.SchemaChange(Event.SchemaChange.Change.DROPPED, Event.SchemaChange.Target.AGGREGATE,
                                                                  ksName, aggregateName, AbstractType.asCQLTypeStringList(argTypes)));
+        }
+
+        public void onDropSequence(String ksName, String sequenceName)
+        {
+            server.connectionTracker.send(new Event.SchemaChange(Event.SchemaChange.Change.DROPPED, Event.SchemaChange.Target.SEQUENCE,
+                                                                 ksName, sequenceName));
         }
     }
 }

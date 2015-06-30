@@ -44,4 +44,10 @@ public class AuthMigrationListener extends MigrationListener
         DatabaseDescriptor.getAuthorizer()
                           .revokeAllOn(FunctionResource.function(ksName, functionName, argTypes));
     }
+
+    public void onDropSequence(String ksName, String sequenceName)
+    {
+        DatabaseDescriptor.getAuthorizer()
+                          .revokeAllOn(SequenceResource.sequence(ksName, sequenceName));
+    }
 }

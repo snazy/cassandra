@@ -40,9 +40,11 @@ options {
     import org.apache.cassandra.auth.*;
     import org.apache.cassandra.cql3.*;
     import org.apache.cassandra.cql3.statements.*;
+    import org.apache.cassandra.cql3.sequences.*;
     import org.apache.cassandra.cql3.selection.*;
     import org.apache.cassandra.cql3.functions.*;
     import org.apache.cassandra.db.marshal.CollectionType;
+    import org.apache.cassandra.db.ConsistencyLevel;
     import org.apache.cassandra.exceptions.ConfigurationException;
     import org.apache.cassandra.exceptions.InvalidRequestException;
     import org.apache.cassandra.exceptions.SyntaxException;
@@ -270,6 +272,9 @@ cqlStatement returns [ParsedStatement stmt]
     | st35=listRolesStatement          { $stmt = st35; }
     | st36=grantRoleStatement          { $stmt = st36; }
     | st37=revokeRoleStatement         { $stmt = st37; }
+    | st38=createSequenceStatement     { $stmt = st38; }
+    | st39=alterSequenceStatement      { $stmt = st39; }
+    | st40=dropSequenceStatement       { $stmt = st40; }
     ;
 
 /*
@@ -326,6 +331,7 @@ unaliasedSelector returns [Selectable.Raw s]
     :  ( c=cident                                  { tmp = c; }
        | K_WRITETIME '(' c=cident ')'              { tmp = new Selectable.WritetimeOrTTL.Raw(c, true); }
        | K_TTL       '(' c=cident ')'              { tmp = new Selectable.WritetimeOrTTL.Raw(c, false); }
+       | K_NEXTVAL   '(' seq=sequenceName ')'      { tmp = new Selectable.Nextval.Raw(seq); }
        | f=functionName args=selectionFunctionArgs { tmp = new Selectable.WithFunction.Raw(f, args); }
        ) ( '.' fi=cident { tmp = new Selectable.WithFieldSelection.Raw(tmp, fi); } )* { $s = tmp; }
     ;
@@ -637,6 +643,52 @@ dropFunctionStatement returns [DropFunctionStatement expr]
       { $expr = new DropFunctionStatement(fn, argsTypes, argsPresent, ifExists); }
     ;
 
+createSequenceStatement returns [CreateSequenceStatement expr]
+    @init {
+        boolean ifNotExists = false;
+    }
+    : K_CREATE K_SEQUENCE
+      (K_IF K_NOT K_EXISTS { ifNotExists = true; } )?
+      sn=sequenceName
+      (K_INCREMENT (K_BY)? incrBy=integerConstant)?
+      (K_MINVALUE minVal=integerConstant | K_NO K_MINVALUE)?
+      (K_MAXVALUE maxVal=integerConstant | K_NO K_MAXVALUE)?
+      (K_START (K_WITH)? start=integerConstant)?
+      (K_CACHE cache=integerConstant)?
+      (K_CACHE K_LOCAL cacheLocal=integerConstant)?
+      (K_SERIAL K_CONSISTENCY K_LEVEL clSerial=serial_consistency_level )?
+      (K_CONSISTENCY K_LEVEL cl=nonserial_consistency_level)?
+      { $expr = new CreateSequenceStatement(sn, incrBy, minVal, maxVal, start, cache, cacheLocal, clSerial, cl, ifNotExists); }
+    ;
+
+alterSequenceStatement returns [AlterSequenceStatement expr]
+    @init {
+        boolean ifExists = false;
+    }
+    : K_ALTER K_SEQUENCE
+      (K_IF K_EXISTS { ifExists = true; } )?
+      sn=sequenceName
+      (K_INCREMENT (K_BY)? incrBy=integerConstant)?
+      (K_MINVALUE minVal=integerConstant | K_NO K_MINVALUE)?
+      (K_MAXVALUE maxVal=integerConstant | K_NO K_MAXVALUE)?
+      (K_CACHE cache=integerConstant)?
+      (K_CACHE K_LOCAL cacheLocal=integerConstant)?
+      (K_SERIAL K_CONSISTENCY K_LEVEL clSerial=serial_consistency_level)?
+      (K_CONSISTENCY K_LEVEL cl=nonserial_consistency_level)?
+      { $expr = new AlterSequenceStatement(sn, incrBy, minVal, maxVal, cache, cacheLocal, clSerial, cl, ifExists); }
+    ;
+
+dropSequenceStatement returns [DropSequenceStatement expr]
+    @init {
+        boolean ifExists = false;
+    }
+    : K_DROP K_SEQUENCE
+      (K_IF K_EXISTS { ifExists = true; } )?
+      sn=sequenceName
+      { $expr = new DropSequenceStatement(sn, ifExists); }
+    ;
+
+
 /**
  * CREATE KEYSPACE [IF NOT EXISTS] <KEYSPACE> WITH attr1 = value1 AND attr2 = value2;
  */
@@ -928,6 +980,7 @@ resource returns [IResource res]
     : d=dataResource { $res = $d.res; }
     | r=roleResource { $res = $r.res; }
     | f=functionResource { $res = $f.res; }
+    | s=sequenceResource { $res = $f.res; }
     ;
 
 dataResource returns [DataResource res]
@@ -959,6 +1012,13 @@ functionResource returns [FunctionResource res]
         ')'
       )
       { $res = FunctionResource.functionFromCql($fn.s.keyspace, $fn.s.name, argsTypes); }
+    ;
+
+sequenceResource returns [SequenceResource res]
+    : K_ALL K_SEQUENCES { $res = SequenceResource.root(); }
+    | K_ALL K_SEQUENCES K_IN K_KEYSPACE ks = keyspaceName { $res = SequenceResource.keyspace($ks.id); }
+    | K_SEQUENCE sn=sequenceName
+      { $res = SequenceResource.sequenceFromCql($sn.s.keyspace, $sn.s.name); }
     ;
 
 /**
@@ -1179,6 +1239,14 @@ roleName[RoleName name]
     | QMARK {addRecognitionError("Bind variables cannot be used for role names");}
     ;
 
+integerConstant returns [Constants.Literal constant]
+    : t=INTEGER        { $constant = Constants.Literal.integer($t.text); }
+    ;
+
+stringConstant returns [Constants.Literal constant]
+    : t=STRING_LITERAL { $constant = Constants.Literal.string($t.text); }
+    ;
+
 constant returns [Constants.Literal constant]
     : t=STRING_LITERAL { $constant = Constants.Literal.string($t.text); }
     | t=INTEGER        { $constant = Constants.Literal.integer($t.text); }
@@ -1264,6 +1332,17 @@ function returns [Term.Raw t]
 functionArgs returns [List<Term.Raw> args]
     @init{ $args = new ArrayList<Term.Raw>(); }
     : t1=term {args.add(t1); } ( ',' tn=term { args.add(tn); } )*
+    ;
+
+sequenceName returns [SequenceName s]
+    : (ks=keyspaceName '.')? seq=allowedSequenceName   { $s = new SequenceName(ks, seq); }
+    ;
+
+allowedSequenceName returns [String s]
+    : t=IDENT              { $s = $t.text; }
+    | t=QUOTED_NAME        { $s = $t.text; }
+    | k=unreserved_keyword { $s = k; }
+    | QMARK {addRecognitionError("Bind variables cannot be used for sequence names");}
     ;
 
 term returns [Term.Raw term]
@@ -1453,6 +1532,37 @@ comparatorType returns [CQL3Type.Raw t]
       }
     ;
 
+consistency_level returns [ConsistencyLevel cl]
+    : K_ANY             { $cl = ConsistencyLevel.ANY; }
+    | K_ONE             { $cl = ConsistencyLevel.ONE; }
+    | K_TWO             { $cl = ConsistencyLevel.TWO; }
+    | K_THREE           { $cl = ConsistencyLevel.THREE; }
+    | K_QUORUM          { $cl = ConsistencyLevel.QUORUM; }
+    | K_ALL             { $cl = ConsistencyLevel.ALL; }
+    | K_LOCAL_QUORUM    { $cl = ConsistencyLevel.LOCAL_QUORUM; }
+    | K_EACH_QUORUM     { $cl = ConsistencyLevel.EACH_QUORUM; }
+    | K_SERIAL          { $cl = ConsistencyLevel.SERIAL; }
+    | K_LOCAL_SERIAL    { $cl = ConsistencyLevel.LOCAL_SERIAL; }
+    | K_LOCAL_ONE       { $cl = ConsistencyLevel.LOCAL_ONE; }
+    ;
+
+nonserial_consistency_level returns [ConsistencyLevel cl]
+    : K_ANY             { $cl = ConsistencyLevel.ANY; }
+    | K_ONE             { $cl = ConsistencyLevel.ONE; }
+    | K_TWO             { $cl = ConsistencyLevel.TWO; }
+    | K_THREE           { $cl = ConsistencyLevel.THREE; }
+    | K_QUORUM          { $cl = ConsistencyLevel.QUORUM; }
+    | K_ALL             { $cl = ConsistencyLevel.ALL; }
+    | K_LOCAL_QUORUM    { $cl = ConsistencyLevel.LOCAL_QUORUM; }
+    | K_EACH_QUORUM     { $cl = ConsistencyLevel.EACH_QUORUM; }
+    | K_LOCAL_ONE       { $cl = ConsistencyLevel.LOCAL_ONE; }
+    ;
+
+serial_consistency_level returns [ConsistencyLevel cl]
+    : K_SERIAL          { $cl = ConsistencyLevel.SERIAL; }
+    | K_LOCAL_SERIAL    { $cl = ConsistencyLevel.LOCAL_SERIAL; }
+    ;
+
 native_type returns [CQL3Type t]
     : K_ASCII     { $t = CQL3Type.Native.ASCII; }
     | K_BIGINT    { $t = CQL3Type.Native.BIGINT; }
@@ -1511,7 +1621,7 @@ non_type_ident returns [ColumnIdentifier id]
 
 unreserved_keyword returns [String str]
     : u=unreserved_function_keyword     { $str = u; }
-    | k=(K_TTL | K_COUNT | K_WRITETIME | K_KEY) { $str = $k.text; }
+    | k=(K_TTL | K_COUNT | K_NEXTVAL | K_WRITETIME | K_KEY) { $str = $k.text; }
     ;
 
 unreserved_function_keyword returns [String str]
@@ -1564,6 +1674,29 @@ basic_unreserved_keyword returns [String str]
         | K_JSON
         | K_CALLED
         | K_INPUT
+        | K_SEQUENCE
+        | K_SEQUENCES
+        | K_INCREMENT
+        | K_BY
+        | K_MINVALUE
+        | K_MAXVALUE
+        | K_START
+        | K_WITH
+        | K_NO
+        | K_CACHE
+        | K_LOCAL
+        | K_CONSISTENCY
+        | K_LEVEL
+        | K_ANY
+        | K_ONE
+        | K_TWO
+        | K_THREE
+        | K_QUORUM
+        | K_LOCAL_QUORUM
+        | K_EACH_QUORUM
+        | K_SERIAL
+        | K_LOCAL_SERIAL
+        | K_LOCAL_ONE
         ) { $str = $k.text; }
     ;
 
@@ -1623,6 +1756,29 @@ K_ALLOW:       A L L O W;
 K_FILTERING:   F I L T E R I N G;
 K_IF:          I F;
 K_CONTAINS:    C O N T A I N S;
+K_SEQUENCE:    S E Q U E N C E;
+K_SEQUENCES:   S E Q U E N C E S;
+K_INCREMENT:   I N C R E M E N T;
+K_MINVALUE:    M I N V A L U E;
+K_MAXVALUE:    M A X V A L U E;
+K_START:       S T A R T;
+K_CACHE:       C A C H E;
+K_LOCAL:       L O C A L;
+K_CONSISTENCY: C O N S I S T E N C Y;
+K_LEVEL:       L E V E L;
+K_NO:          N O;
+K_NEXTVAL:     N E X T V A L;
+
+K_ANY:         A N Y;
+K_ONE:         O N E;
+K_TWO:         T W O;
+K_THREE:       T H R E E;
+K_QUORUM:      Q U O R U M;
+K_LOCAL_QUORUM:L O C A L '_' Q U O R U M;
+K_EACH_QUORUM: E A C H '_' Q U O R U M;
+K_SERIAL:      S E R I A L;
+K_LOCAL_SERIAL:L O C A L '_' S E R I A L;
+K_LOCAL_ONE:   L O C A L '_' O N E;
 
 K_GRANT:       G R A N T;
 K_ALL:         A L L;

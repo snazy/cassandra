@@ -55,8 +55,8 @@ public final class SystemDistributedKeyspace
     public static final String NAME = "system_distributed";
 
     public static final String REPAIR_HISTORY = "repair_history";
-
     public static final String PARENT_REPAIR_HISTORY = "parent_repair_history";
+    public static final String SEQ_RESERVATIONS = "seq_reservations";
 
     private static final CFMetaData RepairHistory =
         compile(REPAIR_HISTORY,
@@ -92,6 +92,16 @@ public final class SystemDistributedKeyspace
                      + "successful_ranges set<text>,"
                      + "PRIMARY KEY (parent_id))");
 
+    private static final CFMetaData SeqReservations =
+        compile(SEQ_RESERVATIONS,
+                "Distributed sequence reservation",
+                "CREATE TABLE %s (" +
+                "keyspace_name text," +
+                "sequence_name text," +
+                "next_val bigint," +
+                "exhausted boolean," +
+                "PRIMARY KEY ((keyspace_name, sequence_name)))");
+
     private static CFMetaData compile(String name, String description, String schema)
     {
         return CFMetaData.compile(String.format(schema, name), NAME)
@@ -100,7 +110,7 @@ public final class SystemDistributedKeyspace
 
     public static KeyspaceMetadata metadata()
     {
-        return KeyspaceMetadata.create(NAME, KeyspaceParams.simple(3), Tables.of(RepairHistory, ParentRepairHistory));
+        return KeyspaceMetadata.create(NAME, KeyspaceParams.simple(3), Tables.of(RepairHistory, ParentRepairHistory, SeqReservations));
     }
 
     public static void startParentRepair(UUID parent_id, String keyspaceName, String[] cfnames, Collection<Range<Token>> ranges)

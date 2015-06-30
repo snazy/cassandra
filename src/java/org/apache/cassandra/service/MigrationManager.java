@@ -33,8 +33,10 @@ import org.apache.cassandra.config.CFMetaData;
 import org.apache.cassandra.config.Schema;
 import org.apache.cassandra.cql3.functions.UDAggregate;
 import org.apache.cassandra.cql3.functions.UDFunction;
+import org.apache.cassandra.cql3.sequences.SequenceName;
 import org.apache.cassandra.db.*;
 import org.apache.cassandra.db.marshal.UserType;
+import org.apache.cassandra.db.sequences.Sequence;
 import org.apache.cassandra.exceptions.AlreadyExistsException;
 import org.apache.cassandra.exceptions.ConfigurationException;
 import org.apache.cassandra.gms.*;
@@ -183,6 +185,12 @@ public class MigrationManager
             listener.onCreateAggregate(udf.name().keyspace, udf.name().name, udf.argTypes());
     }
 
+    public void notifyCreateSequence(Sequence seq)
+    {
+        for (MigrationListener listener : listeners)
+            listener.onCreateSequence(seq.keyspace, seq.getNameAsString());
+    }
+
     public void notifyUpdateKeyspace(KeyspaceMetadata ksm)
     {
         for (MigrationListener listener : listeners)
@@ -216,6 +224,12 @@ public class MigrationManager
             listener.onUpdateAggregate(udf.name().keyspace, udf.name().name, udf.argTypes());
     }
 
+    public void notifyUpdateSequence(Sequence seq)
+    {
+        for (MigrationListener listener : listeners)
+            listener.onUpdateSequence(seq.keyspace, seq.getNameAsString());
+    }
+
     public void notifyDropKeyspace(KeyspaceMetadata ksm)
     {
         for (MigrationListener listener : listeners)
@@ -244,6 +258,12 @@ public class MigrationManager
     {
         for (MigrationListener listener : listeners)
             listener.onDropAggregate(udf.name().keyspace, udf.name().name, udf.argTypes());
+    }
+
+    public void notifyDropSequence(Sequence seq)
+    {
+        for (MigrationListener listener : listeners)
+            listener.onDropSequence(seq.keyspace, seq.getNameAsString());
     }
 
     public static void announceNewKeyspace(KeyspaceMetadata ksm) throws ConfigurationException
@@ -306,6 +326,13 @@ public class MigrationManager
         announce(LegacySchemaTables.makeCreateAggregateMutation(ksm, udf, FBUtilities.timestampMicros()), announceLocally);
     }
 
+    public static void announceNewSequence(Sequence seq, boolean announceLocally)
+    {
+        logger.info(String.format("Create sequence '%s'", seq.getNameAsString()));
+        KeyspaceMetadata ksm = Schema.instance.getKSMetaData(seq.keyspace);
+        announce(LegacySchemaTables.makeCreateSequenceMutation(ksm, seq, FBUtilities.timestampMicros()), announceLocally);
+    }
+
     public static void announceKeyspaceUpdate(KeyspaceMetadata ksm) throws ConfigurationException
     {
         announceKeyspaceUpdate(ksm, false);
@@ -348,6 +375,11 @@ public class MigrationManager
         announceNewType(updatedType, announceLocally);
     }
 
+    public static void announceSequenceUpdate(Sequence seq, boolean announceLocally)
+    {
+        announceNewSequence(seq, announceLocally);
+    }
+
     public static void announceKeyspaceDrop(String ksName) throws ConfigurationException
     {
         announceKeyspaceDrop(ksName, false);
@@ -388,6 +420,13 @@ public class MigrationManager
     {
         KeyspaceMetadata ksm = Schema.instance.getKSMetaData(droppedType.keyspace);
         announce(LegacySchemaTables.dropTypeFromSchemaMutation(ksm, droppedType, FBUtilities.timestampMicros()), announceLocally);
+    }
+
+    public static void announceSequenceDrop(SequenceName seq, boolean announceLocally)
+    {
+        logger.info(String.format("Drop sequence '%s'", seq));
+        KeyspaceMetadata ksm = Schema.instance.getKSMetaData(seq.keyspace);
+        announce(LegacySchemaTables.makeDropSequenceMutation(ksm, seq, FBUtilities.timestampMicros()), announceLocally);
     }
 
     public static void announceFunctionDrop(UDFunction udf, boolean announceLocally)

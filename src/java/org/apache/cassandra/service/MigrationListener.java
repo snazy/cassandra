@@ -43,6 +43,10 @@ public abstract class MigrationListener
     {
     }
 
+    public void onCreateSequence(String ksName, String seqName)
+    {
+    }
+
     public void onUpdateKeyspace(String ksName)
     {
     }
@@ -63,6 +67,10 @@ public abstract class MigrationListener
     {
     }
 
+    public void onUpdateSequence(String ksName, String seqName)
+    {
+    }
+
     public void onDropKeyspace(String ksName)
     {
     }
@@ -80,6 +88,10 @@ public abstract class MigrationListener
     }
 
     public void onDropAggregate(String ksName, String aggregateName, List<AbstractType<?>> argTypes)
+    {
+    }
+
+    public void onDropSequence(String ksName, String seqName)
     {
     }
 }

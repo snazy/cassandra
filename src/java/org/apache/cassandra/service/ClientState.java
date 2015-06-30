@@ -34,6 +34,7 @@ import org.apache.cassandra.config.Schema;
 import org.apache.cassandra.cql3.QueryHandler;
 import org.apache.cassandra.cql3.QueryProcessor;
 import org.apache.cassandra.cql3.functions.Function;
+import org.apache.cassandra.cql3.sequences.SequenceName;
 import org.apache.cassandra.db.SystemKeyspace;
 import org.apache.cassandra.exceptions.AuthenticationException;
 import org.apache.cassandra.exceptions.InvalidRequestException;
@@ -269,6 +270,9 @@ public class ClientState
         if(resource instanceof FunctionResource && resource.hasParent())
             if (((FunctionResource)resource).getKeyspace().equals(SystemKeyspace.NAME))
                 return;
+        if(resource instanceof SequenceResource && resource.hasParent())
+            if (((SequenceResource)resource).getKeyspace().equals(SystemKeyspace.NAME))
+                return;
 
         checkPermissionOnResourceChain(perm, resource);
     }
@@ -288,6 +292,18 @@ public class ClientState
         checkPermissionOnResourceChain(permission, FunctionResource.function(function.name().keyspace,
                                                                              function.name().name,
                                                                              function.argTypes()));
+    }
+
+    // Convenience method called from Sequences
+    // Also avoids needlessly creating lots of SequenceResource objects
+    public void ensureHasPermission(Permission permission, SequenceName sequence)
+    {
+        // Save creating a FunctionResource is we don't need to
+        if (DatabaseDescriptor.getAuthorizer() instanceof AllowAllAuthorizer)
+            return;
+
+        checkPermissionOnResourceChain(permission, SequenceResource.sequence(sequence.keyspace,
+                                                                             sequence.name));
     }
 
     private void checkPermissionOnResourceChain(Permission perm, IResource resource)

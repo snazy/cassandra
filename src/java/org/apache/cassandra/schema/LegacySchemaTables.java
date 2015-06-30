@@ -37,10 +37,12 @@ import org.apache.cassandra.cql3.functions.AbstractFunction;
 import org.apache.cassandra.cql3.functions.FunctionName;
 import org.apache.cassandra.cql3.functions.UDFunction;
 import org.apache.cassandra.cql3.functions.UDAggregate;
+import org.apache.cassandra.cql3.sequences.SequenceName;
 import org.apache.cassandra.db.*;
 import org.apache.cassandra.db.rows.*;
 import org.apache.cassandra.db.marshal.*;
 import org.apache.cassandra.db.partitions.*;
+import org.apache.cassandra.db.sequences.Sequence;
 import org.apache.cassandra.exceptions.ConfigurationException;
 import org.apache.cassandra.exceptions.InvalidRequestException;
 import org.apache.cassandra.io.compress.CompressionParameters;
@@ -69,8 +71,9 @@ public final class LegacySchemaTables
     public static final String USERTYPES = "schema_usertypes";
     public static final String FUNCTIONS = "schema_functions";
     public static final String AGGREGATES = "schema_aggregates";
+    public static final String SEQUENCES = "schema_sequences";
 
-    public static final List<String> ALL = Arrays.asList(KEYSPACES, COLUMNFAMILIES, COLUMNS, TRIGGERS, USERTYPES, FUNCTIONS, AGGREGATES);
+    public static final List<String> ALL = Arrays.asList(KEYSPACES, COLUMNFAMILIES, COLUMNS, TRIGGERS, USERTYPES, FUNCTIONS, AGGREGATES, SEQUENCES);
 
     private static final CFMetaData Keyspaces =
         compile(KEYSPACES,
@@ -181,7 +184,23 @@ public final class LegacySchemaTables
                 + "state_type text,"
                 + "PRIMARY KEY ((keyspace_name), aggregate_name, signature))");
 
-    public static final List<CFMetaData> All = Arrays.asList(Keyspaces, Columnfamilies, Columns, Triggers, Usertypes, Functions, Aggregates);
+    private static final CFMetaData Sequences =
+        compile(SEQUENCES,
+                "sequence definitions",
+                "CREATE TABLE %s ("
+                + "keyspace_name text,"
+                + "sequence_name text,"
+                + "minval bigint,"
+                + "maxval bigint,"
+                + "start_with bigint,"
+                + "incr_by bigint,"
+                + "cache bigint,"
+                + "cache_local bigint,"
+                + "cl_serial ascii,"
+                + "cl ascii,"
+                + "PRIMARY KEY ((keyspace_name), sequence_name))");
+
+    public static final List<CFMetaData> All = Arrays.asList(Keyspaces, Columnfamilies, Columns, Triggers, Usertypes, Functions, Aggregates, Sequences);
 
     private static CFMetaData compile(String name, String description, String schema)
     {
@@ -226,7 +245,8 @@ public final class LegacySchemaTables
                         types -> readSchemaPartitionForKeyspaceAndApply(COLUMNFAMILIES, key,
                         tables -> readSchemaPartitionForKeyspaceAndApply(FUNCTIONS, key,
                         functions -> readSchemaPartitionForKeyspaceAndApply(AGGREGATES, key,
-                        aggregates -> keyspaces.add(createKeyspaceFromSchemaPartitions(partition, tables, types, functions, aggregates)))))
+                        aggregates -> readSchemaPartitionForKeyspaceAndApply(SEQUENCES, key,
+                        sequences -> keyspaces.add(createKeyspaceFromSchemaPartitions(partition, tables, types, functions, aggregates, sequences))))))
                     );
                 }
             }
@@ -430,6 +450,7 @@ public final class LegacySchemaTables
         Map<DecoratedKey, FilteredPartition> oldTypes = readSchemaForKeyspaces(USERTYPES, keyspaces);
         Map<DecoratedKey, FilteredPartition> oldFunctions = readSchemaForKeyspaces(FUNCTIONS, keyspaces);
         Map<DecoratedKey, FilteredPartition> oldAggregates = readSchemaForKeyspaces(AGGREGATES, keyspaces);
+        Map<DecoratedKey, FilteredPartition> oldSequences = readSchemaForKeyspaces(SEQUENCES, keyspaces);
 
         for (Mutation mutation : mutations)
             mutation.apply();
@@ -443,12 +464,14 @@ public final class LegacySchemaTables
         Map<DecoratedKey, FilteredPartition> newTypes = readSchemaForKeyspaces(USERTYPES, keyspaces);
         Map<DecoratedKey, FilteredPartition> newFunctions = readSchemaForKeyspaces(FUNCTIONS, keyspaces);
         Map<DecoratedKey, FilteredPartition> newAggregates = readSchemaForKeyspaces(AGGREGATES, keyspaces);
+        Map<DecoratedKey, FilteredPartition> newSequences = readSchemaForKeyspaces(SEQUENCES, keyspaces);
 
         Set<String> keyspacesToDrop = mergeKeyspaces(oldKeyspaces, newKeyspaces);
         mergeTables(oldColumnFamilies, newColumnFamilies);
         mergeTypes(oldTypes, newTypes);
         mergeFunctions(oldFunctions, newFunctions);
         mergeAggregates(oldAggregates, newAggregates);
+        mergeSequences(oldSequences, newSequences);
 
         // it is safe to drop a keyspace only when all nested ColumnFamilies where deleted
         for (String keyspaceToDrop : keyspacesToDrop)
@@ -561,6 +584,27 @@ public final class LegacySchemaTables
             public void onUpdated(UntypedResultSet.Row oldRow, UntypedResultSet.Row newRow)
             {
                 Schema.instance.updateAggregate(createAggregateFromAggregateRow(newRow));
+            }
+        });
+    }
+
+    private static void mergeSequences(Map<DecoratedKey, FilteredPartition> before, Map<DecoratedKey, FilteredPartition> after)
+    {
+        diffSchema(before, after, new Differ()
+        {
+            public void onDropped(UntypedResultSet.Row oldRow)
+            {
+                Schema.instance.dropSequence(createSequenceFromRow(oldRow));
+            }
+
+            public void onAdded(UntypedResultSet.Row newRow)
+            {
+                Schema.instance.addSequence(createSequenceFromRow(newRow));
+            }
+
+            public void onUpdated(UntypedResultSet.Row oldRow, UntypedResultSet.Row newRow)
+            {
+                Schema.instance.updateSequence(createSequenceFromRow(newRow));
             }
         });
     }
@@ -681,7 +725,8 @@ public final class LegacySchemaTables
                                                                        RowIterator serializedTables,
                                                                        RowIterator serializedTypes,
                                                                        RowIterator serializedFunctions,
-                                                                       RowIterator serializedAggregates)
+                                                                       RowIterator serializedAggregates,
+                                                                       RowIterator serializedSequences)
     {
         String name = AsciiType.instance.compose(serializedParams.partitionKey().getKey());
 
@@ -692,8 +737,9 @@ public final class LegacySchemaTables
         Collection<UDFunction> udfs = createFunctionsFromFunctionsPartition(serializedFunctions);
         Collection<UDAggregate> udas = createAggregatesFromAggregatesPartition(serializedAggregates);
         Functions functions = org.apache.cassandra.schema.Functions.builder().add(udfs).add(udas).build();
+        Sequences sequences = createSequencesFromPartition(serializedSequences);
 
-        return KeyspaceMetadata.create(name, params, tables, types, functions);
+        return KeyspaceMetadata.create(name, params, tables, types, functions, sequences);
     }
 
     /**
@@ -1274,6 +1320,67 @@ public final class LegacySchemaTables
             triggers.add(new TriggerDefinition(name, classOption));
         }
         return triggers;
+    }
+
+    /*
+     * Sequence metadata serialization/deserialization
+     */
+
+    public static Mutation makeCreateSequenceMutation(KeyspaceMetadata keyspace, Sequence seq, long timestamp)
+    {
+        // Include the serialized keyspace in case the target node missed a CREATE KEYSPACE migration (see CASSANDRA-5631).
+        Mutation mutation = makeCreateKeyspaceMutation(keyspace, timestamp, false);
+        addSequenceToSchemaMutation(seq, timestamp, mutation);
+        return mutation;
+    }
+
+    private static void addSequenceToSchemaMutation(Sequence seq, long timestamp, Mutation mutation)
+    {
+        RowUpdateBuilder adder = new RowUpdateBuilder(Sequences, timestamp, mutation)
+                                 .clustering(seq.name);
+
+        adder.add("minval", seq.minVal);
+        adder.add("maxval", seq.maxVal);
+        adder.add("start_with", seq.startWith);
+        adder.add("incr_by", seq.incrBy);
+        adder.add("cache", seq.cache);
+        adder.add("cache_local", seq.cacheLocal);
+        adder.add("cl_serial", seq.clSerial.name());
+        adder.add("cl", seq.cl.name());
+
+        adder.build();
+    }
+
+    public static Mutation makeDropSequenceMutation(KeyspaceMetadata keyspace, SequenceName seq, long timestamp)
+    {
+        // Include the serialized keyspace in case the target node missed a CREATE KEYSPACE migration (see CASSANDRA-5631).
+        Mutation mutation = makeCreateKeyspaceMutation(keyspace, timestamp, false);
+        return RowUpdateBuilder.deleteRow(Sequences, timestamp, mutation, seq.name);
+    }
+
+    private static Sequences createSequencesFromPartition(RowIterator partition)
+    {
+        String query = String.format("SELECT * FROM %s.%s", SystemKeyspace.NAME, SEQUENCES);
+        Sequences.Builder types = org.apache.cassandra.schema.Sequences.builder();
+        QueryProcessor.resultify(query, partition).forEach(row -> types.add(createSequenceFromRow(row)));
+        return types.build();
+    }
+
+    private static Sequence createSequenceFromRow(UntypedResultSet.Row row)
+    {
+        String keyspace = row.getString("keyspace_name");
+        ByteBuffer name = ByteBufferUtil.bytes(row.getString("sequence_name"));
+
+        long minVal = row.getLong("minval");
+        long maxVal = row.getLong("maxval");
+        long startWith = row.getLong("start_with");
+        long incrBy = row.getLong("incr_by");
+        long cache = row.getLong("cache");
+        long cacheLocal = row.getLong("cache_local");
+        ConsistencyLevel clSerial = ConsistencyLevel.valueOf(row.getString("cl_serial"));
+        ConsistencyLevel cl = ConsistencyLevel.valueOf(row.getString("cl"));
+
+        return new Sequence(keyspace, name, minVal, maxVal, startWith, incrBy, cache, cacheLocal, clSerial, cl);
     }
 
     /*

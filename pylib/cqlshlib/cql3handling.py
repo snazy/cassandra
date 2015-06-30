@@ -41,7 +41,7 @@ class Cql3ParsingRuleSet(CqlParsingRuleSet):
         'select', 'from', 'where', 'and', 'key', 'insert', 'update', 'with',
         'limit', 'using', 'use', 'set',
         'begin', 'apply', 'batch', 'truncate', 'delete', 'in', 'create',
-        'function', 'aggregate', 'keyspace', 'schema', 'columnfamily', 'table', 'index', 'on', 'drop',
+        'function', 'aggregate', 'sequence', 'keyspace', 'schema', 'columnfamily', 'table', 'index', 'on', 'drop',
         'primary', 'into', 'values', 'date', 'time', 'timestamp', 'ttl', 'alter', 'add', 'type',
         'compact', 'storage', 'order', 'by', 'asc', 'desc', 'clustering',
         'token', 'writetime', 'map', 'list', 'to', 'custom', 'if', 'not'
@@ -209,6 +209,9 @@ JUNK ::= /([ \t\r\f\v]+|(--|[/][/])[^\n\r]*([\n\r]|$)|[/][*].*?[*][/])/ ;
 <mapLiteral> ::= "{" <term> ":" <term> ( "," <term> ":" <term> )* "}"
                ;
 
+<sequenceName> ::=  ( ksname=<nonSystemKeyspaceName> dot="." )? udfname=<cfOrKsName> ;
+               ;
+
 <anyFunctionName> ::= ( ksname=<cfOrKsName> dot="." )? udfname=<cfOrKsName> ;
 
 <userFunctionName> ::= ( ksname=<nonSystemKeyspaceName> dot="." )? udfname=<cfOrKsName> ;
@@ -248,6 +251,7 @@ JUNK ::= /([ \t\r\f\v]+|(--|[/][/])[^\n\r]*([\n\r]|$)|[/][*].*?[*][/])/ ;
                           | <createFunctionStatement>
                           | <createAggregateStatement>
                           | <createTriggerStatement>
+                          | <createSequenceStatement>
                           | <dropKeyspaceStatement>
                           | <dropColumnFamilyStatement>
                           | <dropIndexStatement>
@@ -255,9 +259,11 @@ JUNK ::= /([ \t\r\f\v]+|(--|[/][/])[^\n\r]*([\n\r]|$)|[/][*].*?[*][/])/ ;
                           | <dropFunctionStatement>
                           | <dropAggregateStatement>
                           | <dropTriggerStatement>
+                          | <dropSequenceStatement>
                           | <alterTableStatement>
                           | <alterKeyspaceStatement>
                           | <alterUserTypeStatement>
+                          | <alterSequenceStatement>
                           ;
 
 <authenticationStatement> ::= <createUserStatement>
@@ -279,6 +285,18 @@ JUNK ::= /([ \t\r\f\v]+|(--|[/][/])[^\n\r]*([\n\r]|$)|[/][*].*?[*][/])/ ;
 
 # timestamp is included here, since it's also a keyword
 <simpleStorageType> ::= typename=( <identifier> | <stringLiteral> | <K_TIMESTAMP> ) ;
+
+<serialConsistencyLevelType> ::= "serial" | "local_serial";
+<nonserialConsistencyLevelType> ::= "any"
+                                  | "one"
+                                  | "two"
+                                  | "three"
+                                  | "quorum"
+                                  | "all"
+                                  | "local_quorum"
+                                  | "each_quorum"
+                                  | "local_one"
+                                  ;
 
 <userType> ::= utname=<cfOrKsName> ;
 
@@ -705,6 +723,20 @@ def ref_udf_name_completer(ctxt, cass):
     return map(maybe_escape_name, udanames)
 
 
+def seq_name_completer(ctxt, cass):
+    ks = ctxt.get_binding('ksname', None)
+    if ks is not None:
+        ks = dequote_name(ks)
+    try:
+        # TODO add competer
+        seqnames = []
+    except Exception:
+        if ks is None:
+            return ()
+        raise
+    return map(maybe_escape_name, seqnames)
+
+
 completer_for('functionAggregateName', 'ksname')(cf_ks_name_completer)
 completer_for('functionAggregateName', 'dot')(cf_ks_dot_completer)
 completer_for('functionAggregateName', 'functionname')(udf_uda_name_completer)
@@ -718,6 +750,9 @@ completer_for('refUserFunctionName', 'udfname')(ref_udf_name_completer)
 completer_for('userAggregateName', 'ksname')(cf_ks_dot_completer)
 completer_for('userAggregateName', 'dot')(cf_ks_dot_completer)
 completer_for('userAggregateName', 'udaname')(uda_name_completer)
+completer_for('sequenceName', 'ksname')(cf_ks_name_completer)
+completer_for('sequenceName', 'dot')(cf_ks_dot_completer)
+completer_for('sequenceName', 'udfname')(seq_name_completer)
 
 @completer_for('orderByClause', 'ordercol')
 def select_order_column_completer(ctxt, cass):
@@ -1118,6 +1153,36 @@ syntax_rules += r'''
                             ( "INITCOND" <term> )?
                          ;
 
+<createSequenceStatement> ::= "CREATE" "SEQUENCE"
+                            ("IF" "NOT" "EXISTS")?
+                            <sequenceName>
+                            ("INCREMENT" ("BY")? <integer>)?
+                            (("MINVALUE" <integer>) | ("NO" "MINVALUE"))?
+                            (("MAXVALUE" <integer>) | ("NO" "MAXVALUE"))?
+                            ("START" ("WITH")? <integer>)?
+                            ("CACHE" <integer>)?
+                            ("CACHE" "LOCAL" <integer>)?
+                            ("SERIAL" "CONSISTENCY" "LEVEL" <serialConsistencyLevel>)?
+                            ("CONSISTENCY" "LEVEL" <nonserialConsistencyLevel>)?
+                         ;
+
+<alterSequenceStatement> ::= "ALTER" "SEQUENCE"
+                            ("IF" "EXISTS")?
+                            <sequenceName>
+                            ("INCREMENT" ("BY")? <integer>)?
+                            (("MINVALUE" <integer>) | ("NO" "MINVALUE"))?
+                            (("MAXVALUE" <integer>) | ("NO" "MAXVALUE"))?
+                            ("CACHE" <integer>)?
+                            ("CACHE" "LOCAL" <integer>)?
+                            ("SERIAL" "CONSISTENCY" "LEVEL" <serialConsistencyLevel>)?
+                            ("CONSISTENCY" "LEVEL" <nonserialConsistencyLevel>)?
+                         ;
+
+<dropSequenceStatement> ::= "DROP" "SEQUENCE"
+                            ("IF" "EXISTS")?
+                            <sequenceName>
+                         ;
+
 '''
 
 explain_completion('createIndexStatement', 'indexname', '<new_index_name>')
@@ -1308,6 +1373,7 @@ syntax_rules += r'''
 <resource> ::= <dataResource>
              | <roleResource>
              | <functionResource>
+             | <sequenceResource>
              ;
 
 <dataResource> ::= ( "ALL" "KEYSPACES" )
@@ -1325,6 +1391,10 @@ syntax_rules += r'''
                              ( "," [newcolname]=<cident> <storageType> )* )?
                            ")" )
                        )
+                     ;
+
+<sequenceResource> ::= ( "ALL" "SEQUENCES" ("IN KEYSPACE" <keyspaceName>)? )
+                     | ("SEQUENCE" <userFunctionName>)
                      ;
 '''
 

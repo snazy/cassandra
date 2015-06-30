@@ -21,7 +21,6 @@ import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.util.Iterator;
 import java.util.List;
-import java.util.UUID;
 
 import com.google.common.base.Objects;
 import io.netty.buffer.ByteBuf;
@@ -224,7 +223,7 @@ public abstract class Event
     public static class SchemaChange extends Event
     {
         public enum Change { CREATED, UPDATED, DROPPED }
-        public enum Target { KEYSPACE, TABLE, TYPE, FUNCTION, AGGREGATE }
+        public enum Target { KEYSPACE, TABLE, TYPE, FUNCTION, AGGREGATE, SEQUENCE }
 
         public final Change change;
         public final Target target;
@@ -279,6 +278,28 @@ public abstract class Event
 
         public void serializeEvent(ByteBuf dest, int version)
         {
+            if (target == Target.SEQUENCE)
+            {
+                if (version >= 5)
+                {
+                    // available since protocol version 5
+                    CBUtil.writeEnumValue(change, dest);
+                    CBUtil.writeEnumValue(target, dest);
+                    CBUtil.writeString(keyspace, dest);
+                    CBUtil.writeString(name, dest);
+                }
+                else
+                {
+                    // not available in protocol versions < 5 - just say the keyspace was updated.
+                    CBUtil.writeEnumValue(Change.UPDATED, dest);
+                    if (version >= 3)
+                        CBUtil.writeEnumValue(Target.KEYSPACE, dest);
+                    CBUtil.writeString(keyspace, dest);
+                    CBUtil.writeString("", dest);
+                }
+                return;
+            }
+
             if (target == Target.FUNCTION || target == Target.AGGREGATE)
             {
                 if (version >= 4)
@@ -331,6 +352,22 @@ public abstract class Event
 
         public int eventSerializedSize(int version)
         {
+            if (target == Target.SEQUENCE)
+            {
+                if (version >= 4)
+                    return CBUtil.sizeOfEnumValue(change)
+                           + CBUtil.sizeOfEnumValue(target)
+                           + CBUtil.sizeOfString(keyspace)
+                           + CBUtil.sizeOfString(name);
+                if (version >= 3)
+                    return CBUtil.sizeOfEnumValue(Change.UPDATED)
+                           + CBUtil.sizeOfEnumValue(Target.KEYSPACE)
+                           + CBUtil.sizeOfString(keyspace);
+                return CBUtil.sizeOfEnumValue(Change.UPDATED)
+                       + CBUtil.sizeOfString(keyspace)
+                       + CBUtil.sizeOfString("");
+            }
+
             if (target == Target.FUNCTION || target == Target.AGGREGATE)
             {
                 if (version >= 4)

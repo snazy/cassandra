@@ -70,6 +70,7 @@ import org.apache.cassandra.config.*;
 import org.apache.cassandra.db.*;
 import org.apache.cassandra.db.commitlog.CommitLog;
 import org.apache.cassandra.db.compaction.CompactionManager;
+import org.apache.cassandra.db.sequences.SequenceManager;
 import org.apache.cassandra.dht.BootStrapper;
 import org.apache.cassandra.dht.IPartitioner;
 import org.apache.cassandra.dht.Range;
@@ -628,6 +629,8 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
                 if (mutationStage.isShutdown() && counterMutationStage.isShutdown())
                     return; // drained already
 
+                SequenceManager.getInstance().shutdown();
+
                 if (daemon != null)
                 	shutdownClientServers();
                 ScheduledExecutors.optionalTasks.shutdown();
@@ -947,8 +950,8 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
         if (Schema.instance.getKSMetaData(TraceKeyspace.NAME) == null)
             maybeAddKeyspace(TraceKeyspace.metadata());
 
-        if (Schema.instance.getKSMetaData(SystemDistributedKeyspace.NAME) == null)
-            MigrationManager.announceNewKeyspace(SystemDistributedKeyspace.metadata(), 0, false);
+        doSystemDistributedSetup();
+        doSequencesSetup();
 
         if (!isSurveyMode)
         {
@@ -1008,11 +1011,13 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
             logger.info("Leaving write survey mode and joining ring at operator request");
             assert tokenMetadata.sortedTokens().size() > 0;
 
+            doSequencesSetup();
+
             doAuthSetup();
         }
     }
 
-    private void doAuthSetup()
+    private static void doAuthSetup()
     {
         try
         {
@@ -1039,7 +1044,27 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
         MigrationManager.instance.register(new AuthMigrationListener());
     }
 
-    private void maybeAddTable(CFMetaData cfm)
+    public static void doSystemDistributedSetup()
+    {
+        KeyspaceMetadata ksm = Schema.instance.getKSMetaData(SystemDistributedKeyspace.NAME);
+        if (ksm == null)
+        {
+            MigrationManager.announceNewKeyspace(SystemDistributedKeyspace.metadata(), 0, false);
+        }
+        else
+        {
+            for (CFMetaData table : SystemDistributedKeyspace.metadata().tables)
+                if (Schema.instance.getCFMetaData(table.ksName, table.cfName) == null)
+                    maybeAddTable(table);
+        }
+    }
+
+    public static void doSequencesSetup()
+    {
+        SequenceManager.initialize();
+    }
+
+    private static void maybeAddTable(CFMetaData cfm)
     {
         try
         {
@@ -1051,7 +1076,7 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
         }
     }
 
-    private void maybeAddKeyspace(KeyspaceMetadata ksm)
+    private static void maybeAddKeyspace(KeyspaceMetadata ksm)
     {
         try
         {

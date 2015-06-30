@@ -128,6 +128,11 @@ public class CreateKeyspaceStatement extends SchemaAlteringStatement
                                                      functions.applicablePermissions(),
                                                      functions,
                                                      role);
+            SequenceResource sequences = SequenceResource.keyspace(keyspace());
+            DatabaseDescriptor.getAuthorizer().grant(AuthenticatedUser.SYSTEM_USER,
+                                                     sequences.applicablePermissions(),
+                                                     sequences,
+                                                     role);
         }
         catch (RequestExecutionException e)
         {

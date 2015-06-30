@@ -88,6 +88,8 @@ public abstract class CQLTester
     public static int maxProtocolVersion;
     static
     {
+        StorageService.instance.setPartitionerUnsafe(Murmur3Partitioner.instance);
+
         int version;
         for (version = 1; version <= Server.CURRENT_VERSION; )
         {
@@ -106,7 +108,7 @@ public abstract class CQLTester
         session = new Session[maxProtocolVersion];
 
         // Once per-JVM is enough
-        prepareServer(true);
+        SchemaLoader.loadSchema();
 
         nativeAddr = InetAddress.getLoopbackAddress();
 
@@ -130,6 +132,7 @@ public abstract class CQLTester
     private List<String> types = new ArrayList<>();
     private List<String> functions = new ArrayList<>();
     private List<String> aggregates = new ArrayList<>();
+    private List<String> sequences = new ArrayList<>();
 
     // We don't use USE_PREPARED_VALUES in the code below so some test can foce value preparation (if the result
     // is not expected to be the same without preparation)
@@ -217,8 +220,6 @@ public abstract class CQLTester
     {
         if (ROW_CACHE_SIZE_IN_MB > 0)
             DatabaseDescriptor.setRowCacheSizeInMB(ROW_CACHE_SIZE_IN_MB);
-
-        StorageService.instance.setPartitionerUnsafe(Murmur3Partitioner.instance);
     }
 
     @AfterClass
@@ -254,10 +255,12 @@ public abstract class CQLTester
         final List<String> typesToDrop = copy(types);
         final List<String> functionsToDrop = copy(functions);
         final List<String> aggregatesToDrop = copy(aggregates);
+        final List<String> sequencesToDrop = copy(sequences);
         tables = null;
         types = null;
         functions = null;
         aggregates = null;
+        sequences = null;
 
         // We want to clean up after the test, but dropping a table is rather long so just do that asynchronously
         ScheduledExecutors.optionalTasks.execute(new Runnable()
@@ -277,6 +280,9 @@ public abstract class CQLTester
 
                     for (int i = typesToDrop.size() - 1; i >= 0; i--)
                         schemaChange(String.format("DROP TYPE IF EXISTS %s.%s", KEYSPACE, typesToDrop.get(i)));
+
+                    for (int i = sequencesToDrop.size() - 1; i >=0; i--)
+                        schemaChange(String.format("DROP SEQUENCE IF EXISTS %s.%s", KEYSPACE, sequencesToDrop.get(i)));
 
                     // Dropping doesn't delete the sstables. It's not a huge deal but it's cleaner to cleanup after us
                     // Thas said, we shouldn't delete blindly before the SSTableDeletingTask for the table we drop
@@ -487,6 +493,16 @@ public abstract class CQLTester
         aggregates.add(aggregateName + '(' + argTypes + ')');
         logger.info(fullQuery);
         schemaChange(fullQuery);
+    }
+
+    protected String createSequence(String query)
+    {
+        String typeName = "seq_" + seqNumber.getAndIncrement();
+        String fullQuery = String.format(query, KEYSPACE + "." + typeName);
+        sequences.add(typeName);
+        logger.info(fullQuery);
+        schemaChange(fullQuery);
+        return typeName;
     }
 
     protected String createTable(String query)

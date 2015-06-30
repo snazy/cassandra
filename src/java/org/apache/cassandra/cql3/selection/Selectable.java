@@ -18,6 +18,7 @@
  */
 package org.apache.cassandra.cql3.selection;
 
+import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -26,9 +27,13 @@ import org.apache.commons.lang3.text.StrBuilder;
 import org.apache.cassandra.config.CFMetaData;
 import org.apache.cassandra.config.ColumnDefinition;
 import org.apache.cassandra.cql3.ColumnIdentifier;
+import org.apache.cassandra.cql3.ColumnSpecification;
 import org.apache.cassandra.cql3.functions.*;
+import org.apache.cassandra.cql3.sequences.SequenceName;
 import org.apache.cassandra.db.marshal.AbstractType;
+import org.apache.cassandra.db.marshal.LongType;
 import org.apache.cassandra.db.marshal.UserType;
+import org.apache.cassandra.db.sequences.SequenceManager;
 import org.apache.cassandra.exceptions.InvalidRequestException;
 
 public abstract class Selectable
@@ -55,6 +60,89 @@ public abstract class Selectable
          * Returns true if any processing is performed on the selected column.
          **/
         public boolean processesSelection();
+    }
+
+    public static class Nextval extends Selectable
+    {
+        private final SequenceName sequenceName;
+
+        public Nextval(SequenceName sequenceName)
+        {
+            this.sequenceName = sequenceName;
+        }
+
+        public Selector.Factory newSelectorFactory(final CFMetaData cfm, List<ColumnDefinition> defs) throws InvalidRequestException
+        {
+            return new Selector.Factory()
+            {
+                public Selector newInstance() throws InvalidRequestException
+                {
+                    return new Selector()
+                    {
+                        public void addInput(int protocolVersion, Selection.ResultSetBuilder rs) throws InvalidRequestException
+                        {
+                        }
+
+                        public ByteBuffer getOutput(int protocolVersion) throws InvalidRequestException
+                        {
+                            long val = SequenceManager.getInstance().nextval(null, cfm.ksName, sequenceName, Long.MAX_VALUE);
+                            return LongType.instance.decompose(val);
+                        }
+
+                        public AbstractType<?> getType()
+                        {
+                            return LongType.instance;
+                        }
+
+                        public void reset()
+                        {
+                        }
+                    };
+                }
+
+                protected String getColumnName()
+                {
+                    return sequenceName.toString();
+                }
+
+                protected AbstractType<?> getReturnType()
+                {
+                    return LongType.instance;
+                }
+
+                protected void addColumnMapping(SelectionColumnMapping mapping, ColumnSpecification resultsColumn)
+                {
+                    mapping.addMapping(resultsColumn,
+                                       new ColumnDefinition(
+                                                           resultsColumn.ksName, resultsColumn.cfName,
+                                                           resultsColumn.name,
+                                                           resultsColumn.type,
+                                                           null, null, null,
+                                                           null,
+                                                           ColumnDefinition.Kind.REGULAR));
+                }
+            };
+        }
+
+        public static class Raw implements Selectable.Raw
+        {
+            private final SequenceName sequenceName;
+
+            public Raw(SequenceName sequenceName)
+            {
+                this.sequenceName = sequenceName;
+            }
+
+            public boolean processesSelection()
+            {
+                return true;
+            }
+
+            public Selectable prepare(CFMetaData cfm)
+            {
+                return new Nextval(sequenceName);
+            }
+        }
     }
 
     public static class WritetimeOrTTL extends Selectable

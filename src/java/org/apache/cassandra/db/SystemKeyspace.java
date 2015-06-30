@@ -56,6 +56,7 @@ import org.apache.cassandra.schema.Functions;
 import org.apache.cassandra.schema.KeyspaceMetadata;
 import org.apache.cassandra.schema.KeyspaceParams;
 import org.apache.cassandra.schema.LegacySchemaTables;
+import org.apache.cassandra.schema.Sequences;
 import org.apache.cassandra.schema.Tables;
 import org.apache.cassandra.schema.Types;
 import org.apache.cassandra.service.StorageService;
@@ -100,6 +101,7 @@ public final class SystemKeyspace
     public static final String SSTABLE_ACTIVITY = "sstable_activity";
     public static final String SIZE_ESTIMATES = "size_estimates";
     public static final String AVAILABLE_RANGES = "available_ranges";
+    public static final String SEQUENCE_LOCAL = "sequence_local";
 
     public static final CFMetaData Hints =
         compile(HINTS,
@@ -262,6 +264,17 @@ public final class SystemKeyspace
                 + "ranges set<blob>,"
                 + "PRIMARY KEY ((keyspace_name)))");
 
+    private static final CFMetaData SequenceLocal =
+        compile(SEQUENCE_LOCAL,
+                "role definitions",
+                "CREATE TABLE %s ("
+                + "keyspace_name text,"
+                + "sequence_name text,"
+                + "peer inet,"
+                + "next_val bigint,"
+                + "reserved bigint,"
+                + "PRIMARY KEY ((keyspace_name, sequence_name, peer)))");
+
     private static CFMetaData compile(String name, String description, String schema)
     {
         return CFMetaData.compile(String.format(schema, name), NAME)
@@ -270,7 +283,7 @@ public final class SystemKeyspace
 
     public static KeyspaceMetadata metadata()
     {
-        return KeyspaceMetadata.create(NAME, KeyspaceParams.local(), tables(), Types.none(), functions());
+        return KeyspaceMetadata.create(NAME, KeyspaceParams.local(), tables(), Types.none(), functions(), Sequences.none());
     }
 
     private static Tables tables()
@@ -289,7 +302,8 @@ public final class SystemKeyspace
                           CompactionHistory,
                           SSTableActivity,
                           SizeEstimates,
-                          AvailableRanges)
+                          AvailableRanges,
+                          SequenceLocal)
                      .build();
     }
 

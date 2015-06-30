@@ -99,6 +99,11 @@ public abstract class Constants
             this.text = text;
         }
 
+        public Type getType()
+        {
+            return type;
+        }
+
         public static Literal string(String text)
         {
             return new Literal(Type.STRING, text);

@@ -33,49 +33,56 @@ public final class KeyspaceMetadata
     public final Tables tables;
     public final Types types;
     public final Functions functions;
+    public final Sequences sequences;
 
-    private KeyspaceMetadata(String name, KeyspaceParams params, Tables tables, Types types, Functions functions)
+    private KeyspaceMetadata(String name, KeyspaceParams params, Tables tables, Types types, Functions functions, Sequences sequences)
     {
         this.name = name;
         this.params = params;
         this.tables = tables;
         this.types = types;
         this.functions = functions;
+        this.sequences = sequences;
     }
 
     public static KeyspaceMetadata create(String name, KeyspaceParams params)
     {
-        return new KeyspaceMetadata(name, params, Tables.none(), Types.none(), Functions.none());
+        return new KeyspaceMetadata(name, params, Tables.none(), Types.none(), Functions.none(), Sequences.none());
     }
 
     public static KeyspaceMetadata create(String name, KeyspaceParams params, Tables tables)
     {
-        return new KeyspaceMetadata(name, params, tables, Types.none(), Functions.none());
+        return new KeyspaceMetadata(name, params, tables, Types.none(), Functions.none(), Sequences.none());
     }
 
-    public static KeyspaceMetadata create(String name, KeyspaceParams params, Tables tables, Types types, Functions functions)
+    public static KeyspaceMetadata create(String name, KeyspaceParams params, Tables tables, Types types, Functions functions, Sequences sequences)
     {
-        return new KeyspaceMetadata(name, params, tables, types, functions);
+        return new KeyspaceMetadata(name, params, tables, types, functions, sequences);
     }
 
     public KeyspaceMetadata withSwapped(KeyspaceParams params)
     {
-        return new KeyspaceMetadata(name, params, tables, types, functions);
+        return new KeyspaceMetadata(name, params, tables, types, functions, sequences);
     }
 
     public KeyspaceMetadata withSwapped(Tables tables)
     {
-        return new KeyspaceMetadata(name, params, tables, types, functions);
+        return new KeyspaceMetadata(name, params, tables, types, functions, sequences);
     }
 
     public KeyspaceMetadata withSwapped(Types types)
     {
-        return new KeyspaceMetadata(name, params, tables, types, functions);
+        return new KeyspaceMetadata(name, params, tables, types, functions, sequences);
     }
 
     public KeyspaceMetadata withSwapped(Functions functions)
     {
-        return new KeyspaceMetadata(name, params, tables, types, functions);
+        return new KeyspaceMetadata(name, params, tables, types, functions, sequences);
+    }
+
+    public KeyspaceMetadata withSwapped(Sequences sequences)
+    {
+        return new KeyspaceMetadata(name, params, tables, types, functions, sequences);
     }
 
     @Override
