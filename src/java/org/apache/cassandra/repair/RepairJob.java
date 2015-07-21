@@ -35,11 +35,12 @@ import org.apache.cassandra.utils.Pair;
  */
 public class RepairJob extends AbstractFuture<RepairResult> implements Runnable
 {
-    private static Logger logger = LoggerFactory.getLogger(RepairJob.class);
+    private static final Logger logger = LoggerFactory.getLogger(RepairJob.class);
 
     private final RepairSession session;
     private final RepairJobDesc desc;
     private final RepairParallelism parallelismDegree;
+    private final RepairSnapshotController repairSnapshotController;
     private final long repairedAt;
     private final ListeningExecutorService taskExecutor;
 
@@ -49,12 +50,14 @@ public class RepairJob extends AbstractFuture<RepairResult> implements Runnable
      * @param session RepairSession that this RepairJob belongs
      * @param columnFamily name of the ColumnFamily to repair
      * @param parallelismDegree how to run repair job in parallel
+     * @param repairSnapshotController controls when snapshots against endpoints can be issues according to requested snapshot-interval
      * @param repairedAt when the repair occurred (millis)
      * @param taskExecutor Executor to run various repair tasks
      */
     public RepairJob(RepairSession session,
                      String columnFamily,
                      RepairParallelism parallelismDegree,
+                     RepairSnapshotController repairSnapshotController,
                      long repairedAt,
                      ListeningExecutorService taskExecutor)
     {
@@ -63,6 +66,7 @@ public class RepairJob extends AbstractFuture<RepairResult> implements Runnable
         this.repairedAt = repairedAt;
         this.taskExecutor = taskExecutor;
         this.parallelismDegree = parallelismDegree;
+        this.repairSnapshotController = repairSnapshotController;
     }
 
     /**
@@ -80,27 +84,34 @@ public class RepairJob extends AbstractFuture<RepairResult> implements Runnable
         // Create a snapshot at all nodes unless we're using pure parallel repairs
         if (parallelismDegree != RepairParallelism.PARALLEL)
         {
-            // Request snapshot to all replica
-            List<ListenableFuture<InetAddress>> snapshotTasks = new ArrayList<>(allEndpoints.size());
-            for (InetAddress endpoint : allEndpoints)
+            if (repairSnapshotController.requiresSnapshot(desc.columnFamily, allEndpoints))
             {
-                SnapshotTask snapshotTask = new SnapshotTask(desc, endpoint);
-                snapshotTasks.add(snapshotTask);
-                taskExecutor.execute(snapshotTask);
-            }
-            // When all snapshot complete, send validation requests
-            ListenableFuture<List<InetAddress>> allSnapshotTasks = Futures.allAsList(snapshotTasks);
-            validations = Futures.transform(allSnapshotTasks, new AsyncFunction<List<InetAddress>, List<TreeResponse>>()
-            {
-                public ListenableFuture<List<TreeResponse>> apply(List<InetAddress> endpoints) throws Exception
+                // Request snapshot to all replica
+                if (repairSnapshotController.snapshotTimeWindow > 0)
+                    logger.info("Sending snapshot requests for repair #{} on {}/{} to {}", session.getId(), desc.keyspace, desc.columnFamily, allEndpoints);
+
+                List<ListenableFuture<InetAddress>> snapshotTasks = new ArrayList<>(allEndpoints.size());
+                for (InetAddress endpoint : allEndpoints)
                 {
-                    logger.info(String.format("[repair #%s] requesting merkle trees for %s (to %s)", desc.sessionId, desc.columnFamily, endpoints));
-                    if (parallelismDegree == RepairParallelism.SEQUENTIAL)
-                        return sendSequentialValidationRequest(endpoints);
-                    else
-                        return sendDCAwareValidationRequest(endpoints);
+                    SnapshotTask snapshotTask = new SnapshotTask(desc, endpoint);
+                    snapshotTasks.add(snapshotTask);
+                    taskExecutor.execute(snapshotTask);
                 }
-            }, taskExecutor);
+
+                // When all snapshot complete, send validation requests
+                ListenableFuture<List<InetAddress>> allSnapshotTasks = Futures.allAsList(snapshotTasks);
+                validations = Futures.transform(allSnapshotTasks, new AsyncFunction<List<InetAddress>, List<TreeResponse>>()
+                {
+                    public ListenableFuture<List<TreeResponse>> apply(List<InetAddress> endpoints) throws Exception
+                    {
+                        return submitValidationRequest(endpoints);
+                    }
+                }, taskExecutor);
+            }
+            else
+            {
+                validations = submitValidationRequest(allEndpoints);
+            }
         }
         else
         {
@@ -167,6 +178,15 @@ public class RepairJob extends AbstractFuture<RepairResult> implements Runnable
 
         // Wait for validation to complete
         Futures.getUnchecked(validations);
+    }
+
+    private ListenableFuture<List<TreeResponse>> submitValidationRequest(List<InetAddress> endpoints)
+    {
+        logger.info(String.format("[repair #%s] requesting merkle trees for %s (to %s)", desc.sessionId, desc.columnFamily, endpoints));
+        if (parallelismDegree == RepairParallelism.SEQUENTIAL)
+            return sendSequentialValidationRequest(endpoints);
+        else
+            return sendDCAwareValidationRequest(endpoints);
     }
 
     /**

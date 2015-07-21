@@ -2828,7 +2828,7 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
             parallelism = RepairParallelism.PARALLEL;
         }
 
-        RepairOption options = new RepairOption(parallelism, primaryRange, !fullRepair, false, 1, Collections.<Range<Token>>emptyList());
+        RepairOption options = new RepairOption(parallelism, 0, primaryRange, !fullRepair, false, 1, Collections.<Range<Token>>emptyList());
         if (dataCenters != null)
         {
             options.getDataCenters().addAll(dataCenters);
@@ -2912,7 +2912,7 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
         }
         Collection<Range<Token>> repairingRange = createRepairRangeFrom(beginToken, endToken);
 
-        RepairOption options = new RepairOption(parallelism, false, !fullRepair, false, 1, repairingRange);
+        RepairOption options = new RepairOption(parallelism, 0, false, !fullRepair, false, 1, repairingRange);
         options.getDataCenters().addAll(dataCenters);
         if (hosts != null)
         {

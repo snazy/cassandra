@@ -52,7 +52,8 @@ public class RepairSessionTest
         IPartitioner p = Murmur3Partitioner.instance;
         Range<Token> repairRange = new Range<>(p.getToken(ByteBufferUtil.bytes(0)), p.getToken(ByteBufferUtil.bytes(100)));
         Set<InetAddress> endpoints = Sets.newHashSet(remote);
-        RepairSession session = new RepairSession(parentSessionId, sessionId, repairRange, "Keyspace1", RepairParallelism.SEQUENTIAL, endpoints, ActiveRepairService.UNREPAIRED_SSTABLE, "Standard1");
+        RepairSnapshotController repairSnapshotController = new RepairSnapshotController(0);
+        RepairSession session = new RepairSession(parentSessionId, sessionId, repairRange, "Keyspace1", RepairParallelism.SEQUENTIAL, repairSnapshotController, endpoints, ActiveRepairService.UNREPAIRED_SSTABLE, "Standard1");
 
         // perform convict
         session.convict(remote, Double.MAX_VALUE);

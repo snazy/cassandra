@@ -79,7 +79,7 @@ import org.apache.cassandra.utils.Pair;
 public class RepairSession extends AbstractFuture<RepairSessionResult> implements IEndpointStateChangeSubscriber,
                                                                                  IFailureDetectionEventListener
 {
-    private static Logger logger = LoggerFactory.getLogger(RepairSession.class);
+    private static final Logger logger = LoggerFactory.getLogger(RepairSession.class);
 
     public final UUID parentRepairSession;
     /** Repair session ID */
@@ -87,6 +87,7 @@ public class RepairSession extends AbstractFuture<RepairSessionResult> implement
     public final String keyspace;
     private final String[] cfnames;
     public final RepairParallelism parallelismDegree;
+    public final RepairSnapshotController repairSnapshotController;
     /** Range to repair */
     public final Range<Token> range;
     public final Set<InetAddress> endpoints;
@@ -115,6 +116,7 @@ public class RepairSession extends AbstractFuture<RepairSessionResult> implement
      * @param range range to repair
      * @param keyspace name of keyspace
      * @param parallelismDegree specifies the degree of parallelism when calculating the merkle trees
+     * @param repairSnapshotController controller to submit snapshot tasks for sequential repairs
      * @param endpoints the data centers that should be part of the repair; null for all DCs
      * @param repairedAt when the repair occurred (millis)
      * @param cfnames names of columnfamilies
@@ -124,6 +126,7 @@ public class RepairSession extends AbstractFuture<RepairSessionResult> implement
                          Range<Token> range,
                          String keyspace,
                          RepairParallelism parallelismDegree,
+                         RepairSnapshotController repairSnapshotController,
                          Set<InetAddress> endpoints,
                          long repairedAt,
                          String... cfnames)
@@ -133,6 +136,7 @@ public class RepairSession extends AbstractFuture<RepairSessionResult> implement
         this.parentRepairSession = parentRepairSession;
         this.id = id;
         this.parallelismDegree = parallelismDegree;
+        this.repairSnapshotController = repairSnapshotController;
         this.keyspace = keyspace;
         this.cfnames = cfnames;
         this.range = range;
@@ -265,7 +269,7 @@ public class RepairSession extends AbstractFuture<RepairSessionResult> implement
         List<ListenableFuture<RepairResult>> jobs = new ArrayList<>(cfnames.length);
         for (String cfname : cfnames)
         {
-            RepairJob job = new RepairJob(this, cfname, parallelismDegree, repairedAt, taskExecutor);
+            RepairJob job = new RepairJob(this, cfname, parallelismDegree, repairSnapshotController, repairedAt, taskExecutor);
             executor.execute(job);
             jobs.add(job);
         }

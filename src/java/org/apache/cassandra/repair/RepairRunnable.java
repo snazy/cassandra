@@ -209,6 +209,8 @@ public class RepairRunnable extends WrappedRunnable implements ProgressEventNoti
                                                                                                                          new NamedThreadFactory("Repair#" + cmd),
                                                                                                                          "internal"));
 
+        RepairSnapshotController repairSnapshotController = new RepairSnapshotController(options.getSnapshotTimeWindow(), cfnames);
+
         List<ListenableFuture<RepairSessionResult>> futures = new ArrayList<>(options.getRanges().size());
         for (Range<Token> range : options.getRanges())
         {
@@ -216,6 +218,7 @@ public class RepairRunnable extends WrappedRunnable implements ProgressEventNoti
                                                               range,
                                                               keyspace,
                                                               options.getParallelism(),
+                                                              repairSnapshotController,
                                                               rangeToNeighbors.get(range),
                                                               repairedAt,
                                                               executor,

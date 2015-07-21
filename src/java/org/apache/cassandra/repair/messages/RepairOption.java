@@ -28,7 +28,6 @@ import org.apache.cassandra.dht.IPartitioner;
 import org.apache.cassandra.dht.Range;
 import org.apache.cassandra.dht.Token;
 import org.apache.cassandra.repair.RepairParallelism;
-import org.apache.cassandra.tools.nodetool.Repair;
 import org.apache.cassandra.utils.FBUtilities;
 
 /**
@@ -45,6 +44,7 @@ public class RepairOption
     public static final String DATACENTERS_KEY = "dataCenters";
     public static final String HOSTS_KEY = "hosts";
     public static final String TRACE_KEY = "trace";
+    public static final String SNAPSHOT_TIME_WINDOW = "snapshotTimeWindow";
 
     // we don't want to push nodes too much for repair
     public static final int MAX_JOB_THREADS = 4;
@@ -126,6 +126,10 @@ public class RepairOption
     {
         // if no parallel option is given, then this will be "sequential" by default.
         RepairParallelism parallelism = RepairParallelism.fromName(options.get(PARALLELISM_KEY));
+        String snapshotTimeWindowStr = options.get(SNAPSHOT_TIME_WINDOW);
+        int snapshotTimeWindow = snapshotTimeWindowStr != null
+                                 ? Integer.parseInt(snapshotTimeWindowStr)
+                                 : DatabaseDescriptor.getRepairSequentialSnapshotTimeWindow();
         boolean primaryRange = Boolean.parseBoolean(options.get(PRIMARY_RANGE_KEY));
         boolean incremental = Boolean.parseBoolean(options.get(INCREMENTAL_KEY));
         boolean trace = Boolean.parseBoolean(options.get(TRACE_KEY));
@@ -158,7 +162,7 @@ public class RepairOption
             }
         }
 
-        RepairOption option = new RepairOption(parallelism, primaryRange, incremental, trace, jobThreads, ranges);
+        RepairOption option = new RepairOption(parallelism, snapshotTimeWindow, primaryRange, incremental, trace, jobThreads, ranges);
 
         // data centers
         String dataCentersStr = options.get(DATACENTERS_KEY);
@@ -213,6 +217,8 @@ public class RepairOption
     }
 
     private final RepairParallelism parallelism;
+    // snapshot interval in seconds for sequential repairs
+    private final int snapshotTimeWindow;
     private final boolean primaryRange;
     private final boolean incremental;
     private final boolean trace;
@@ -223,7 +229,9 @@ public class RepairOption
     private final Collection<String> hosts = new HashSet<>();
     private final Collection<Range<Token>> ranges = new HashSet<>();
 
-    public RepairOption(RepairParallelism parallelism, boolean primaryRange, boolean incremental, boolean trace, int jobThreads, Collection<Range<Token>> ranges)
+    public RepairOption(RepairParallelism parallelism, int snapshotTimeWindow,
+                        boolean primaryRange, boolean incremental, boolean trace,
+                        int jobThreads, Collection<Range<Token>> ranges)
     {
         if (FBUtilities.isWindows() &&
             (DatabaseDescriptor.getDiskAccessMode() != Config.DiskAccessMode.standard || DatabaseDescriptor.getIndexAccessMode() != Config.DiskAccessMode.standard) &&
@@ -235,6 +243,7 @@ public class RepairOption
         else
             this.parallelism = parallelism;
 
+        this.snapshotTimeWindow = snapshotTimeWindow;
         this.primaryRange = primaryRange;
         this.incremental = incremental;
         this.trace = trace;
@@ -245,6 +254,11 @@ public class RepairOption
     public RepairParallelism getParallelism()
     {
         return parallelism;
+    }
+
+    public int getSnapshotTimeWindow()
+    {
+        return snapshotTimeWindow;
     }
 
     public boolean isPrimaryRange()
@@ -292,6 +306,7 @@ public class RepairOption
     {
         return "repair options (" +
                        "parallelism: " + parallelism +
+                       ", snapshot time window: " + snapshotTimeWindow +
                        ", primary range: " + primaryRange +
                        ", incremental: " + incremental +
                        ", job threads: " + jobThreads +

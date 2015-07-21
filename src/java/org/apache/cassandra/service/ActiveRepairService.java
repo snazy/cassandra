@@ -53,6 +53,7 @@ import org.apache.cassandra.repair.AnticompactionTask;
 import org.apache.cassandra.repair.RepairJobDesc;
 import org.apache.cassandra.repair.RepairParallelism;
 import org.apache.cassandra.repair.RepairSession;
+import org.apache.cassandra.repair.RepairSnapshotController;
 import org.apache.cassandra.repair.messages.*;
 import org.apache.cassandra.utils.FBUtilities;
 import org.apache.cassandra.utils.UUIDGen;
@@ -106,6 +107,7 @@ public class ActiveRepairService
                                              Range<Token> range,
                                              String keyspace,
                                              RepairParallelism parallelismDegree,
+                                             RepairSnapshotController repairSnapshotController,
                                              Set<InetAddress> endpoints,
                                              long repairedAt,
                                              ListeningExecutorService executor,
@@ -117,7 +119,10 @@ public class ActiveRepairService
         if (cfnames.length == 0)
             return null;
 
-        final RepairSession session = new RepairSession(parentRepairSession, UUIDGen.getTimeUUID(), range, keyspace, parallelismDegree, endpoints, repairedAt, cfnames);
+        final RepairSession session = new RepairSession(parentRepairSession, UUIDGen.getTimeUUID(),
+                                                        range, keyspace,
+                                                        parallelismDegree, repairSnapshotController,
+                                                        endpoints, repairedAt, cfnames);
 
         sessions.put(session.getId(), session);
         // register listeners
