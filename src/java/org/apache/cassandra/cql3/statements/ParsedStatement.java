@@ -51,6 +51,7 @@ public abstract class ParsedStatement
         public final CQLStatement statement;
         public final List<ColumnSpecification> boundNames;
         public final Short[] partitionKeyBindIndexes;
+        public String queryString;
 
         protected Prepared(CQLStatement statement, List<ColumnSpecification> boundNames, Short[] partitionKeyBindIndexes)
         {

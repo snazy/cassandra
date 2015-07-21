@@ -305,6 +305,8 @@ public class Config
      */
     public UserFunctionTimeoutPolicy user_function_timeout_policy = UserFunctionTimeoutPolicy.die;
 
+    public String workload_sampling_directory = ".";
+
     public static boolean getOutboundBindAny()
     {
         return outboundBindAny;

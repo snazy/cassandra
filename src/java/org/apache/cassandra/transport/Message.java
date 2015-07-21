@@ -45,6 +45,7 @@ import org.slf4j.LoggerFactory;
 import org.apache.cassandra.service.ClientWarn;
 import org.apache.cassandra.transport.messages.*;
 import org.apache.cassandra.service.QueryState;
+import org.apache.cassandra.transport.sampler.WorkloadSampling;
 import org.apache.cassandra.utils.JVMStabilityInspector;
 
 /**
@@ -277,6 +278,12 @@ public abstract class Message
                 if (isCustomPayload && frame.header.version < Server.VERSION_4)
                     throw new ProtocolException("Received frame with CUSTOM_PAYLOAD flag for native protocol version < 4");
 
+                if (isRequest)
+                {
+                    Connection connection = ctx.channel().attr(Connection.attributeKey).get();
+                    WorkloadSampling.onMessage(connection, frame);
+                }
+
                 Message message = frame.header.type.codec.decode(frame.body, frame.header.version);
                 message.setStreamId(frame.header.streamId);
                 message.setSourceFrame(frame);
@@ -389,7 +396,9 @@ public abstract class Message
                     throw e;
                 }
 
-                results.add(Frame.create(message.type, message.getStreamId(), version, flags, body));
+                Frame frame = Frame.create(message.type, message.getStreamId(), version, flags, body);
+                WorkloadSampling.onMessage(connection, frame);
+                results.add(frame);
             }
             catch (Throwable e)
             {

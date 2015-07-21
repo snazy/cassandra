@@ -70,6 +70,7 @@ import org.apache.cassandra.schema.LegacySchemaMigrator;
 import org.apache.cassandra.cql3.functions.ThreadAwareSecurityManager;
 import org.apache.cassandra.thrift.ThriftServer;
 import org.apache.cassandra.tracing.Tracing;
+import org.apache.cassandra.transport.sampler.WorkloadSampling;
 import org.apache.cassandra.utils.*;
 
 /**
@@ -84,6 +85,7 @@ public class CassandraDaemon
     private static JMXConnectorServer jmxServer = null;
 
     private static final Logger logger;
+
     static {
         // Need to register metrics before instrumented appender is created(first access to LoggerFactory).
         SharedMetricRegistries.getOrCreate("logback-metrics").addListener(new MetricRegistryListener.Base()
@@ -132,6 +134,7 @@ public class CassandraDaemon
 
     public Server thriftServer;
     private NativeTransportService nativeTransportService;
+    private WorkloadSampling workloadSampling;
 
     private final boolean runManaged;
     protected final StartupChecks startupChecks;
@@ -372,6 +375,7 @@ public class CassandraDaemon
 
         // Native transport
         nativeTransportService = new NativeTransportService();
+        workloadSampling = new WorkloadSampling();
 
         completeSetup();
     }

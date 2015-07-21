@@ -142,6 +142,11 @@ public class QueryProcessor implements QueryHandler
         return preparedStatements.size() + thriftPreparedStatements.size();
     }
 
+    public static Map<MD5Digest, ParsedStatement.Prepared> preparedStatements()
+    {
+        return preparedStatements;
+    }
+
     // Work around initialization dependency
     private static enum InternalStateInstance
     {
@@ -425,6 +430,7 @@ public class QueryProcessor implements QueryHandler
             throw new InvalidRequestException(String.format("Prepared statement of size %d bytes is larger than allowed maximum of %d bytes.",
                                                             statementSize,
                                                             MAX_CACHE_PREPARED_MEMORY));
+        prepared.queryString = queryString;
         if (forThrift)
         {
             Integer statementId = computeThriftId(queryString, keyspace);
@@ -501,7 +507,8 @@ public class QueryProcessor implements QueryHandler
             ((CFStatement)statement).prepareKeyspace(clientState);
 
         Tracing.trace("Preparing statement");
-        return statement.prepare();
+        ParsedStatement.Prepared prepared = statement.prepare();
+        return prepared;
     }
 
     public static ParsedStatement parseStatement(String queryStr) throws SyntaxException

@@ -490,6 +490,14 @@ public class DatabaseDescriptor
 
         // if data dirs, commitlog dir, or saved caches dir are set in cassandra.yaml, use that.  Otherwise,
         // use -Dcassandra.storagedir (set in cassandra-env.sh) as the parent dir for data/, commitlog/, and saved_caches/
+        if (conf.workload_sampling_directory == null)
+        {
+            conf.workload_sampling_directory = System.getProperty("cassandra.storagedir", null);
+            if (conf.workload_sampling_directory == null)
+                throw new ConfigurationException("workload_sampling_directory is missing and -Dcassandra.storagedir is not set", false);
+            conf.workload_sampling_directory += File.separator + "sampling";
+        }
+
         if (conf.commitlog_directory == null)
         {
             conf.commitlog_directory = System.getProperty("cassandra.storagedir", null);
@@ -822,6 +830,10 @@ public class DatabaseDescriptor
             if (conf.commitlog_directory == null)
                 throw new ConfigurationException("commitlog_directory must be specified", false);
             FileUtils.createDirectory(conf.commitlog_directory);
+
+            if (conf.workload_sampling_directory == null)
+                throw new ConfigurationException("workload_sampling_directory must be specified", false);
+            FileUtils.createDirectory(conf.workload_sampling_directory);
 
             if (conf.hints_directory == null)
                 throw new ConfigurationException("hints_directory must be specified", false);
@@ -1209,6 +1221,11 @@ public class DatabaseDescriptor
     public static String getCommitLogLocation()
     {
         return conf.commitlog_directory;
+    }
+
+    public static String getWorkloadSamplingDirectory()
+    {
+        return conf.workload_sampling_directory;
     }
 
     public static ParameterizedClass getCommitLogCompression()

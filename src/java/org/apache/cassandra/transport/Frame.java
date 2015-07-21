@@ -264,6 +264,14 @@ public class Frame
         {
             ByteBuf header = CBUtil.allocator.buffer(Header.LENGTH);
 
+            encode(frame, header);
+
+            results.add(header);
+            results.add(frame.body);
+        }
+
+        public static void encode(Frame frame, ByteBuf header)
+        {
             Message.Type type = frame.header.type;
             header.writeByte(type.direction.addToVersion(frame.header.version));
             header.writeByte(Header.Flag.serialize(frame.header.flags));
@@ -275,9 +283,6 @@ public class Frame
 
             header.writeByte(type.opcode);
             header.writeInt(frame.body.readableBytes());
-
-            results.add(header);
-            results.add(frame.body);
         }
     }
 
