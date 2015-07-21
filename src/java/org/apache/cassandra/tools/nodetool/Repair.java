@@ -49,6 +49,9 @@ public class Repair extends NodeToolCmd
     @Option(title = "seqential", name = {"-seq", "--sequential"}, description = "Use -seq to carry out a sequential repair")
     private boolean sequential = false;
 
+    @Option(title = "snapshot_time_window", name = {"-stw", "--snapshot-time-window"}, description = "Use -stw to define the time-window in seconds in which a snapshot for all replica-nodes must have been done.")
+    private int snapshotTimeWindow = 0;
+
     @Option(title = "dc parallel", name = {"-dcpar", "--dc-parallel"}, description = "Use -dcpar to repair data centers in parallel.")
     private boolean dcParallel = false;
 
@@ -102,6 +105,8 @@ public class Repair extends NodeToolCmd
                 parallelismDegree = RepairParallelism.SEQUENTIAL;
             else if (dcParallel)
                 parallelismDegree = RepairParallelism.DATACENTER_AWARE;
+            if (sequential && snapshotTimeWindow > 0)
+                options.put(RepairOption.SNAPSHOT_TIME_WINDOW, Integer.toString(snapshotTimeWindow));
             options.put(RepairOption.PARALLELISM_KEY, parallelismDegree.getName());
             options.put(RepairOption.PRIMARY_RANGE_KEY, Boolean.toString(primaryRange));
             options.put(RepairOption.INCREMENTAL_KEY, Boolean.toString(!fullRepair));

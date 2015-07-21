@@ -258,6 +258,8 @@ public class Config
 
     public boolean enable_user_defined_functions = false;
 
+    public int repair_sequential_snapshot_time_window;
+
     public static boolean getOutboundBindAny()
     {
         return outboundBindAny;

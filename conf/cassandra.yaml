@@ -885,3 +885,15 @@ enable_user_defined_functions: false
 # below their system default. The sysinternals 'clockres' tool can confirm your system's default
 # setting.
 windows_timer_interval: 1
+
+# Sequential repairs (i.e. nodetool repair -seq) require snapshots as the reference for
+# merkle-tree calculation.
+# Use the repair_sequential_snapshot_time_window option to define the default time-window
+# in seconds. All snapshots for a replica-set for a token-range must be within this time-window
+# to prohibit additional snapshots. If one snapshot in the endpoints for a range is older than
+# repair_sequential_snapshot_time_window seconds, all endpoints for that range will create
+# a new snapshot.
+# This value can be overridden via nodetool repair option --snapshot-time-window.
+# With the default value of 0, a snapshot is taken for each token (vnode) per column-family
+# for sequential repair - that is the behavior as in previous versions.
+#repair_sequential_snapshot_time_window: 0

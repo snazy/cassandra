@@ -39,6 +39,17 @@ Upgrading
      The new options are `class` and `chunk_length_in_kb`. Disabling compression should now
      be done by setting the new option `enabled` to `false`.
 
+2.2.1
+=====
+
+New features
+------------
+   - Allows to configure the snapshot time window in seconds for sequential repairs.
+     By default a snapshot request is issued for each token per column-family
+     to repair. This is often not necessary and can now be configured in
+     cassandra.yaml and per invocation of repair e.g. via nodetool.
+     All snapshots for a replica-set for a token-range must be within this time-window
+     to prohibit additional snapshots.
 
 2.2
 ===

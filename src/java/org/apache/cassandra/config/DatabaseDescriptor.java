@@ -1700,4 +1700,9 @@ public class DatabaseDescriptor
     {
         return conf.windows_timer_interval;
     }
+
+    public static int getRepairSequentialSnapshotTimeWindow()
+    {
+        return conf.repair_sequential_snapshot_time_window;
+    }
 }
