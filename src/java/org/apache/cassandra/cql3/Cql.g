@@ -596,12 +596,14 @@ createFunctionStatement returns [CreateFunctionStatement expr]
     @init {
         boolean orReplace = false;
         boolean ifNotExists = false;
+        boolean trusted = false;
 
         List<ColumnIdentifier> argsNames = new ArrayList<>();
         List<CQL3Type.Raw> argsTypes = new ArrayList<>();
         boolean calledOnNullInput = false;
     }
     : K_CREATE (K_OR K_REPLACE { orReplace = true; })?
+      ( K_TRUSTED { trusted = true; } )?
       K_FUNCTION
       (K_IF K_NOT K_EXISTS { ifNotExists = true; })?
       fn=functionName
@@ -616,7 +618,7 @@ createFunctionStatement returns [CreateFunctionStatement expr]
       K_LANGUAGE language = IDENT
       K_AS body = STRING_LITERAL
       { $expr = new CreateFunctionStatement(fn, $language.text.toLowerCase(), $body.text,
-                                            argsNames, argsTypes, rt, calledOnNullInput, orReplace, ifNotExists); }
+                                            argsNames, argsTypes, rt, calledOnNullInput, orReplace, ifNotExists, trusted); }
     ;
 
 dropFunctionStatement returns [DropFunctionStatement expr]
@@ -967,7 +969,7 @@ listPermissionsStatement returns [ListPermissionsStatement stmt]
     ;
 
 permission returns [Permission perm]
-    : p=(K_CREATE | K_ALTER | K_DROP | K_SELECT | K_MODIFY | K_AUTHORIZE | K_DESCRIBE | K_EXECUTE)
+    : p=(K_CREATE | K_ALTER | K_DROP | K_SELECT | K_MODIFY | K_AUTHORIZE | K_DESCRIBE | K_EXECUTE | K_TRUSTED)
     { $perm = Permission.valueOf($p.text.toUpperCase()); }
     ;
 
@@ -1752,6 +1754,7 @@ K_INPUT:       I N P U T;
 K_LANGUAGE:    L A N G U A G E;
 K_OR:          O R;
 K_REPLACE:     R E P L A C E;
+K_TRUSTED:     T R U S T E D;
 
 K_JSON:        J S O N;
 

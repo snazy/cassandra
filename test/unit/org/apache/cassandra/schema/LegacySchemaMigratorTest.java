@@ -329,7 +329,8 @@ public class LegacySchemaMigratorTest
                                             LongType.instance,
                                             false,
                                             "java",
-                                            "return 42L;");
+                                            "return 42L;",
+                                            false);
 
         // an overload with the same name, not a typo
         UDFunction udf2 = UDFunction.create(new FunctionName(keyspace, "udf"),
@@ -338,7 +339,8 @@ public class LegacySchemaMigratorTest
                                             Int32Type.instance,
                                             true,
                                             "java",
-                                            "return 42;");
+                                            "return 42;",
+                                            false);
 
         UDFunction udf3 = UDFunction.create(new FunctionName(keyspace, "udf3"),
                                             ImmutableList.of(new ColumnIdentifier("col4", false)),
@@ -346,7 +348,8 @@ public class LegacySchemaMigratorTest
                                             BooleanType.instance,
                                             false,
                                             "java",
-                                            "return true;");
+                                            "return true;",
+                                            false);
 
         return KeyspaceMetadata.create(keyspace,
                                        KeyspaceParams.simple(1),
@@ -538,7 +541,8 @@ public class LegacySchemaMigratorTest
         adder.add("body", function.body())
              .add("language", function.language())
              .add("return_type", function.returnType().toString())
-             .add("called_on_null_input", function.isCalledOnNullInput());
+             .add("called_on_null_input", function.isCalledOnNullInput())
+             .add("is_trusted", function.isTrusted());
 
         adder.resetCollection("argument_names")
              .resetCollection("argument_types");

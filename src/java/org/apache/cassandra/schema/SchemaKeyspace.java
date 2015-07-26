@@ -181,6 +181,7 @@ public final class SchemaKeyspace
                 + "language text,"
                 + "return_type text,"
                 + "called_on_null_input boolean,"
+                + "is_trusted boolean,"
                 + "PRIMARY KEY ((keyspace_name), function_name, signature))");
 
     private static final CFMetaData Aggregates =
@@ -1342,7 +1343,8 @@ public final class SchemaKeyspace
         adder.add("body", function.body())
              .add("language", function.language())
              .add("return_type", function.returnType().toString())
-             .add("called_on_null_input", function.isCalledOnNullInput());
+             .add("called_on_null_input", function.isCalledOnNullInput())
+             .add("is_trusted", function.isTrusted());
 
         adder.resetCollection("argument_names")
              .resetCollection("argument_types");
@@ -1393,6 +1395,7 @@ public final class SchemaKeyspace
         String language = row.getString("language");
         String body = row.getString("body");
         boolean calledOnNullInput = row.getBoolean("called_on_null_input");
+        boolean trusted = row.getBoolean("is_trusted");
 
         org.apache.cassandra.cql3.functions.Function existing = Schema.instance.findFunction(name, argTypes).orElse(null);
         if (existing instanceof UDFunction)
@@ -1416,12 +1419,12 @@ public final class SchemaKeyspace
 
         try
         {
-            return UDFunction.create(name, argNames, argTypes, returnType, calledOnNullInput, language, body);
+            return UDFunction.create(name, argNames, argTypes, returnType, calledOnNullInput, language, body, trusted);
         }
         catch (InvalidRequestException e)
         {
             logger.error(String.format("Cannot load function '%s' from schema: this function won't be available (on this node)", name), e);
-            return UDFunction.createBrokenFunction(name, argNames, argTypes, returnType, calledOnNullInput, language, body, e);
+            return UDFunction.createBrokenFunction(name, argNames, argTypes, returnType, calledOnNullInput, language, body, trusted, e);
         }
     }
 

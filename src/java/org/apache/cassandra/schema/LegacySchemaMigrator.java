@@ -722,11 +722,11 @@ public final class LegacySchemaMigrator
 
         try
         {
-            return UDFunction.create(name, argNames, argTypes, returnType, calledOnNullInput, language, body);
+            return UDFunction.create(name, argNames, argTypes, returnType, calledOnNullInput, language, body, false);
         }
         catch (InvalidRequestException e)
         {
-            return UDFunction.createBrokenFunction(name, argNames, argTypes, returnType, calledOnNullInput, language, body, e);
+            return UDFunction.createBrokenFunction(name, argNames, argTypes, returnType, calledOnNullInput, language, body, false, e);
         }
     }
 

@@ -61,7 +61,8 @@ public enum Permission
     DESCRIBE, // required on the root-level RoleResource to list all Roles
 
     // UDF permissions
-    EXECUTE;  // required to invoke any user defined function or aggregate
+    EXECUTE,  // required to invoke any user defined function or aggregate
+    TRUSTED; // required to create (or replace) non-sandboxed functions
 
     public static final Set<Permission> ALL =
             Sets.immutableEnumSet(EnumSet.range(Permission.CREATE, Permission.EXECUTE));

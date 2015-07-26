@@ -130,9 +130,10 @@ final class ScriptBasedUDFunction extends UDFunction
                           AbstractType<?> returnType,
                           boolean calledOnNullInput,
                           String language,
-                          String body)
+                          String body,
+                          boolean trusted)
     {
-        super(name, argNames, argTypes, returnType, calledOnNullInput, language, body);
+        super(name, argNames, argTypes, returnType, calledOnNullInput, language, body, trusted);
 
         Compilable scriptEngine = scriptEngines.get(language);
         if (scriptEngine == null)

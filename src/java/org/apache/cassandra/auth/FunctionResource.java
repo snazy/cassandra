@@ -50,6 +50,13 @@ public class FunctionResource implements IResource
         ROOT, KEYSPACE, FUNCTION
     }
 
+    // permissions which may be granted on the root level resource
+    private static final Set<Permission> ROOT_LEVEL_PERMISSIONS = Sets.immutableEnumSet(Permission.CREATE,
+                                                                                        Permission.ALTER,
+                                                                                        Permission.DROP,
+                                                                                        Permission.AUTHORIZE,
+                                                                                        Permission.EXECUTE,
+                                                                                        Permission.TRUSTED);
     // permissions which may be granted on either a resource representing some collection of functions
     // i.e. the root resource (all functions) or a keyspace level resource (all functions in a given keyspace)
     private static final Set<Permission> COLLECTION_LEVEL_PERMISSIONS = Sets.immutableEnumSet(Permission.CREATE,
@@ -254,6 +261,7 @@ public class FunctionResource implements IResource
         switch (level)
         {
             case ROOT:
+                return ROOT_LEVEL_PERMISSIONS;
             case KEYSPACE:
                 return COLLECTION_LEVEL_PERMISSIONS;
             case FUNCTION:

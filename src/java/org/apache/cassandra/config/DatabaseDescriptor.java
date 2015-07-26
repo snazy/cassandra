@@ -1762,11 +1762,6 @@ public class DatabaseDescriptor
         conf.enable_scripted_user_defined_functions = enableScriptedUserDefinedFunctions;
     }
 
-    public static boolean enableUserDefinedFunctionsThreads()
-    {
-        return conf.enable_user_defined_functions_threads;
-    }
-
     public static long getUserDefinedFunctionWarnTimeout()
     {
         return conf.user_defined_function_warn_timeout;

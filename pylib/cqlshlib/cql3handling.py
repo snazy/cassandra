@@ -1103,7 +1103,7 @@ syntax_rules += r'''
                             ")"
                          ;
 
-<createFunctionStatement> ::= "CREATE" ("OR" "REPLACE")? "FUNCTION"
+<createFunctionStatement> ::= "CREATE" ("OR" "REPLACE")? ("TRUSTED")? "FUNCTION"
                             ("IF" "NOT" "EXISTS")?
                             <userFunctionName>
                             ( "(" ( newcol=<cident> <storageType>
@@ -1310,6 +1310,7 @@ syntax_rules += r'''
                | "MODIFY"
                | "DESCRIBE"
                | "EXECUTE"
+               | "TRUSTED"
                ;
 
 <permissionExpr> ::= ( <permission> "PERMISSION"? )

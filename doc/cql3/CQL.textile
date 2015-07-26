@@ -645,7 +645,8 @@ h3(#createFunctionStmt). CREATE FUNCTION
 __Syntax:__
 
 bc(syntax).. 
-<create-function-stmt> ::= CREATE ( OR REPLACE )? 
+<create-function-stmt> ::= CREATE ( OR REPLACE )?
+                            ( TRUSTED )?
                             FUNCTION ( IF NOT EXISTS )?
                             ( <keyspace> '.' )? <function-name>
                             '(' <arg-name> <arg-type> ( ',' <arg-name> <arg-type> )* ')'
@@ -695,6 +696,8 @@ Behavior on invocation with @null@ values must be defined for each function. The
 If the optional @IF NOT EXISTS@ keywords are used, the function will only be created if another function with the same signature does not exist.
 
 @OR REPLACE@ and @IF NOT EXIST@ cannot be used together.
+
+The optional @TRUSTED@ keyword allows to create (or replace) a so called trusted function. An trusted function is not executed in the UDF sandbox. The permission @TRUSTED@ is required to create (or replace) an trusted function.
 
 Functions belong to a keyspace. If no keyspace is specified in @<function-name>@, the current keyspace is used (i.e. the keyspace specified using the "@USE@":#useStmt statement). It is not possible to create a user-defined function in one of the system keyspaces.
 
@@ -1421,6 +1424,7 @@ The full set of available permissions is:
 * @AUTHORIZE@
 * @DESCRIBE@
 * @EXECUTE@
+* @TRUSTED@
 
 Not all permissions are applicable to every type of resource. For instance, @EXECUTE@ is only relevant in the context of functions; granting @EXECUTE@ on a resource representing a table is nonsensical. Attempting to @GRANT@ a permission on resource to which it cannot be applied results in an error response. The following illustrates which permissions can be granted on which types of resource, and which statements are enabled by that permission.
 

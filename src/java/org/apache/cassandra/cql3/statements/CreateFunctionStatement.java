@@ -31,6 +31,7 @@ import org.apache.cassandra.db.marshal.AbstractType;
 import org.apache.cassandra.exceptions.*;
 import org.apache.cassandra.schema.Functions;
 import org.apache.cassandra.service.ClientState;
+import org.apache.cassandra.service.ClientWarn;
 import org.apache.cassandra.service.MigrationManager;
 import org.apache.cassandra.service.QueryState;
 import org.apache.cassandra.thrift.ThriftValidation;
@@ -43,6 +44,7 @@ public final class CreateFunctionStatement extends SchemaAlteringStatement
 {
     private final boolean orReplace;
     private final boolean ifNotExists;
+    private final boolean trusted;
     private FunctionName functionName;
     private final String language;
     private final String body;
@@ -65,7 +67,8 @@ public final class CreateFunctionStatement extends SchemaAlteringStatement
                                    CQL3Type.Raw rawReturnType,
                                    boolean calledOnNullInput,
                                    boolean orReplace,
-                                   boolean ifNotExists)
+                                   boolean ifNotExists,
+                                   boolean trusted)
     {
         this.functionName = functionName;
         this.language = language;
@@ -76,6 +79,7 @@ public final class CreateFunctionStatement extends SchemaAlteringStatement
         this.calledOnNullInput = calledOnNullInput;
         this.orReplace = orReplace;
         this.ifNotExists = ifNotExists;
+        this.trusted = trusted;
     }
 
     public Prepared prepare() throws InvalidRequestException
@@ -127,6 +131,9 @@ public final class CreateFunctionStatement extends SchemaAlteringStatement
                                                                                   argTypes));
         else
             state.ensureHasPermission(Permission.CREATE, FunctionResource.keyspace(functionName.keyspace));
+
+        if (trusted)
+            state.ensureHasPermission(Permission.TRUSTED, FunctionResource.root());
     }
 
     public void validate(ClientState state) throws InvalidRequestException
@@ -165,9 +172,11 @@ public final class CreateFunctionStatement extends SchemaAlteringStatement
             if (!Functions.typesMatch(old.returnType(), returnType))
                 throw new InvalidRequestException(String.format("Cannot replace function %s, the new return type %s is not compatible with the return type %s of existing function",
                                                                 functionName, returnType.asCQL3Type(), old.returnType().asCQL3Type()));
+            if (((UDFunction)old).isTrusted() && !trusted)
+                ClientWarn.warn(String.format("Replaced trusted function %s with an untrusted function", functionName));
         }
 
-        this.udFunction = UDFunction.create(functionName, argNames, argTypes, returnType, calledOnNullInput, language, body);
+        this.udFunction = UDFunction.create(functionName, argNames, argTypes, returnType, calledOnNullInput, language, body, trusted);
         this.replaced = old != null;
 
         MigrationManager.announceNewFunction(udFunction, isLocalOnly);

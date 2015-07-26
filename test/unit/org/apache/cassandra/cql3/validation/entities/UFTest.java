@@ -105,7 +105,7 @@ public class UFTest extends CQLTester
     public void testFunctionDropOnKeyspaceDrop() throws Throwable
     {
         String fSin = createFunction(KEYSPACE_PER_TEST, "double",
-                                     "CREATE FUNCTION %s ( input double ) " +
+                                     "CREATE TRUSTED FUNCTION %s ( input double ) " +
                                      "CALLED ON NULL INPUT " +
                                      "RETURNS double " +
                                      "LANGUAGE java " +
@@ -131,7 +131,7 @@ public class UFTest extends CQLTester
         createTable("CREATE TABLE %s (key int PRIMARY KEY, d double)");
 
         String fSin = createFunction(KEYSPACE_PER_TEST, "double",
-                                     "CREATE FUNCTION %s ( input double ) " +
+                                     "CREATE TRUSTED FUNCTION %s ( input double ) " +
                                      "CALLED ON NULL INPUT " +
                                      "RETURNS double " +
                                      "LANGUAGE java " +
@@ -171,7 +171,7 @@ public class UFTest extends CQLTester
         Assert.assertNull(QueryProcessor.instance.getPrepared(preparedInsert1.statementId));
         Assert.assertNotNull(QueryProcessor.instance.getPrepared(preparedInsert2.statementId));
 
-        execute("CREATE FUNCTION " + fSin + " ( input double ) " +
+        execute("CREATE TRUSTED FUNCTION " + fSin + " ( input double ) " +
                 "RETURNS NULL ON NULL INPUT " +
                 "RETURNS double " +
                 "LANGUAGE java " +
@@ -287,7 +287,7 @@ public class UFTest extends CQLTester
         // a function that we'll drop and verify that statements which use it to
         // provide a DelayedValue are removed from the cache in QueryProcessor
         String function = createFunction(KEYSPACE_PER_TEST, "double",
-                                        "CREATE FUNCTION %s ( input double ) " +
+                                        "CREATE TRUSTED FUNCTION %s ( input double ) " +
                                         "CALLED ON NULL INPUT " +
                                         "RETURNS double " +
                                         "LANGUAGE javascript " +
@@ -327,7 +327,7 @@ public class UFTest extends CQLTester
 
         // simple creation
         String fSin = createFunction(KEYSPACE_PER_TEST, "double",
-                                     "CREATE FUNCTION %s ( input double ) " +
+                                     "CREATE TRUSTED FUNCTION %s ( input double ) " +
                                      "CALLED ON NULL INPUT " +
                                      "RETURNS double " +
                                      "LANGUAGE java " +
@@ -340,7 +340,7 @@ public class UFTest extends CQLTester
                              "LANGUAGE java AS 'return Double.valueOf(Math.sin(input.doubleValue()));'");
 
         // but that it doesn't comply with "IF NOT EXISTS"
-        execute("CREATE FUNCTION IF NOT EXISTS " + fSin + " ( input double ) " +
+        execute("CREATE TRUSTED FUNCTION IF NOT EXISTS " + fSin + " ( input double ) " +
                 "CALLED ON NULL INPUT " +
                 "RETURNS double " +
                 "LANGUAGE java AS 'return Double.valueOf(Math.sin(input.doubleValue()));'");
@@ -360,7 +360,7 @@ public class UFTest extends CQLTester
                              "LANGUAGE java AS 'return Double.valueOf(42d);'");
 
         // proper replacement
-        execute("CREATE OR REPLACE FUNCTION " + fSin + " ( input double ) " +
+        execute("CREATE OR REPLACE TRUSTED FUNCTION " + fSin + " ( input double ) " +
                 "CALLED ON NULL INPUT " +
                 "RETURNS double " +
                 "LANGUAGE java AS 'return Double.valueOf(42d);'");
@@ -374,7 +374,7 @@ public class UFTest extends CQLTester
 
         // same function but other keyspace
         String fSin2 = createFunction(KEYSPACE, "double",
-                                      "CREATE FUNCTION %s ( input double ) " +
+                                      "CREATE TRUSTED FUNCTION %s ( input double ) " +
                                       "RETURNS NULL ON NULL INPUT " +
                                       "RETURNS double " +
                                       "LANGUAGE java " +
@@ -410,7 +410,7 @@ public class UFTest extends CQLTester
         execute("INSERT INTO %s(v) VALUES (?)", "aaa");
 
         String fRepeat = createFunction(KEYSPACE_PER_TEST, "text,int",
-                                        "CREATE FUNCTION %s(v text, n int) " +
+                                        "CREATE TRUSTED FUNCTION %s(v text, n int) " +
                                         "RETURNS NULL ON NULL INPUT " +
                                         "RETURNS text " +
                                         "LANGUAGE java " +
@@ -431,28 +431,28 @@ public class UFTest extends CQLTester
         execute("INSERT INTO %s(k, v) VALUES (?, ?)", "f2", 1);
 
         String fOverload = createFunction(KEYSPACE_PER_TEST, "varchar",
-                                          "CREATE FUNCTION %s ( input varchar ) " +
+                                          "CREATE TRUSTED FUNCTION %s ( input varchar ) " +
                                           "RETURNS NULL ON NULL INPUT " +
                                           "RETURNS text " +
                                           "LANGUAGE java " +
                                           "AS 'return \"f1\";'");
         createFunctionOverload(fOverload,
                                "int",
-                               "CREATE OR REPLACE FUNCTION %s(i int) " +
+                               "CREATE OR REPLACE TRUSTED FUNCTION %s(i int) " +
                                "RETURNS NULL ON NULL INPUT " +
                                "RETURNS text " +
                                "LANGUAGE java " +
                                "AS 'return \"f2\";'");
         createFunctionOverload(fOverload,
                                "text,text",
-                               "CREATE OR REPLACE FUNCTION %s(v1 text, v2 text) " +
+                               "CREATE OR REPLACE TRUSTED FUNCTION %s(v1 text, v2 text) " +
                                "RETURNS NULL ON NULL INPUT " +
                                "RETURNS text " +
                                "LANGUAGE java " +
                                "AS 'return \"f3\";'");
         createFunctionOverload(fOverload,
                                "ascii",
-                               "CREATE OR REPLACE FUNCTION %s(v ascii) " +
+                               "CREATE OR REPLACE TRUSTED FUNCTION %s(v ascii) " +
                                "RETURNS NULL ON NULL INPUT " +
                                "RETURNS text " +
                                "LANGUAGE java " +
@@ -508,7 +508,7 @@ public class UFTest extends CQLTester
         execute("INSERT INTO %s (key, val) VALUES (?, ?)", 3, 3d);
 
         String fName = createFunction(KEYSPACE_PER_TEST, "double",
-                "CREATE FUNCTION %s( input double ) " +
+                "CREATE TRUSTED FUNCTION %s( input double ) " +
                 "CALLED ON NULL INPUT " +
                 "RETURNS double " +
                 "LANGUAGE java " +
@@ -528,7 +528,7 @@ public class UFTest extends CQLTester
                    row(3, 3d, Math.sin(3d))
         );
 
-        execute("CREATE OR REPLACE FUNCTION " + fName + "( input double ) " +
+        execute("CREATE OR REPLACE TRUSTED FUNCTION " + fName + "( input double ) " +
                 "CALLED ON NULL INPUT " +
                 "RETURNS double " +
                 "LANGUAGE java\n" +
@@ -552,7 +552,7 @@ public class UFTest extends CQLTester
         String functionBody = "\n  return 1L;\n";
 
         String fName = createFunction(KEYSPACE, "",
-                                      "CREATE OR REPLACE FUNCTION %s() " +
+                                      "CREATE OR REPLACE TRUSTED FUNCTION %s() " +
                                       "RETURNS NULL ON NULL INPUT " +
                                       "RETURNS bigint " +
                                       "LANGUAGE JAVA\n" +
@@ -577,7 +577,7 @@ public class UFTest extends CQLTester
     {
         try
         {
-            execute("CREATE OR REPLACE FUNCTION " + KEYSPACE + ".jfinv() " +
+            execute("CREATE OR REPLACE TRUSTED FUNCTION " + KEYSPACE + ".jfinv() " +
                     "RETURNS NULL ON NULL INPUT " +
                     "RETURNS bigint " +
                     "LANGUAGE JAVA\n" +
@@ -594,7 +594,7 @@ public class UFTest extends CQLTester
 
         try
         {
-            execute("CREATE OR REPLACE FUNCTION " + KEYSPACE + ".jfinv() " +
+            execute("CREATE OR REPLACE TRUSTED FUNCTION " + KEYSPACE + ".jfinv() " +
                     "RETURNS NULL ON NULL INPUT " +
                     "RETURNS bigint " +
                     "LANGUAGE JAVA\n" +
@@ -627,7 +627,7 @@ public class UFTest extends CQLTester
         createTable("CREATE TABLE %s (key int primary key, val bigint)");
 
         String fName = createFunction(KEYSPACE, "double",
-                                      "CREATE OR REPLACE FUNCTION %s(val double)" +
+                                      "CREATE OR REPLACE TRUSTED FUNCTION %s(val double)" +
                                       "RETURNS NULL ON NULL INPUT " +
                                       "RETURNS double " +
                                       "LANGUAGE JAVA " +
@@ -654,7 +654,7 @@ public class UFTest extends CQLTester
                               "  return Math.sin(val);\n";
 
         String fName = createFunction(KEYSPACE, "double",
-                                      "CREATE OR REPLACE FUNCTION %s(val double) " +
+                                      "CREATE OR REPLACE TRUSTED FUNCTION %s(val double) " +
                                       "CALLED ON NULL INPUT " +
                                       "RETURNS double " +
                                       "LANGUAGE JAVA " +
@@ -684,7 +684,7 @@ public class UFTest extends CQLTester
         execute("CREATE TABLE " + KEYSPACE_PER_TEST + ".second_tab (key int primary key, val double)");
 
         String fName = createFunction(KEYSPACE_PER_TEST, "double",
-                                      "CREATE OR REPLACE FUNCTION %s(val double) " +
+                                      "CREATE OR REPLACE TRUSTED FUNCTION %s(val double) " +
                                       "RETURNS NULL ON NULL INPUT " +
                                       "RETURNS double " +
                                       "LANGUAGE JAVA " +
@@ -712,7 +712,7 @@ public class UFTest extends CQLTester
         execute("CREATE TABLE " + KEYSPACE_PER_TEST + ".second_tab (key int primary key, val double)");
 
         String fName = createFunction(KEYSPACE_PER_TEST, "",
-                                      "CREATE OR REPLACE FUNCTION %s() " +
+                                      "CREATE OR REPLACE TRUSTED FUNCTION %s() " +
                                       "RETURNS NULL ON NULL INPUT " +
                                       "RETURNS timestamp " +
                                       "LANGUAGE JAVA " +
@@ -739,7 +739,7 @@ public class UFTest extends CQLTester
     @Test
     public void testFunctionInSystemKS() throws Throwable
     {
-        execute("CREATE OR REPLACE FUNCTION " + KEYSPACE + ".totimestamp(val timeuuid) " +
+        execute("CREATE OR REPLACE TRUSTED FUNCTION " + KEYSPACE + ".totimestamp(val timeuuid) " +
                 "RETURNS NULL ON NULL INPUT " +
                 "RETURNS timestamp " +
                 "LANGUAGE JAVA\n" +
@@ -817,7 +817,7 @@ public class UFTest extends CQLTester
                               "  return Math.sin( val );\n";
 
         String fName = createFunction(KEYSPACE_PER_TEST, "double",
-                                     "CREATE OR REPLACE FUNCTION %s(val double) " +
+                                     "CREATE OR REPLACE TRUSTED FUNCTION %s(val double) " +
                                      "CALLED ON NULL INPUT " +
                                      "RETURNS double " +
                                      "LANGUAGE JAVA " +
@@ -848,7 +848,7 @@ public class UFTest extends CQLTester
                               "  throw new RuntimeException(\"oh no!\");\n";
 
         String fName = createFunction(KEYSPACE_PER_TEST, "double",
-                                      "CREATE OR REPLACE FUNCTION %s(val double) " +
+                                      "CREATE OR REPLACE TRUSTED FUNCTION %s(val double) " +
                                       "RETURNS NULL ON NULL INPUT " +
                                       "RETURNS double " +
                                       "LANGUAGE JAVA\n" +
@@ -881,7 +881,7 @@ public class UFTest extends CQLTester
                               "  return \"'\"+Math.sin(input)+'\\\'';\n";
 
         String fName = createFunction(KEYSPACE_PER_TEST, "double",
-                                      "CREATE FUNCTION %s( input double ) " +
+                                      "CREATE TRUSTED FUNCTION %s( input double ) " +
                                       "CALLED ON NULL INPUT " +
                                       "RETURNS text " +
                                       "LANGUAGE java\n" +
@@ -900,19 +900,19 @@ public class UFTest extends CQLTester
         createTable("CREATE TABLE %s (key int primary key, lst list<double>, st set<text>, mp map<int, boolean>)");
 
         String fList = createFunction(KEYSPACE_PER_TEST, "list<double>",
-                                     "CREATE FUNCTION %s( lst list<double> ) " +
+                                     "CREATE TRUSTED FUNCTION %s( lst list<double> ) " +
                                      "RETURNS NULL ON NULL INPUT " +
                                      "RETURNS list<double> " +
                                      "LANGUAGE java\n" +
                                      "AS $$return lst;$$;");
         String fSet = createFunction(KEYSPACE_PER_TEST, "set<text>",
-                                     "CREATE FUNCTION %s( st set<text> ) " +
+                                     "CREATE TRUSTED FUNCTION %s( st set<text> ) " +
                                      "RETURNS NULL ON NULL INPUT " +
                                      "RETURNS set<text> " +
                                      "LANGUAGE java\n" +
                                      "AS $$return st;$$;");
         String fMap = createFunction(KEYSPACE_PER_TEST, "map<int, boolean>",
-                                     "CREATE FUNCTION %s( mp map<int, boolean> ) " +
+                                     "CREATE TRUSTED FUNCTION %s( mp map<int, boolean> ) " +
                                      "RETURNS NULL ON NULL INPUT " +
                                      "RETURNS map<int, boolean> " +
                                      "LANGUAGE java\n" +
@@ -969,31 +969,31 @@ public class UFTest extends CQLTester
                     "tup frozen<tuple<double, text, int, boolean>>, udt frozen<" + type + ">)");
 
         String fList = createFunction(KEYSPACE, "list<double>",
-                                      "CREATE FUNCTION %s( coll list<double> ) " +
+                                      "CREATE TRUSTED FUNCTION %s( coll list<double> ) " +
                                       "CALLED ON NULL INPUT " +
                                       "RETURNS list<double> " +
                                       "LANGUAGE java\n" +
                                       "AS $$return coll;$$;");
         String fSet = createFunction(KEYSPACE, "set<text>",
-                                     "CREATE FUNCTION %s( coll set<text> ) " +
+                                     "CREATE TRUSTED FUNCTION %s( coll set<text> ) " +
                                      "CALLED ON NULL INPUT " +
                                      "RETURNS set<text> " +
                                      "LANGUAGE java\n" +
                                      "AS $$return coll;$$;");
         String fMap = createFunction(KEYSPACE, "map<int, boolean>",
-                                     "CREATE FUNCTION %s( coll map<int, boolean> ) " +
+                                     "CREATE TRUSTED FUNCTION %s( coll map<int, boolean> ) " +
                                      "CALLED ON NULL INPUT " +
                                      "RETURNS map<int, boolean> " +
                                      "LANGUAGE java\n" +
                                      "AS $$return coll;$$;");
         String fTup = createFunction(KEYSPACE, "tuple<double, text, int, boolean>",
-                                     "CREATE FUNCTION %s( val tuple<double, text, int, boolean> ) " +
+                                     "CREATE TRUSTED FUNCTION %s( val tuple<double, text, int, boolean> ) " +
                                      "CALLED ON NULL INPUT " +
                                      "RETURNS tuple<double, text, int, boolean> " +
                                      "LANGUAGE java\n" +
                                      "AS $$return val;$$;");
         String fUdt = createFunction(KEYSPACE, type,
-                                     "CREATE FUNCTION %s( val " + type + " ) " +
+                                     "CREATE TRUSTED FUNCTION %s( val " + type + " ) " +
                                      "CALLED ON NULL INPUT " +
                                      "RETURNS " + type + " " +
                                      "LANGUAGE java\n" +
@@ -1075,7 +1075,7 @@ public class UFTest extends CQLTester
         createTable("CREATE TABLE %s (key int primary key, tup frozen<tuple<double, text, int, boolean>>)");
 
         String fName = createFunction(KEYSPACE, "tuple<double, text, int, boolean>",
-                                     "CREATE FUNCTION %s( tup tuple<double, text, int, boolean> ) " +
+                                     "CREATE TRUSTED FUNCTION %s( tup tuple<double, text, int, boolean> ) " +
                                      "RETURNS NULL ON NULL INPUT " +
                                      "RETURNS tuple<double, text, int, boolean> " +
                                      "LANGUAGE java\n" +
@@ -1100,35 +1100,35 @@ public class UFTest extends CQLTester
         createTable("CREATE TABLE %s (key int primary key, tup frozen<" + tupleTypeDef + ">)");
 
         String fTup0 = createFunction(KEYSPACE_PER_TEST, tupleTypeDef,
-                "CREATE FUNCTION %s( tup " + tupleTypeDef + " ) " +
+                "CREATE TRUSTED FUNCTION %s( tup " + tupleTypeDef + " ) " +
                 "CALLED ON NULL INPUT " +
                 "RETURNS " + tupleTypeDef + ' ' +
                 "LANGUAGE java\n" +
                 "AS $$return " +
                 "       tup;$$;");
         String fTup1 = createFunction(KEYSPACE_PER_TEST, tupleTypeDef,
-                "CREATE FUNCTION %s( tup " + tupleTypeDef + " ) " +
+                "CREATE TRUSTED FUNCTION %s( tup " + tupleTypeDef + " ) " +
                 "CALLED ON NULL INPUT " +
                 "RETURNS double " +
                 "LANGUAGE java\n" +
                 "AS $$return " +
                 "       Double.valueOf(tup.getDouble(0));$$;");
         String fTup2 = createFunction(KEYSPACE_PER_TEST, tupleTypeDef,
-                                      "CREATE FUNCTION %s( tup " + tupleTypeDef + " ) " +
+                                      "CREATE TRUSTED FUNCTION %s( tup " + tupleTypeDef + " ) " +
                                       "RETURNS NULL ON NULL INPUT " +
                                       "RETURNS list<double> " +
                                       "LANGUAGE java\n" +
                                       "AS $$return " +
                                       "       tup.getList(1, Double.class);$$;");
         String fTup3 = createFunction(KEYSPACE_PER_TEST, tupleTypeDef,
-                "CREATE FUNCTION %s( tup " + tupleTypeDef + " ) " +
+                "CREATE TRUSTED FUNCTION %s( tup " + tupleTypeDef + " ) " +
                 "RETURNS NULL ON NULL INPUT " +
                 "RETURNS set<text> " +
                 "LANGUAGE java\n" +
                 "AS $$return " +
                 "       tup.getSet(2, String.class);$$;");
         String fTup4 = createFunction(KEYSPACE_PER_TEST, tupleTypeDef,
-                "CREATE FUNCTION %s( tup " + tupleTypeDef + " ) " +
+                "CREATE TRUSTED FUNCTION %s( tup " + tupleTypeDef + " ) " +
                 "RETURNS NULL ON NULL INPUT " +
                 "RETURNS map<int, boolean> " +
                 "LANGUAGE java\n" +
@@ -1194,7 +1194,7 @@ public class UFTest extends CQLTester
             executeNet(version, "USE " + KEYSPACE);
 
             executeNet(version,
-                       "CREATE FUNCTION f_use1( udt " + type + " ) " +
+                       "CREATE TRUSTED FUNCTION f_use1( udt " + type + " ) " +
                        "RETURNS NULL ON NULL INPUT " +
                        "RETURNS " + type + " " +
                        "LANGUAGE java " +
@@ -1223,21 +1223,21 @@ public class UFTest extends CQLTester
         createTable("CREATE TABLE %s (key int primary key, udt frozen<" + type + ">)");
 
         String fUdt0 = createFunction(KEYSPACE, type,
-                                      "CREATE FUNCTION %s( udt " + type + " ) " +
+                                      "CREATE TRUSTED FUNCTION %s( udt " + type + " ) " +
                                       "RETURNS NULL ON NULL INPUT " +
                                       "RETURNS " + type + " " +
                                       "LANGUAGE java " +
                                       "AS $$return " +
                                       "     udt;$$;");
         String fUdt1 = createFunction(KEYSPACE, type,
-                                      "CREATE FUNCTION %s( udt " + type + ") " +
+                                      "CREATE TRUSTED FUNCTION %s( udt " + type + ") " +
                                       "RETURNS NULL ON NULL INPUT " +
                                       "RETURNS text " +
                                       "LANGUAGE java " +
                                       "AS $$return " +
                                       "     udt.getString(\"txt\");$$;");
         String fUdt2 = createFunction(KEYSPACE, type,
-                                      "CREATE FUNCTION %s( udt " + type + ") " +
+                                      "CREATE TRUSTED FUNCTION %s( udt " + type + ") " +
                                       "CALLED ON NULL INPUT " +
                                       "RETURNS int " +
                                       "LANGUAGE java " +
@@ -1277,7 +1277,7 @@ public class UFTest extends CQLTester
         createTable("CREATE TABLE %s (key int primary key, udt frozen<" + type + ">)");
 
         String fName = createFunction(KEYSPACE, type,
-                                      "CREATE FUNCTION %s( udt " + type + " ) " +
+                                      "CREATE TRUSTED FUNCTION %s( udt " + type + " ) " +
                                       "CALLED ON NULL INPUT " +
                                       "RETURNS int " +
                                       "LANGUAGE java " +
@@ -1314,7 +1314,7 @@ public class UFTest extends CQLTester
         createTable("CREATE TABLE %s (key int primary key, udt frozen<" + type + ">)");
 
         String fName = createFunction(KEYSPACE, type,
-                                      "CREATE FUNCTION %s( udt " + type + " ) " +
+                                      "CREATE TRUSTED FUNCTION %s( udt " + type + " ) " +
                                       "RETURNS NULL ON NULL INPUT " +
                                       "RETURNS text " +
                                       "LANGUAGE java\n" +
@@ -1344,50 +1344,50 @@ public class UFTest extends CQLTester
         createTable("CREATE TABLE %s (key int primary key, udt frozen<" + type + ">)");
 
         String fName1replace = createFunction(KEYSPACE, type,
-                                              "CREATE FUNCTION %s( udt " + type + ") " +
+                                              "CREATE TRUSTED FUNCTION %s( udt " + type + ") " +
                                               "RETURNS NULL ON NULL INPUT " +
                                               "RETURNS text " +
                                               "LANGUAGE java\n" +
                                               "AS $$return udt.getString(\"txt\");$$;");
         String fName2replace = createFunction(KEYSPACE, type,
-                                              "CREATE FUNCTION %s( udt " + type + " ) " +
+                                              "CREATE TRUSTED FUNCTION %s( udt " + type + " ) " +
                                               "CALLED ON NULL INPUT " +
                                               "RETURNS int " +
                                               "LANGUAGE java\n" +
                                               "AS $$return Integer.valueOf(udt.getInt(\"i\"));$$;");
         String fName3replace = createFunction(KEYSPACE, type,
-                                              "CREATE FUNCTION %s( udt " + type + " ) " +
+                                              "CREATE TRUSTED FUNCTION %s( udt " + type + " ) " +
                                               "CALLED ON NULL INPUT " +
                                               "RETURNS double " +
                                               "LANGUAGE java\n" +
                                               "AS $$return Double.valueOf(udt.getDouble(\"added\"));$$;");
         String fName4replace = createFunction(KEYSPACE, type,
-                                              "CREATE FUNCTION %s( udt " + type + " ) " +
+                                              "CREATE TRUSTED FUNCTION %s( udt " + type + " ) " +
                                               "RETURNS NULL ON NULL INPUT " +
                                               "RETURNS " + type + " " +
                                               "LANGUAGE java\n" +
                                               "AS $$return udt;$$;");
 
         String fName1noReplace = createFunction(KEYSPACE, type,
-                                              "CREATE FUNCTION %s( udt " + type + " ) " +
+                                              "CREATE TRUSTED FUNCTION %s( udt " + type + " ) " +
                                               "RETURNS NULL ON NULL INPUT " +
                                               "RETURNS text " +
                                               "LANGUAGE java\n" +
                                               "AS $$return udt.getString(\"txt\");$$;");
         String fName2noReplace = createFunction(KEYSPACE, type,
-                                              "CREATE FUNCTION %s( udt " + type + " ) " +
+                                              "CREATE TRUSTED FUNCTION %s( udt " + type + " ) " +
                                               "CALLED ON NULL INPUT " +
                                               "RETURNS int " +
                                               "LANGUAGE java\n" +
                                               "AS $$return Integer.valueOf(udt.getInt(\"i\"));$$;");
         String fName3noReplace = createFunction(KEYSPACE, type,
-                                                "CREATE FUNCTION %s( udt " + type + " ) " +
+                                                "CREATE TRUSTED FUNCTION %s( udt " + type + " ) " +
                                                 "CALLED ON NULL INPUT " +
                                                 "RETURNS double " +
                                                 "LANGUAGE java\n" +
                                                 "AS $$return Double.valueOf(udt.getDouble(\"added\"));$$;");
         String fName4noReplace = createFunction(KEYSPACE, type,
-                                                "CREATE FUNCTION %s( udt " + type + " ) " +
+                                                "CREATE TRUSTED FUNCTION %s( udt " + type + " ) " +
                                                 "RETURNS NULL ON NULL INPUT " +
                                                 "RETURNS " + type + " " +
                                                 "LANGUAGE java\n" +
@@ -1409,7 +1409,7 @@ public class UFTest extends CQLTester
         // note: type references of functions remain at the state _before_ the type mutation
         // means we need to recreate the functions
 
-        execute(String.format("CREATE OR REPLACE FUNCTION %s( udt %s ) " +
+        execute(String.format("CREATE OR REPLACE TRUSTED FUNCTION %s( udt %s ) " +
                               "RETURNS NULL ON NULL INPUT " +
                               "RETURNS text " +
                               "LANGUAGE java\n" +
@@ -1417,7 +1417,7 @@ public class UFTest extends CQLTester
                               "     udt.getString(\"txt\");$$;",
                               fName1replace, type));
         Assert.assertEquals(1, Schema.instance.getFunctions(parseFunctionName(fName1replace)).size());
-        execute(String.format("CREATE OR REPLACE FUNCTION %s( udt %s ) " +
+        execute(String.format("CREATE OR REPLACE TRUSTED FUNCTION %s( udt %s ) " +
                               "CALLED ON NULL INPUT " +
                               "RETURNS int " +
                               "LANGUAGE java\n" +
@@ -1425,7 +1425,7 @@ public class UFTest extends CQLTester
                               "     Integer.valueOf(udt.getInt(\"i\"));$$;",
                               fName2replace, type));
         Assert.assertEquals(1, Schema.instance.getFunctions(parseFunctionName(fName2replace)).size());
-        execute(String.format("CREATE OR REPLACE FUNCTION %s( udt %s ) " +
+        execute(String.format("CREATE OR REPLACE TRUSTED FUNCTION %s( udt %s ) " +
                               "CALLED ON NULL INPUT " +
                               "RETURNS double " +
                               "LANGUAGE java\n" +
@@ -1433,7 +1433,7 @@ public class UFTest extends CQLTester
                               "     Double.valueOf(udt.getDouble(\"added\"));$$;",
                               fName3replace, type));
         Assert.assertEquals(1, Schema.instance.getFunctions(parseFunctionName(fName3replace)).size());
-        execute(String.format("CREATE OR REPLACE FUNCTION %s( udt %s ) " +
+        execute(String.format("CREATE OR REPLACE TRUSTED FUNCTION %s( udt %s ) " +
                               "RETURNS NULL ON NULL INPUT " +
                               "RETURNS %s " +
                               "LANGUAGE java\n" +
@@ -1483,7 +1483,7 @@ public class UFTest extends CQLTester
                                   type, type, type));
 
         String fName1 = createFunction(KEYSPACE, "list<frozen<" + type + ">>",
-                              "CREATE FUNCTION %s( lst list<frozen<" + type + ">> ) " +
+                              "CREATE TRUSTED FUNCTION %s( lst list<frozen<" + type + ">> ) " +
                               "RETURNS NULL ON NULL INPUT " +
                               "RETURNS text " +
                               "LANGUAGE java\n" +
@@ -1491,7 +1491,7 @@ public class UFTest extends CQLTester
                               "     com.datastax.driver.core.UDTValue udtVal = (com.datastax.driver.core.UDTValue)lst.get(1);" +
                               "     return udtVal.getString(\"txt\");$$;");
         String fName2 = createFunction(KEYSPACE, "set<frozen<" + type + ">>",
-                                       "CREATE FUNCTION %s( st set<frozen<" + type + ">> ) " +
+                                       "CREATE TRUSTED FUNCTION %s( st set<frozen<" + type + ">> ) " +
                                        "RETURNS NULL ON NULL INPUT " +
                                        "RETURNS text " +
                                        "LANGUAGE java\n" +
@@ -1499,7 +1499,7 @@ public class UFTest extends CQLTester
                                        "     com.datastax.driver.core.UDTValue udtVal = (com.datastax.driver.core.UDTValue)st.iterator().next();" +
                                        "     return udtVal.getString(\"txt\");$$;");
         String fName3 = createFunction(KEYSPACE, "map<int, frozen<" + type + ">>",
-                              "CREATE FUNCTION %s( mp map<int, frozen<" + type + ">> ) " +
+                              "CREATE TRUSTED FUNCTION %s( mp map<int, frozen<" + type + ">> ) " +
                               "RETURNS NULL ON NULL INPUT " +
                               "RETURNS text " +
                               "LANGUAGE java\n" +
@@ -1613,21 +1613,21 @@ public class UFTest extends CQLTester
             String typeName = typeDef.udfType;
             typeDef.fCheckArgAndReturn = createFunction(KEYSPACE,
                                                         typeName,
-                                                        "CREATE OR REPLACE FUNCTION %s(val " + typeName + ") " +
+                                                        "CREATE OR REPLACE TRUSTED FUNCTION %s(val " + typeName + ") " +
                                                         "CALLED ON NULL INPUT " +
                                                         "RETURNS " + typeName + ' ' +
                                                         "LANGUAGE java\n" +
                                                         "AS 'return val;';");
             typeDef.fCalledOnNull = createFunction(KEYSPACE,
                                                    typeName,
-                                                   "CREATE OR REPLACE FUNCTION %s(val " + typeName + ") " +
+                                                   "CREATE OR REPLACE TRUSTED FUNCTION %s(val " + typeName + ") " +
                                                    "CALLED ON NULL INPUT " +
                                                    "RETURNS text " +
                                                    "LANGUAGE java\n" +
                                                    "AS 'return \"called\";';");
             typeDef.fReturnsNullOnNull = createFunction(KEYSPACE,
                                                         typeName,
-                                                        "CREATE OR REPLACE FUNCTION %s(val " + typeName + ") " +
+                                                        "CREATE OR REPLACE TRUSTED FUNCTION %s(val " + typeName + ") " +
                                                         "RETURNS NULL ON NULL INPUT " +
                                                         "RETURNS text " +
                                                         "LANGUAGE java\n" +
@@ -1692,14 +1692,14 @@ public class UFTest extends CQLTester
     {
         String fNulls = createFunction(KEYSPACE,
                                        "int",
-                                       "CREATE OR REPLACE FUNCTION %s(val int) " +
+                                       "CREATE OR REPLACE TRUSTED FUNCTION %s(val int) " +
                                        "CALLED ON NULL INPUT " +
                                        "RETURNS text " +
                                        "LANGUAGE java\n" +
                                        "AS 'return \"foo bar\";';");
         String fNoNulls = createFunction(KEYSPACE,
                                          "int",
-                                         "CREATE OR REPLACE FUNCTION %s(val int) " +
+                                         "CREATE OR REPLACE TRUSTED FUNCTION %s(val int) " +
                                          "RETURNS NULL ON NULL INPUT " +
                                          "RETURNS text " +
                                          "LANGUAGE java\n" +
@@ -1716,12 +1716,12 @@ public class UFTest extends CQLTester
                       "LANGUAGE java\n" +
                       "AS 'return \"foo bar\";';");
 
-        execute("CREATE OR REPLACE FUNCTION " + fNulls + "(val int) " +
+        execute("CREATE OR REPLACE TRUSTED FUNCTION " + fNulls + "(val int) " +
                 "CALLED ON NULL INPUT " +
                 "RETURNS text " +
                 "LANGUAGE java\n" +
                 "AS 'return \"foo bar\";';");
-        execute("CREATE OR REPLACE FUNCTION " + fNoNulls + "(val int) " +
+        execute("CREATE OR REPLACE TRUSTED FUNCTION " + fNoNulls + "(val int) " +
                 "RETURNS NULL ON NULL INPUT " +
                 "RETURNS text " +
                 "LANGUAGE java\n" +
@@ -1735,7 +1735,7 @@ public class UFTest extends CQLTester
         execute("INSERT INTO %s (key, dval) VALUES (?, ?)", 1, 1d);
 
         String fName = createFunction(KEYSPACE_PER_TEST, "double",
-                                      "CREATE OR REPLACE FUNCTION %s(val double) " +
+                                      "CREATE OR REPLACE TRUSTED FUNCTION %s(val double) " +
                                       "RETURNS NULL ON NULL INPUT " +
                                       "RETURNS double " +
                                       "LANGUAGE JAVA\n" +
@@ -1751,6 +1751,7 @@ public class UFTest extends CQLTester
                                                             true,
                                                             "java",
                                                             f.body(),
+                                                            false,
                                                             new InvalidRequestException("foo bar is broken"));
         Schema.instance.setKeyspaceMetadata(ksm.withSwapped(ksm.functions.without(f.name(), f.argTypes()).with(broken)));
 
@@ -1765,7 +1766,7 @@ public class UFTest extends CQLTester
         execute("INSERT INTO %s (key, dval) VALUES (?, ?)", 1, 1d);
 
         String fName = createFunction(KEYSPACE_PER_TEST, "double",
-                                      "CREATE OR REPLACE FUNCTION %s(val double) " +
+                                      "CREATE OR REPLACE TRUSTED FUNCTION %s(val double) " +
                                       "RETURNS NULL ON NULL INPUT " +
                                       "RETURNS double " +
                                       "LANGUAGE JAVA\n" +
@@ -1817,7 +1818,7 @@ public class UFTest extends CQLTester
 
         String functionName = createFunction(KEYSPACE,
                                              "set<int>",
-                                             "CREATE FUNCTION %s (values set<int>) " +
+                                             "CREATE TRUSTED FUNCTION %s (values set<int>) " +
                                              "CALLED ON NULL INPUT " +
                                              "RETURNS int " +
                                              "LANGUAGE java\n" +
@@ -1830,7 +1831,7 @@ public class UFTest extends CQLTester
 
         functionName = createFunction(KEYSPACE,
                                       "set<int>",
-                                             "CREATE FUNCTION %s (values set<int>) " +
+                                             "CREATE TRUSTED FUNCTION %s (values set<int>) " +
                                              "CALLED ON NULL INPUT " +
                                              "RETURNS set<int> " +
                                              "LANGUAGE java\n" +
@@ -1870,7 +1871,7 @@ public class UFTest extends CQLTester
 
         String functionName = createFunction(KEYSPACE,
                                              "list<int>",
-                                             "CREATE FUNCTION %s (values list<int>) " +
+                                             "CREATE TRUSTED FUNCTION %s (values list<int>) " +
                                              "CALLED ON NULL INPUT " +
                                              "RETURNS int " +
                                              "LANGUAGE java\n" +
@@ -1883,7 +1884,7 @@ public class UFTest extends CQLTester
 
         functionName = createFunction(KEYSPACE,
                                       "list<int>",
-                                      "CREATE FUNCTION %s (values list<int>) " +
+                                      "CREATE TRUSTED FUNCTION %s (values list<int>) " +
                                       "CALLED ON NULL INPUT " +
                                       "RETURNS list<int> " +
                                       "LANGUAGE java\n" +
@@ -1923,7 +1924,7 @@ public class UFTest extends CQLTester
 
         String functionName = createFunction(KEYSPACE,
                                              "map<int, int>",
-                                             "CREATE FUNCTION %s (values map<int, int>) " +
+                                             "CREATE TRUSTED FUNCTION %s (values map<int, int>) " +
                                              "CALLED ON NULL INPUT " +
                                              "RETURNS int " +
                                              "LANGUAGE java\n" +
@@ -1936,7 +1937,7 @@ public class UFTest extends CQLTester
 
         functionName = createFunction(KEYSPACE,
                                       "map<int, int>",
-                                      "CREATE FUNCTION %s (values map<int, int>) " +
+                                      "CREATE TRUSTED FUNCTION %s (values map<int, int>) " +
                                       "CALLED ON NULL INPUT " +
                                       "RETURNS map<int, int> " +
                                       "LANGUAGE java\n" +
@@ -1976,7 +1977,7 @@ public class UFTest extends CQLTester
 
         String functionName = createFunction(KEYSPACE,
                                              "tuple<int, int>",
-                                             "CREATE FUNCTION %s (values tuple<int, int>) " +
+                                             "CREATE TRUSTED FUNCTION %s (values tuple<int, int>) " +
                                              "CALLED ON NULL INPUT " +
                                              "RETURNS text " +
                                              "LANGUAGE java\n" +
@@ -1989,7 +1990,7 @@ public class UFTest extends CQLTester
 
         functionName = createFunction(KEYSPACE,
                                       "tuple<int, int>",
-                                      "CREATE FUNCTION %s (values tuple<int, int>) " +
+                                      "CREATE TRUSTED FUNCTION %s (values tuple<int, int>) " +
                                       "CALLED ON NULL INPUT " +
                                       "RETURNS tuple<int, int> " +
                                       "LANGUAGE java\n" +
@@ -2030,7 +2031,7 @@ public class UFTest extends CQLTester
 
         String functionName = createFunction(KEYSPACE,
                                              myType,
-                                             "CREATE FUNCTION %s (values " + myType + ") " +
+                                             "CREATE TRUSTED FUNCTION %s (values " + myType + ") " +
                                              "CALLED ON NULL INPUT " +
                                              "RETURNS text " +
                                              "LANGUAGE java\n" +
@@ -2043,7 +2044,7 @@ public class UFTest extends CQLTester
 
         functionName = createFunction(KEYSPACE,
                                       myType,
-                                      "CREATE FUNCTION %s (values " + myType + ") " +
+                                      "CREATE TRUSTED FUNCTION %s (values " + myType + ") " +
                                       "CALLED ON NULL INPUT " +
                                       "RETURNS " + myType + " " +
                                       "LANGUAGE java\n" +
@@ -2063,84 +2064,84 @@ public class UFTest extends CQLTester
         execute("INSERT INTO %s (key, sval, aval, bval, empty_int) VALUES (?, ?, ?, ?, blobAsInt(0x))", 1, "", "", ByteBuffer.allocate(0));
 
         String fNameSRC = createFunction(KEYSPACE_PER_TEST, "text",
-                                         "CREATE OR REPLACE FUNCTION %s(val text) " +
+                                         "CREATE OR REPLACE TRUSTED FUNCTION %s(val text) " +
                                          "CALLED ON NULL INPUT " +
                                          "RETURNS text " +
                                          "LANGUAGE JAVA\n" +
                                          "AS 'return val;'");
 
         String fNameSCC = createFunction(KEYSPACE_PER_TEST, "text",
-                                         "CREATE OR REPLACE FUNCTION %s(val text) " +
+                                         "CREATE OR REPLACE TRUSTED FUNCTION %s(val text) " +
                                          "CALLED ON NULL INPUT " +
                                          "RETURNS text " +
                                          "LANGUAGE JAVA\n" +
                                          "AS 'return \"\";'");
 
         String fNameSRN = createFunction(KEYSPACE_PER_TEST, "text",
-                                         "CREATE OR REPLACE FUNCTION %s(val text) " +
+                                         "CREATE OR REPLACE TRUSTED FUNCTION %s(val text) " +
                                          "RETURNS NULL ON NULL INPUT " +
                                          "RETURNS text " +
                                          "LANGUAGE JAVA\n" +
                                          "AS 'return val;'");
 
         String fNameSCN = createFunction(KEYSPACE_PER_TEST, "text",
-                                         "CREATE OR REPLACE FUNCTION %s(val text) " +
+                                         "CREATE OR REPLACE TRUSTED FUNCTION %s(val text) " +
                                          "RETURNS NULL ON NULL INPUT " +
                                          "RETURNS text " +
                                          "LANGUAGE JAVA\n" +
                                          "AS 'return \"\";'");
 
         String fNameBRC = createFunction(KEYSPACE_PER_TEST, "blob",
-                                         "CREATE OR REPLACE FUNCTION %s(val blob) " +
+                                         "CREATE OR REPLACE TRUSTED FUNCTION %s(val blob) " +
                                          "CALLED ON NULL INPUT " +
                                          "RETURNS blob " +
                                          "LANGUAGE JAVA\n" +
                                          "AS 'return val;'");
 
         String fNameBCC = createFunction(KEYSPACE_PER_TEST, "blob",
-                                         "CREATE OR REPLACE FUNCTION %s(val blob) " +
+                                         "CREATE OR REPLACE TRUSTED FUNCTION %s(val blob) " +
                                          "CALLED ON NULL INPUT " +
                                          "RETURNS blob " +
                                          "LANGUAGE JAVA\n" +
                                          "AS 'return ByteBuffer.allocate(0);'");
 
         String fNameBRN = createFunction(KEYSPACE_PER_TEST, "blob",
-                                         "CREATE OR REPLACE FUNCTION %s(val blob) " +
+                                         "CREATE OR REPLACE TRUSTED FUNCTION %s(val blob) " +
                                          "RETURNS NULL ON NULL INPUT " +
                                          "RETURNS blob " +
                                          "LANGUAGE JAVA\n" +
                                          "AS 'return val;'");
 
         String fNameBCN = createFunction(KEYSPACE_PER_TEST, "blob",
-                                         "CREATE OR REPLACE FUNCTION %s(val blob) " +
+                                         "CREATE OR REPLACE TRUSTED FUNCTION %s(val blob) " +
                                          "RETURNS NULL ON NULL INPUT " +
                                          "RETURNS blob " +
                                          "LANGUAGE JAVA\n" +
                                          "AS 'return ByteBuffer.allocate(0);'");
 
         String fNameIRC = createFunction(KEYSPACE_PER_TEST, "int",
-                                         "CREATE OR REPLACE FUNCTION %s(val int) " +
+                                         "CREATE OR REPLACE TRUSTED FUNCTION %s(val int) " +
                                          "CALLED ON NULL INPUT " +
                                          "RETURNS int " +
                                          "LANGUAGE JAVA\n" +
                                          "AS 'return val;'");
 
         String fNameICC = createFunction(KEYSPACE_PER_TEST, "int",
-                                         "CREATE OR REPLACE FUNCTION %s(val int) " +
+                                         "CREATE OR REPLACE TRUSTED FUNCTION %s(val int) " +
                                          "CALLED ON NULL INPUT " +
                                          "RETURNS int " +
                                          "LANGUAGE JAVA\n" +
                                          "AS 'return 0;'");
 
         String fNameIRN = createFunction(KEYSPACE_PER_TEST, "int",
-                                         "CREATE OR REPLACE FUNCTION %s(val int) " +
+                                         "CREATE OR REPLACE TRUSTED FUNCTION %s(val int) " +
                                          "RETURNS NULL ON NULL INPUT " +
                                          "RETURNS int " +
                                          "LANGUAGE JAVA\n" +
                                          "AS 'return val;'");
 
         String fNameICN = createFunction(KEYSPACE_PER_TEST, "blob",
-                                         "CREATE OR REPLACE FUNCTION %s(val int) " +
+                                         "CREATE OR REPLACE TRUSTED FUNCTION %s(val int) " +
                                          "RETURNS NULL ON NULL INPUT " +
                                          "RETURNS int " +
                                          "LANGUAGE JAVA\n" +
@@ -2162,6 +2163,29 @@ public class UFTest extends CQLTester
         assertRows(execute("SELECT " + fNameIRN + "(empty_int) FROM %s"), row(new Object[]{ null }));
         assertRows(execute("SELECT " + fNameICC + "(empty_int) FROM %s"), row(0));
         assertRows(execute("SELECT " + fNameICN + "(empty_int) FROM %s"), row(new Object[]{ null }));
+    }
+
+    @Test
+    public void testTrusted() throws Throwable
+    {
+        createTable("CREATE TABLE %s (key int primary key, dval double)");
+        execute("INSERT INTO %s (key, dval) VALUES (?, ?)", 1, 1d);
+
+        String fName = createFunction(KEYSPACE_PER_TEST, "double",
+                                      "CREATE OR REPLACE TRUSTED FUNCTION %s(val double) " +
+                                      "RETURNS NULL ON NULL INPUT " +
+                                      "RETURNS double " +
+                                      "LANGUAGE JAVA\n" +
+                                      "AS 'System.getProperty(\"foo.bar.baz\"); return 0d;';");
+        execute("SELECT " + fName + "(dval) FROM %s WHERE key=1");
+
+        fName = createFunction(KEYSPACE_PER_TEST, "double",
+                               "CREATE OR REPLACE TRUSTED FUNCTION %s(val double) " +
+                               "RETURNS NULL ON NULL INPUT " +
+                               "RETURNS text " +
+                               "LANGUAGE JAVASCRIPT\n" +
+                               "AS 'java.lang.System.getProperty(\"foo.bar.baz\");';");
+        execute("SELECT " + fName + "(dval) FROM %s WHERE key=1");
     }
 
     @Test

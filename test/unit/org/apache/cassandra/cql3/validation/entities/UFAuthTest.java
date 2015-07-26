@@ -92,6 +92,41 @@ public class UFAuthTest extends CQLTester
     }
 
     @Test
+    public void trustedFunction() throws Throwable
+    {
+
+        grantCreate();
+        try
+        {
+            try
+            {
+                getStatement(createSimpleTrustedFunctionCql()).checkAccess(clientState);
+                fail("Expected an UnauthorizedException, but none was thrown");
+            }
+            catch (UnauthorizedException e)
+            {
+                assertEquals(String.format("User %s has no TRUSTED permission on <all functions> or any of its parents",
+                                           roleName),
+                             e.getLocalizedMessage());
+            }
+
+            grantTrusted();
+            try
+            {
+                getStatement(createSimpleTrustedFunctionCql()).checkAccess(clientState);
+            }
+            finally
+            {
+                revokeTrusted();
+            }
+        }
+        finally
+        {
+            revokeCreate();
+        }
+    }
+
+    @Test
     public void functionInSelectPKRestriction() throws Throwable
     {
         String functionName = createSimpleFunction();
@@ -532,6 +567,38 @@ public class UFAuthTest extends CQLTester
                                                   role);
     }
 
+    private void grantTrusted()
+    {
+        DatabaseDescriptor.getAuthorizer().grant(AuthenticatedUser.SYSTEM_USER,
+                                                 ImmutableSet.of(Permission.TRUSTED),
+                                                 FunctionResource.root(),
+                                                 role);
+    }
+
+    private void revokeTrusted()
+    {
+        DatabaseDescriptor.getAuthorizer().revoke(AuthenticatedUser.SYSTEM_USER,
+                                                  ImmutableSet.of(Permission.TRUSTED),
+                                                  FunctionResource.root(),
+                                                  role);
+    }
+
+    private void grantCreate()
+    {
+        DatabaseDescriptor.getAuthorizer().grant(AuthenticatedUser.SYSTEM_USER,
+                                                 ImmutableSet.of(Permission.CREATE),
+                                                 FunctionResource.root(),
+                                                 role);
+    }
+
+    private void revokeCreate()
+    {
+        DatabaseDescriptor.getAuthorizer().revoke(AuthenticatedUser.SYSTEM_USER,
+                                                  ImmutableSet.of(Permission.CREATE),
+                                                  FunctionResource.root(),
+                                                  role);
+    }
+
     void setupClientState()
     {
 
@@ -599,6 +666,15 @@ public class UFAuthTest extends CQLTester
                               "  RETURNS int " +
                               "  LANGUAGE java " +
                               "  AS 'return Integer.valueOf(0);'");
+    }
+
+    private static String createSimpleTrustedFunctionCql() throws Throwable
+    {
+        return "CREATE TRUSTED FUNCTION " + KEYSPACE + ".some_trusted() " +
+                              "  CALLED ON NULL INPUT " +
+                              "  RETURNS int " +
+                              "  LANGUAGE java " +
+                              "  AS 'return Integer.valueOf(0);'";
     }
 
     private String createFunction(String argTypes, String functionDef) throws Throwable
