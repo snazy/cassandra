@@ -622,5 +622,4 @@ public class ByteBufferUtil
         int length = readShortLength(bb);
         return readBytes(bb, length);
     }
-
 }
