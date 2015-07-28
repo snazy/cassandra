@@ -114,12 +114,7 @@ public class CacheService implements CacheServiceMBean
     {
         logger.info("Initializing key cache with capacity of {} MBs.", DatabaseDescriptor.getKeyCacheSizeInMB());
 
-        long keyCacheInMemoryCapacity = DatabaseDescriptor.getKeyCacheSizeInMB() * 1024 * 1024;
-
-        // as values are constant size we can use singleton weigher
-        // where 48 = 40 bytes (average size of the key) + 8 bytes (size of value)
-        ICache<KeyCacheKey, RowIndexEntry> kc;
-        kc = ConcurrentLinkedHashCache.create(keyCacheInMemoryCapacity);
+        ICache<KeyCacheKey, RowIndexEntry> kc = DatabaseDescriptor.getKeyCacheSizeInMB() > 0 ? OHCKeyCache.create() : new NopCacheProvider.NopCache<>();
         AutoSavingCache<KeyCacheKey, RowIndexEntry> keyCache = new AutoSavingCache<>(kc, CacheType.KEY_CACHE, new KeyCacheSerializer());
 
         int keyCacheKeysToSave = DatabaseDescriptor.getKeyCacheKeysToSave();

@@ -19,7 +19,6 @@ package org.apache.cassandra.io.sstable;
 
 import java.io.*;
 import java.util.Collections;
-import java.util.Comparator;
 import java.util.List;
 
 import org.apache.cassandra.config.CFMetaData;
@@ -150,9 +149,14 @@ public class IndexHelper
                 this.version = version;
             }
 
+            public Version getVersion()
+            {
+                return version;
+            }
+
             public void serialize(IndexInfo info, DataOutputPlus out, SerializationHeader header) throws IOException
             {
-                ISerializer<ClusteringPrefix> clusteringSerializer = metadata.serializers().clusteringPrefixSerializer(version, header);
+                ISerializer<ClusteringPrefix> clusteringSerializer = Serializers.clusteringPrefixSerializer(version, header);
                 clusteringSerializer.serialize(info.firstName, out);
                 clusteringSerializer.serialize(info.lastName, out);
                 out.writeLong(info.offset);
@@ -168,7 +172,7 @@ public class IndexHelper
 
             public IndexInfo deserialize(DataInputPlus in, SerializationHeader header) throws IOException
             {
-                ISerializer<ClusteringPrefix> clusteringSerializer = metadata.serializers().clusteringPrefixSerializer(version, header);
+                ISerializer<ClusteringPrefix> clusteringSerializer = Serializers.clusteringPrefixSerializer(version, header);
 
                 ClusteringPrefix firstName = clusteringSerializer.deserialize(in);
                 ClusteringPrefix lastName = clusteringSerializer.deserialize(in);
@@ -183,7 +187,7 @@ public class IndexHelper
 
             public long serializedSize(IndexInfo info, SerializationHeader header)
             {
-                ISerializer<ClusteringPrefix> clusteringSerializer = metadata.serializers().clusteringPrefixSerializer(version, header);
+                ISerializer<ClusteringPrefix> clusteringSerializer = Serializers.clusteringPrefixSerializer(version, header);
                 long size = clusteringSerializer.serializedSize(info.firstName)
                           + clusteringSerializer.serializedSize(info.lastName)
                           + TypeSizes.sizeof(info.offset)
