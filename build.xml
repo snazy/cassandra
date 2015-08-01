@@ -397,6 +397,12 @@
           	<exclusion groupId="org.mortbay.jetty" artifactId="jetty"/> <!-- older version, also via hadoop-core -->
           	<exclusion groupId="org.mortbay.jetty" artifactId="jetty-util"/> <!-- older version, also via hadoop-core -->
             <exclusion groupId="org.apache.ant" artifactId="ant"/> <!-- older version 1.8.3 -->
+            <exclusion groupId="org.ow2.asm" artifactId="asm"/> <!-- this is the outdated version 4.1 -->
+            <exclusion groupId="org.ow2.asm" artifactId="asm-analysis"/> <!-- this is the outdated version 4.1 -->
+            <exclusion groupId="org.ow2.asm" artifactId="asm-commons"/> <!-- this is the outdated version 4.1 -->
+            <exclusion groupId="org.ow2.asm" artifactId="asm-debug-all"/> <!-- this is the outdated version 4.1 -->
+            <exclusion groupId="org.ow2.asm" artifactId="asm-tree"/> <!-- this is the outdated version 4.1 -->
+            <exclusion groupId="org.ow2.asm" artifactId="asm-util"/> <!-- this is the outdated version 4.1 -->
           </dependency>
           <dependency groupId="org.jacoco" artifactId="org.jacoco.agent" version="${jacoco.version}"/>
           <dependency groupId="org.jacoco" artifactId="org.jacoco.ant" version="${jacoco.version}"/>
@@ -417,7 +423,13 @@
           <!-- TODO CASSANDRA-9543
           <dependency groupId="com.datastax.cassandra" artifactId="cassandra-driver-core" version="2.1.5" classifier="shaded" />
           -->
-          <dependency groupId="org.eclipse.jdt.core.compiler" artifactId="ecj" version="4.4.2" />
+          <dependency groupId="org.eclipse.jdt.core.compiler" artifactId="ecj" version="${ecj.version}" />
+          <dependency groupId="org.ow2.asm" artifactId="asm" version="5.0.4"/>
+          <dependency groupId="org.ow2.asm" artifactId="asm-analysis" version="5.0.4"/>
+          <dependency groupId="org.ow2.asm" artifactId="asm-commons" version="5.0.4"/>
+          <dependency groupId="org.ow2.asm" artifactId="asm-debug-all" version="5.0.4"/>
+          <dependency groupId="org.ow2.asm" artifactId="asm-tree" version="5.0.4"/>
+          <dependency groupId="org.ow2.asm" artifactId="asm-util" version="5.0.4"/>
           <dependency groupId="org.caffinitas.ohc" artifactId="ohc-core" version="0.4.2" />
           <dependency groupId="org.caffinitas.ohc" artifactId="ohc-core-j8" version="0.4.2" />
           <dependency groupId="net.ju-n.compile-command-annotations" artifactId="compile-command-annotations" version="1.2.0" />
@@ -472,6 +484,7 @@
         <!-- TODO CASSANDRA-9543
         <dependency groupId="com.datastax.cassandra" artifactId="cassandra-driver-core" classifier="shaded"/>
         -->
+        <dependency groupId="org.ow2.asm" artifactId="asm"/>
         <dependency groupId="org.eclipse.jdt.core.compiler" artifactId="ecj"/>
         <dependency groupId="org.caffinitas.ohc" artifactId="ohc-core" version="0.4.2" />
         <dependency groupId="org.caffinitas.ohc" artifactId="ohc-core-j8" version="0.4.2" />
@@ -492,6 +505,7 @@
         <dependency groupId="com.datastax.cassandra" artifactId="cassandra-driver-core" classifier="shaded"/>
         -->
         <dependency groupId="org.eclipse.jdt.core.compiler" artifactId="ecj"/>
+        <dependency groupId="org.ow2.asm" artifactId="asm"/>
         <dependency groupId="org.caffinitas.ohc" artifactId="ohc-core"/>
         <dependency groupId="org.openjdk.jmh" artifactId="jmh-core"/>
         <dependency groupId="org.openjdk.jmh" artifactId="jmh-generator-annprocess"/>
@@ -505,6 +519,11 @@
                 artifactId="cassandra-parent"
                 version="${version}"/>
         <dependency groupId="net.sourceforge.cobertura" artifactId="cobertura"/>
+        <dependency groupId="org.ow2.asm" artifactId="asm-analysis"/>
+        <dependency groupId="org.ow2.asm" artifactId="asm-commons"/>
+        <dependency groupId="org.ow2.asm" artifactId="asm-debug-all"/>
+        <dependency groupId="org.ow2.asm" artifactId="asm-tree"/>
+        <dependency groupId="org.ow2.asm" artifactId="asm-util"/>
         <dependency groupId="org.jacoco" artifactId="org.jacoco.agent"/>
         <dependency groupId="org.jacoco" artifactId="org.jacoco.ant"/>
       </artifact:pom>
@@ -663,7 +682,7 @@
     <target name="maven-ant-tasks-retrieve-test" depends="maven-ant-tasks-init">
       <artifact:dependencies pomRefId="test-deps-pom"
                              filesetId="test-dependency-jars"
-                             sourcesFilesetId="test-dependency-sources" 
+                             sourcesFilesetId="test-dependency-sources"
                              cacheDependencyRefs="true" 
                              dependencyRefsBuildFile="${build.dir}/test-dependencies.xml">
         <remoteRepository refid="apache"/>

@@ -2258,6 +2258,11 @@ public class UFTest extends CQLTester
                                     "     java.lang.Runtime.getRuntime().exec(\"/tmp/foo\"); return 0d;" +
                                     "} catch (Exception t) {" +
                                     "     throw new RuntimeException(t);" +
+                                    '}'},
+        {"org.apache.cassandra.cql3.functions.JavaUDFTimeoutHandler",       "try {" +
+                                    "     org.apache.cassandra.cql3.functions.JavaUDFTimeoutHandler.beforeStart(1000L,1000L); return 0d;" +
+                                    "} catch (Exception t) {" +
+                                    "     throw new RuntimeException(t);" +
                                     '}'}
         };
 
@@ -2346,62 +2351,141 @@ public class UFTest extends CQLTester
 
         long udfWarnTimeout = DatabaseDescriptor.getUserDefinedFunctionWarnTimeout();
         long udfFailTimeout = DatabaseDescriptor.getUserDefinedFunctionFailTimeout();
+        try
+        {
+            // short timeout
+            DatabaseDescriptor.setUserDefinedFunctionWarnTimeout(1);
+            DatabaseDescriptor.setUserDefinedFunctionFailTimeout(100);
+            // short timeout
+            DatabaseDescriptor.setUserDefinedFunctionWarnMb(1);
+            DatabaseDescriptor.setUserDefinedFunctionFailMb(100);
+            // don't kill the unit test... - default policy is "die"
+            DatabaseDescriptor.setUserFunctionTimeoutPolicy(Config.UserFunctionFailPolicy.ignore);
+
+            ClientWarn.captureWarnings();
+            String fName = createFunction(KEYSPACE_PER_TEST, "double",
+                                          "CREATE OR REPLACE FUNCTION %s(val double) " +
+                                          "RETURNS NULL ON NULL INPUT " +
+                                          "RETURNS double " +
+                                          "LANGUAGE JAVA\n" +
+                                          "AS 'long t=System.currentTimeMillis()+20; while (t>System.currentTimeMillis()) { }; return 0d;'");
+            execute("SELECT " + fName + "(dval) FROM %s WHERE key=1");
+            List<String> warnings = ClientWarn.getWarnings();
+            Assert.assertNotNull(warnings);
+            Assert.assertFalse(warnings.isEmpty());
+            ClientWarn.resetWarnings();
+
+            // Java UDF
+
+            amokJavaUDF("long t=System.currentTimeMillis()+5000; while (t>System.currentTimeMillis()) { };",
+                        "ran longer than 100ms");
+
+            amokJavaUDF("long l = 0; label: do { l++; continue label; } while (l < Long.MAX_VALUE);",
+                        "ran longer than 100ms");
+
+            amokJavaUDF("java.util.List<String> l = new java.util.ArrayList<>();\n" +
+                        "        while (true)\n" +
+                        "        {\n" +
+                        "            l.add(\"foo\");\n" +
+                        "            for (int i = 0; i < 100; i++)\n" +
+                        "                l.add(\"\" + i);\n" +
+                        "            if (System.currentTimeMillis() == Long.MAX_VALUE)\n" +
+                        "                break;\n" +
+                        "        }",
+                        "ran longer than 100ms");
+
+            amokJavaUDF("outer:\n" +
+                        "        while (System.currentTimeMillis() < Long.MAX_VALUE)\n" +
+                        "        {\n" +
+                        "            try\n" +
+                        "            {\n" +
+                        "                while (true)\n" +
+                        "                {\n" +
+                        "                    if (System.currentTimeMillis() == Long.MAX_VALUE)\n" +
+                        "                        break;\n" +
+                        "                }\n" +
+                        "            }\n" +
+                        "            catch (Throwable t)\n" +
+                        "            {\n" +
+                        "            }\n" +
+                        "        }",
+                        "ran longer than 100ms");
+
+            amokJavaUDF("while (true)\n" +
+                        "        {\n" +
+                        "            if (System.currentTimeMillis() %% 12345 == 99999)\n" + // %% due to String.format() in CQLTester
+                        "                break;\n" +
+                        "            if (System.currentTimeMillis() %% 12345 == 99998)\n" + // %% due to String.format() in CQLTester
+                        "                throw new RuntimeException();\n" +
+                        "        }",
+                        "ran longer than 100ms");
+
+            amokJavaUDF("java.util.List lst = new java.util.ArrayList();\n" +
+                        "for (int i = 0; i < 1024; i++)\n" +
+                        "    lst.add(new byte[1024 * 1024]);\n" +
+                        "System.out.println(lst);\n",
+                        "allocated more than 100MB heap");
+
+            // Javascript UDF
+
+            fName = createFunction(KEYSPACE_PER_TEST, "double",
+                                   "CREATE OR REPLACE FUNCTION %s(val double) " +
+                                   "RETURNS NULL ON NULL INPUT " +
+                                   "RETURNS double " +
+                                   "LANGUAGE JAVASCRIPT\n" +
+                                   "AS 'var t=java.lang.System.currentTimeMillis()+300; while (t>java.lang.System.currentTimeMillis()) { }; 0;';");
+            amokUDF("ran longer than 100ms", fName);
+        }
+        finally
+        {
+            // reset to defaults
+            DatabaseDescriptor.setUserDefinedFunctionWarnTimeout(udfWarnTimeout);
+            DatabaseDescriptor.setUserDefinedFunctionFailTimeout(udfFailTimeout);
+        }
+    }
+
+    private void amokJavaUDF(String udfSource, String message) throws Throwable
+    {
+        DatabaseDescriptor.enableUserDefinedFunctionsThreads(true);
+        String fName = createFunction(KEYSPACE_PER_TEST, "double",
+                                      "CREATE OR REPLACE FUNCTION %s(val double) " +
+                                      "RETURNS NULL ON NULL INPUT " +
+                                      "RETURNS double " +
+                                      "LANGUAGE JAVA\n" +
+                                      "AS '" + udfSource + " return 0d;'");
+        amokUDF(message, fName);
+
+        // TRUSTED / non-sandboxed
+        DatabaseDescriptor.enableUserDefinedFunctionsThreads(false);
+        try
+        {
+            fName = createFunction(KEYSPACE_PER_TEST, "double",
+                                   "CREATE OR REPLACE FUNCTION %s(val double) " +
+                                   "RETURNS NULL ON NULL INPUT " +
+                                   "RETURNS double " +
+                                   "LANGUAGE JAVA\n" +
+                                   "AS '" + udfSource + "\n return 0d;'");
+            amokUDF(message, fName);
+        }
+        finally
+        {
+            DatabaseDescriptor.enableUserDefinedFunctionsThreads(true);
+        }
+    }
+
+    private void amokUDF(String message, String fName) throws Throwable
+    {
         int maxTries = 5;
         for (int i = 1; i <= maxTries; i++)
         {
             try
             {
-                // short timeout
-                DatabaseDescriptor.setUserDefinedFunctionWarnTimeout(10);
-                DatabaseDescriptor.setUserDefinedFunctionFailTimeout(250);
-                // don't kill the unit test... - default policy is "die"
-                DatabaseDescriptor.setUserFunctionTimeoutPolicy(Config.UserFunctionTimeoutPolicy.ignore);
-
-                ClientWarn.captureWarnings();
-                String fName = createFunction(KEYSPACE_PER_TEST, "double",
-                                              "CREATE OR REPLACE FUNCTION %s(val double) " +
-                                              "RETURNS NULL ON NULL INPUT " +
-                                              "RETURNS double " +
-                                              "LANGUAGE JAVA\n" +
-                                              "AS 'long t=System.currentTimeMillis()+110; while (t>System.currentTimeMillis()) { }; return 0d;'");
-                execute("SELECT " + fName + "(dval) FROM %s WHERE key=1");
-                List<String> warnings = ClientWarn.getWarnings();
-                Assert.assertNotNull(warnings);
-                Assert.assertFalse(warnings.isEmpty());
-                ClientWarn.resetWarnings();
-
-                // Java UDF
-
-                fName = createFunction(KEYSPACE_PER_TEST, "double",
-                                       "CREATE OR REPLACE FUNCTION %s(val double) " +
-                                       "RETURNS NULL ON NULL INPUT " +
-                                       "RETURNS double " +
-                                       "LANGUAGE JAVA\n" +
-                                       "AS 'long t=System.currentTimeMillis()+500; while (t>System.currentTimeMillis()) { }; return 0d;';");
-                assertInvalidMessage("ran longer than 250ms", "SELECT " + fName + "(dval) FROM %s WHERE key=1");
-
-                // Javascript UDF
-
-                fName = createFunction(KEYSPACE_PER_TEST, "double",
-                                       "CREATE OR REPLACE FUNCTION %s(val double) " +
-                                       "RETURNS NULL ON NULL INPUT " +
-                                       "RETURNS double " +
-                                       "LANGUAGE JAVASCRIPT\n" +
-                                       "AS 'var t=java.lang.System.currentTimeMillis()+500; while (t>java.lang.System.currentTimeMillis()) { }; 0;';");
-                assertInvalidMessage("ran longer than 250ms", "SELECT " + fName + "(dval) FROM %s WHERE key=1");
-
-                return;
+                assertInvalidMessage(message, "SELECT " + fName + "(dval) FROM %s WHERE key=1");
             }
             catch (Error | RuntimeException e)
             {
                 if (i == maxTries)
                     throw e;
-            }
-            finally
-            {
-                // reset to defaults
-                DatabaseDescriptor.setUserDefinedFunctionWarnTimeout(udfWarnTimeout);
-                DatabaseDescriptor.setUserDefinedFunctionFailTimeout(udfFailTimeout);
             }
         }
     }

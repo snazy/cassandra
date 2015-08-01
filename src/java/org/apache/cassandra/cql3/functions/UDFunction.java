@@ -17,8 +17,6 @@
  */
 package org.apache.cassandra.cql3.functions;
 
-import java.lang.management.ManagementFactory;
-import java.lang.management.ThreadMXBean;
 import java.net.InetAddress;
 import java.net.URL;
 import java.nio.ByteBuffer;
@@ -27,13 +25,6 @@ import java.util.Collections;
 import java.util.Enumeration;
 import java.util.HashSet;
 import java.util.List;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.Future;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
 
 import com.google.common.base.Objects;
 import org.slf4j.Logger;
@@ -41,7 +32,6 @@ import org.slf4j.LoggerFactory;
 
 import com.datastax.driver.core.DataType;
 import com.datastax.driver.core.UserType;
-import org.apache.cassandra.config.Config;
 import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.config.Schema;
 import org.apache.cassandra.cql3.ColumnIdentifier;
@@ -50,11 +40,9 @@ import org.apache.cassandra.exceptions.FunctionExecutionException;
 import org.apache.cassandra.exceptions.InvalidRequestException;
 import org.apache.cassandra.schema.Functions;
 import org.apache.cassandra.schema.KeyspaceMetadata;
-import org.apache.cassandra.service.ClientWarn;
 import org.apache.cassandra.service.MigrationManager;
 import org.apache.cassandra.tracing.Tracing;
 import org.apache.cassandra.utils.ByteBufferUtil;
-import org.apache.cassandra.utils.JVMStabilityInspector;
 
 /**
  * Base class for User Defined Functions.
@@ -62,8 +50,6 @@ import org.apache.cassandra.utils.JVMStabilityInspector;
 public abstract class UDFunction extends AbstractFunction implements ScalarFunction
 {
     protected static final Logger logger = LoggerFactory.getLogger(UDFunction.class);
-
-    static final ThreadMXBean threadMXBean = ManagementFactory.getThreadMXBean();
 
     protected final List<ColumnIdentifier> argNames;
 
@@ -92,7 +78,7 @@ public abstract class UDFunction extends AbstractFunction implements ScalarFunct
     "com/datastax/driver/core/",
     "com/google/common/reflect/TypeToken",
     "java/io/IOException.class",
-    "java/io/Serializable.class",
+    "java/io/",
     "java/lang/",
     "java/math/",
     "java/nio/Buffer.class",
@@ -112,6 +98,9 @@ public abstract class UDFunction extends AbstractFunction implements ScalarFunct
     "com/datastax/driver/core/Session.class",
     "com/datastax/driver/core/Statement.class",
     "com/datastax/driver/core/TimestampGenerator.class", // indirectly covers ServerSideTimestampGenerator + ThreadLocalMonotonicTimestampGenerator
+    "java/io/Console.class",
+    "java/io/File",
+    "java/io/RandomAccessFile.class",
     "java/lang/Compiler.class",
     "java/lang/InheritableThreadLocal.class",
     "java/lang/Package.class",
@@ -133,7 +122,6 @@ public abstract class UDFunction extends AbstractFunction implements ScalarFunct
     "java/util/ServiceLoader.class",
     "java/util/Timer.class",
     "java/util/concurrent/",
-    "java/util/function/",
     "java/util/jar/",
     "java/util/logging/",
     "java/util/prefs/",
@@ -240,9 +228,9 @@ public abstract class UDFunction extends AbstractFunction implements ScalarFunct
     {
         return new UDFunction(name, argNames, argTypes, returnType, calledOnNullInput, language, body)
         {
-            protected ExecutorService executor()
+            protected ByteBuffer executeAsync(int protocolVersion, List<ByteBuffer> parameters)
             {
-                return Executors.newSingleThreadExecutor();
+                return executeUserDefined(protocolVersion, parameters);
             }
 
             public ByteBuffer executeUserDefined(int protocolVersion, List<ByteBuffer> parameters)
@@ -288,14 +276,6 @@ public abstract class UDFunction extends AbstractFunction implements ScalarFunct
         }
     }
 
-    public static void assertUdfsEnabled(String language)
-    {
-        if (!DatabaseDescriptor.enableUserDefinedFunctions())
-            throw new InvalidRequestException("User-defined functions are disabled in cassandra.yaml - set enable_user_defined_functions=true to enable");
-        if (!"java".equalsIgnoreCase(language) && !DatabaseDescriptor.enableScriptedUserDefinedFunctions())
-            throw new InvalidRequestException("Scripted user-defined functions are disabled in cassandra.yaml - set enable_scripted_user_defined_functions=true to enable if you are aware of the security risks");
-    }
-
     static void initializeThread()
     {
         // Get the TypeCodec stuff in Java Driver initialized.
@@ -304,108 +284,15 @@ public abstract class UDFunction extends AbstractFunction implements ScalarFunct
         UDHelper.codecFor(DataType.ascii()).format("");
     }
 
-    private static final class ThreadIdAndCpuTime extends CompletableFuture<Object>
+    public static void assertUdfsEnabled(String language)
     {
-        long threadId;
-        long cpuTime;
-
-        ThreadIdAndCpuTime()
-        {
-            // Looks weird?
-            // This call "just" links this class to java.lang.management - otherwise UDFs (script UDFs) might fail due to
-            //      java.security.AccessControlException: access denied: ("java.lang.RuntimePermission" "accessClassInPackage.java.lang.management")
-            // because class loading would be deferred until setup() is executed - but setup() is called with
-            // limited privileges.
-            threadMXBean.getCurrentThreadCpuTime();
-        }
-
-        void setup()
-        {
-            this.threadId = Thread.currentThread().getId();
-            this.cpuTime = threadMXBean.getCurrentThreadCpuTime();
-            complete(null);
-        }
+        if (!DatabaseDescriptor.enableUserDefinedFunctions())
+            throw new InvalidRequestException("User-defined functions are disabled in cassandra.yaml - set enable_user_defined_functions=true to enable");
+        if (!"java".equalsIgnoreCase(language) && !DatabaseDescriptor.enableScriptedUserDefinedFunctions())
+            throw new InvalidRequestException("Scripted user-defined functions are disabled in cassandra.yaml - set enable_scripted_user_defined_functions=true to enable if you are aware of the security risks");
     }
 
-    private ByteBuffer executeAsync(int protocolVersion, List<ByteBuffer> parameters)
-    {
-        ThreadIdAndCpuTime threadIdAndCpuTime = new ThreadIdAndCpuTime();
-
-        Future<ByteBuffer> future = executor().submit(() -> {
-            threadIdAndCpuTime.setup();
-            return executeUserDefined(protocolVersion, parameters);
-        });
-
-        try
-        {
-            if (DatabaseDescriptor.getUserDefinedFunctionWarnTimeout() > 0)
-                try
-                {
-                    return future.get(DatabaseDescriptor.getUserDefinedFunctionWarnTimeout(), TimeUnit.MILLISECONDS);
-                }
-                catch (TimeoutException e)
-                {
-
-                    // log and emit a warning that UDF execution took long
-                    String warn = String.format("User defined function %s ran longer than %dms", this, DatabaseDescriptor.getUserDefinedFunctionWarnTimeout());
-                    logger.warn(warn);
-                    ClientWarn.warn(warn);
-                }
-
-            // retry with difference of warn-timeout to fail-timeout
-            return future.get(DatabaseDescriptor.getUserDefinedFunctionFailTimeout() - DatabaseDescriptor.getUserDefinedFunctionWarnTimeout(), TimeUnit.MILLISECONDS);
-        }
-        catch (InterruptedException e)
-        {
-            Thread.currentThread().interrupt();
-            throw new RuntimeException(e);
-        }
-        catch (ExecutionException e)
-        {
-            Throwable c = e.getCause();
-            if (c instanceof RuntimeException)
-                throw (RuntimeException) c;
-            throw new RuntimeException(c);
-        }
-        catch (TimeoutException e)
-        {
-            // retry a last time with the difference of UDF-fail-timeout to consumed CPU time (just in case execution hit a badly timed GC)
-            try
-            {
-                //The threadIdAndCpuTime shouldn't take a long time to be set so this should return immediately
-                threadIdAndCpuTime.get(1, TimeUnit.SECONDS);
-
-                long cpuTimeMillis = threadMXBean.getThreadCpuTime(threadIdAndCpuTime.threadId) - threadIdAndCpuTime.cpuTime;
-                cpuTimeMillis /= 1000000L;
-
-                return future.get(Math.max(DatabaseDescriptor.getUserDefinedFunctionFailTimeout() - cpuTimeMillis, 0L),
-                                  TimeUnit.MILLISECONDS);
-            }
-            catch (InterruptedException e1)
-            {
-                Thread.currentThread().interrupt();
-                throw new RuntimeException(e);
-            }
-            catch (ExecutionException e1)
-            {
-                Throwable c = e.getCause();
-                if (c instanceof RuntimeException)
-                    throw (RuntimeException) c;
-                throw new RuntimeException(c);
-            }
-            catch (TimeoutException e1)
-            {
-                TimeoutException cause = new TimeoutException(String.format("User defined function %s ran longer than %dms%s",
-                                                                            this,
-                                                                            DatabaseDescriptor.getUserDefinedFunctionFailTimeout(),
-                                                                            DatabaseDescriptor.getUserFunctionTimeoutPolicy() == Config.UserFunctionTimeoutPolicy.ignore
-                                                                            ? "" : " - will stop Cassandra VM"));
-                FunctionExecutionException fe = FunctionExecutionException.create(this, cause);
-                JVMStabilityInspector.userFunctionTimeout(cause);
-                throw fe;
-            }
-        }
-    }
+    protected abstract ByteBuffer executeAsync(int protocolVersion, List<ByteBuffer> parameters);
 
     private List<ByteBuffer> makeEmptyParametersNull(List<ByteBuffer> parameters)
     {
@@ -418,8 +305,6 @@ public abstract class UDFunction extends AbstractFunction implements ScalarFunct
         }
         return r;
     }
-
-    protected abstract ExecutorService executor();
 
     public boolean isCallableWrtNullable(List<ByteBuffer> parameters)
     {

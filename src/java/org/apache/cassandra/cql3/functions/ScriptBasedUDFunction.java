@@ -24,16 +24,26 @@ import java.nio.ByteBuffer;
 import java.security.*;
 import java.security.cert.Certificate;
 import java.util.*;
-import java.util.concurrent.ExecutorService;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import javax.script.*;
 
+import com.datastax.driver.core.DataType;
 import org.apache.cassandra.concurrent.NamedThreadFactory;
+import org.apache.cassandra.config.Config;
+import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.cql3.ColumnIdentifier;
 import org.apache.cassandra.db.marshal.AbstractType;
+import org.apache.cassandra.exceptions.FunctionExecutionException;
 import org.apache.cassandra.exceptions.InvalidRequestException;
+import org.apache.cassandra.service.ClientWarn;
+import org.apache.cassandra.utils.JVMStabilityInspector;
 
 final class ScriptBasedUDFunction extends UDFunction
 {
+
     static final Map<String, Compilable> scriptEngines = new HashMap<>();
 
     private static final ProtectionDomain protectionDomain;
@@ -157,9 +167,127 @@ final class ScriptBasedUDFunction extends UDFunction
         }
     }
 
-    protected ExecutorService executor()
+    protected ByteBuffer executeAsync(int protocolVersion, List<ByteBuffer> parameters)
     {
-        return executor;
+        QuotaHolder quotaHolder = new QuotaHolder();
+
+        Future<ByteBuffer> future = executor.submit(() -> {
+            quotaHolder.setup();
+            return executeUserDefined(protocolVersion, parameters);
+        });
+
+        try
+        {
+            if (DatabaseDescriptor.getUserDefinedFunctionWarnTimeout() > 0)
+                try
+                {
+                    return future.get(DatabaseDescriptor.getUserDefinedFunctionWarnTimeout(), TimeUnit.MILLISECONDS);
+                }
+                catch (TimeoutException e)
+                {
+                    // log and emit a warning that UDF execution took long
+                    String warn = String.format("User defined function %s ran longer than %dms", this, DatabaseDescriptor.getUserDefinedFunctionWarnTimeout());
+                    logger.warn(warn);
+                    ClientWarn.warn(warn);
+                }
+
+            // retry with difference of warn-timeout to fail-timeout
+            return future.get(DatabaseDescriptor.getUserDefinedFunctionFailTimeout() - DatabaseDescriptor.getUserDefinedFunctionWarnTimeout(), TimeUnit.MILLISECONDS);
+        }
+        catch (InterruptedException e)
+        {
+            Thread.currentThread().interrupt();
+            throw new RuntimeException(e);
+        }
+        catch (ExecutionException e)
+        {
+            Throwable c = e.getCause();
+            if (c instanceof RuntimeException)
+                throw (RuntimeException) c;
+            throw new RuntimeException(c);
+        }
+        catch (TimeoutException e)
+        {
+            // retry a last time with the difference of UDF-fail-timeout to consumed CPU time (just in case execution hit a badly timed GC)
+            try
+            {
+                long cpuTimeMillis = quotaHolder.quotaState == null ? 0L : quotaHolder.quotaState.runTimeNanos() / 1000000L;
+
+                return future.get(Math.max(DatabaseDescriptor.getUserDefinedFunctionFailTimeout() - cpuTimeMillis, 0L),
+                                  TimeUnit.MILLISECONDS);
+            }
+            catch (InterruptedException e1)
+            {
+                Thread.currentThread().interrupt();
+                throw new RuntimeException(e);
+            }
+            catch (ExecutionException e1)
+            {
+                Throwable c = e.getCause();
+                if (c instanceof RuntimeException)
+                    throw (RuntimeException) c;
+                throw new RuntimeException(c);
+            }
+            catch (TimeoutException e1)
+            {
+                TimeoutException cause = new TimeoutException(String.format("User defined function %s ran longer than %dms%s",
+                                                                            this,
+                                                                            DatabaseDescriptor.getUserDefinedFunctionFailTimeout(),
+                                                                            DatabaseDescriptor.getUserFunctionFailPolicy() == Config.UserFunctionFailPolicy.ignore
+                                                                            ? "" : " - will stop Cassandra VM"));
+                FunctionExecutionException fe = FunctionExecutionException.create(this, cause);
+                JVMStabilityInspector.userFunctionTimeout(cause);
+                throw fe;
+            }
+        }
+        finally
+        {
+            long threadBytes = quotaHolder.quotaState == null ? 0L : quotaHolder.quotaState.allocatedBytes();
+            if (threadBytes > DatabaseDescriptor.getUserDefinedFunctionWarnMb() * 1024 * 1024)
+            {
+                String warn = String.format("User defined function %s allocated more than %dMB heap", this, DatabaseDescriptor.getUserDefinedFunctionWarnMb());
+                logger.warn(warn);
+                ClientWarn.warn(warn);
+            }
+            if (threadBytes > DatabaseDescriptor.getUserDefinedFunctionFailMb() * 1024 * 1024)
+            {
+                TimeoutException cause = new TimeoutException(String.format("User defined function %s allocated more than %dMB heap",
+                                                                            this,
+                                                                            DatabaseDescriptor.getUserDefinedFunctionFailMb()));
+                throw FunctionExecutionException.create(this, cause);
+            }
+        }
+    }
+
+    // cannot be migrated to an AtomicReference since the _class_ needs reference to the code
+    private static final class QuotaHolder
+    {
+        UDFQuotaState quotaState;
+
+        QuotaHolder()
+        {
+            // Looks weird?
+            // This call "just" links this class to java.lang.management - otherwise UDFs (script UDFs) might fail due to
+            //      java.security.AccessControlException: access denied:
+            //      ("java.lang.RuntimePermission" "accessClassInPackage.java.lang.management" /
+            //      "accessClassInPackage.org.apache.cassandra.cql3.functions")
+            // because class loading would be deferred until setup() is executed - but setup() is called with
+            // limited privileges.
+            UDFQuotaState.ensureInitialized();
+            //
+            // Get the TypeCodec stuff in Java Driver initialized.
+            UDHelper.codecFor(DataType.inet()).format(InetAddress.getLoopbackAddress());
+            UDHelper.codecFor(DataType.list(DataType.ascii())).format(Collections.emptyList());
+        }
+
+        void setup()
+        {
+            this.quotaState = new UDFQuotaState(Thread.currentThread().getId(),
+                                                DatabaseDescriptor.getUserDefinedFunctionFailTimeout(),
+                                                DatabaseDescriptor.getUserDefinedFunctionWarnTimeout(),
+                                                DatabaseDescriptor.getUserDefinedFunctionFailMb(),
+                                                DatabaseDescriptor.getUserDefinedFunctionWarnMb());
+        }
     }
 
     public ByteBuffer executeUserDefined(int protocolVersion, List<ByteBuffer> parameters)

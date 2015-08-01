@@ -283,24 +283,38 @@ public class Config
     public boolean enable_user_defined_functions_threads = true;
     /**
      * Time in milliseconds after a warning will be emitted to the log and to the client that a UDF runs too long.
-     * (Only valid, if enable_user_defined_functions_threads==true)
+     * Java-UDFs will always emit a warning, script-UDFs only if enable_user_defined_functions_threads==true.
      */
     public long user_defined_function_warn_timeout = 500;
     /**
-     * Time in milliseconds after a fatal UDF run-time situation is detected and action according to
-     * user_function_timeout_policy will take place.
-     * (Only valid, if enable_user_defined_functions_threads==true)
+     * Time in milliseconds after a fatal UDF run-time situation is detected.
+     * For Java-UDFs the function is safely aborted.
+     * For script-UDFs the action according to user_function_fail_policy will take place.
+     * Java-UDFs will always throw an exception, script-UDFs only if enable_user_defined_functions_threads==true.
      */
     public long user_defined_function_fail_timeout = 1500;
     /**
-     * Defines what to do when a UDF ran longer than user_defined_function_fail_timeout.
+     * If a Java UDF allocates more than user_defined_function_warn_mb on the heap, a warning will be emitted to the
+     * log and the client.
+     * Java-UDFs will always emit a warning, script-UDFs only if enable_user_defined_functions_threads==true.
+     */
+    public long user_defined_function_warn_mb = 50;
+    /**
+     * UDFs that allocate more than user_defined_function_fail_mb, will fail.
+     * For Java-UDFs the function is safely aborted.
+     * For script-UDFs the action according to user_function_fail_policy will take place.
+     * Java-UDFs will always throw an exception, script-UDFs only if enable_user_defined_functions_threads==true.
+     */
+    public long user_defined_function_fail_mb = 100;
+    /**
+     * Defines what to do when a script-UDF ran longer than user_defined_function_fail_timeout.
      * Possible options are:
      * - 'die' - i.e. it is able to emit a warning to the client before the Cassandra Daemon will shut down.
      * - 'die_immediate' - shut down C* daemon immediately (effectively prevent the chance that the client will receive a warning).
      * - 'ignore' - just log - the most dangerous option.
      * (Only valid, if enable_user_defined_functions_threads==true)
      */
-    public UserFunctionTimeoutPolicy user_function_timeout_policy = UserFunctionTimeoutPolicy.die;
+    public UserFunctionFailPolicy user_function_fail_policy = UserFunctionFailPolicy.die;
 
     public static boolean getOutboundBindAny()
     {
@@ -365,7 +379,7 @@ public class Config
         die,
     }
 
-    public enum UserFunctionTimeoutPolicy
+    public enum UserFunctionFailPolicy
     {
         ignore,
         die,

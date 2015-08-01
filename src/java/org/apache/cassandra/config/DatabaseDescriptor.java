@@ -1903,6 +1903,11 @@ public class DatabaseDescriptor
         return conf.enable_user_defined_functions_threads;
     }
 
+    public static void enableUserDefinedFunctionsThreads(boolean enableUserDefinedFunctionsThreads)
+    {
+        conf.enable_user_defined_functions_threads = enableUserDefinedFunctionsThreads;
+    }
+
     public static long getUserDefinedFunctionWarnTimeout()
     {
         return conf.user_defined_function_warn_timeout;
@@ -1923,14 +1928,34 @@ public class DatabaseDescriptor
         conf.user_defined_function_fail_timeout = userDefinedFunctionFailTimeout;
     }
 
-    public static Config.UserFunctionTimeoutPolicy getUserFunctionTimeoutPolicy()
+    public static long getUserDefinedFunctionWarnMb()
     {
-        return conf.user_function_timeout_policy;
+        return conf.user_defined_function_warn_mb;
     }
 
-    public static void setUserFunctionTimeoutPolicy(Config.UserFunctionTimeoutPolicy userFunctionTimeoutPolicy)
+    public static void setUserDefinedFunctionWarnMb(long userDefinedFunctionWarnMb)
     {
-        conf.user_function_timeout_policy = userFunctionTimeoutPolicy;
+        conf.user_defined_function_warn_mb = userDefinedFunctionWarnMb;
+    }
+
+    public static long getUserDefinedFunctionFailMb()
+    {
+        return conf.user_defined_function_fail_mb;
+    }
+
+    public static void setUserDefinedFunctionFailMb(long userDefinedFunctionFailMb)
+    {
+        conf.user_defined_function_fail_mb = userDefinedFunctionFailMb;
+    }
+
+    public static Config.UserFunctionFailPolicy getUserFunctionFailPolicy()
+    {
+        return conf.user_function_fail_policy;
+    }
+
+    public static void setUserFunctionTimeoutPolicy(Config.UserFunctionFailPolicy userFunctionFailPolicy)
+    {
+        conf.user_function_fail_policy = userFunctionFailPolicy;
     }
 
     public static EncryptionContext getEncryptionContext()

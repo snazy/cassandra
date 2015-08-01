@@ -21,15 +21,24 @@ package org.apache.cassandra.cql3.validation.entities;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.PrintWriter;
+import java.lang.reflect.Method;
 import java.net.URL;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashSet;
+import java.util.List;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 
 import org.junit.Test;
 
+import com.datastax.driver.core.DataType;
 import org.apache.cassandra.cql3.CQLTester;
-import org.apache.cassandra.cql3.functions.UDFByteCodeVerifier;
+import org.apache.cassandra.cql3.functions.JavaUDFByteCodeVerifier;
 import org.apache.cassandra.cql3.validation.entities.udfverify.CallClone;
 import org.apache.cassandra.cql3.validation.entities.udfverify.CallComDatastax;
 import org.apache.cassandra.cql3.validation.entities.udfverify.CallFinalize;
@@ -39,15 +48,24 @@ import org.apache.cassandra.cql3.validation.entities.udfverify.ClassWithInitiali
 import org.apache.cassandra.cql3.validation.entities.udfverify.ClassWithInitializer2;
 import org.apache.cassandra.cql3.validation.entities.udfverify.ClassWithInitializer3;
 import org.apache.cassandra.cql3.validation.entities.udfverify.ClassWithStaticInitializer;
+import org.apache.cassandra.cql3.validation.entities.udfverify.EndlessLoopClass;
 import org.apache.cassandra.cql3.validation.entities.udfverify.GoodClass;
+import org.apache.cassandra.cql3.validation.entities.udfverify.GotoEndlessLoopClass;
+import org.apache.cassandra.cql3.validation.entities.udfverify.HugeAllocClass;
+import org.apache.cassandra.cql3.validation.entities.udfverify.ManyHugeAllocClass;
+import org.apache.cassandra.cql3.validation.entities.udfverify.NestedLoopsClass;
+import org.apache.cassandra.cql3.validation.entities.udfverify.NestedTryCatchLoopsClass;
 import org.apache.cassandra.cql3.validation.entities.udfverify.UseOfSynchronized;
 import org.apache.cassandra.cql3.validation.entities.udfverify.UseOfSynchronizedWithNotify;
 import org.apache.cassandra.cql3.validation.entities.udfverify.UseOfSynchronizedWithNotifyAll;
 import org.apache.cassandra.cql3.validation.entities.udfverify.UseOfSynchronizedWithWait;
 import org.apache.cassandra.cql3.validation.entities.udfverify.UseOfSynchronizedWithWaitL;
 import org.apache.cassandra.cql3.validation.entities.udfverify.UseOfSynchronizedWithWaitLI;
+import org.objectweb.asm.ClassReader;
+import org.objectweb.asm.util.TraceClassVisitor;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.fail;
 
 /**
  * Test the Java UDF byte code verifier.
@@ -57,14 +75,14 @@ public class UFVerifierTest extends CQLTester
     @Test
     public void testByteCodeVerifier()
     {
-        new UDFByteCodeVerifier().verify(readClass(GoodClass.class));
+        new JavaUDFByteCodeVerifier().verify(readClass(GoodClass.class));
     }
 
     @Test
     public void testClassWithField()
     {
         assertEquals(new HashSet<>(Collections.singletonList("field declared: field")),
-                     new UDFByteCodeVerifier().verify(readClass(ClassWithField.class)));
+                     new JavaUDFByteCodeVerifier().verify(readClass(ClassWithField.class)).errors);
     }
 
     @Test
@@ -72,7 +90,7 @@ public class UFVerifierTest extends CQLTester
     {
         assertEquals(new HashSet<>(Arrays.asList("field declared: field",
                                                  "initializer declared")),
-                     new UDFByteCodeVerifier().verify(readClass(ClassWithInitializer.class)));
+                     new JavaUDFByteCodeVerifier().verify(readClass(ClassWithInitializer.class)).errors);
     }
 
     @Test
@@ -80,91 +98,91 @@ public class UFVerifierTest extends CQLTester
     {
         assertEquals(new HashSet<>(Arrays.asList("field declared: field",
                                                  "initializer declared")),
-                     new UDFByteCodeVerifier().verify(readClass(ClassWithInitializer2.class)));
+                     new JavaUDFByteCodeVerifier().verify(readClass(ClassWithInitializer2.class)).errors);
     }
 
     @Test
     public void testClassWithInitializer3()
     {
         assertEquals(new HashSet<>(Collections.singletonList("initializer declared")),
-                     new UDFByteCodeVerifier().verify(readClass(ClassWithInitializer3.class)));
+                     new JavaUDFByteCodeVerifier().verify(readClass(ClassWithInitializer3.class)).errors);
     }
 
     @Test
     public void testClassWithStaticInitializer()
     {
         assertEquals(new HashSet<>(Collections.singletonList("static initializer declared")),
-                     new UDFByteCodeVerifier().verify(readClass(ClassWithStaticInitializer.class)));
+                     new JavaUDFByteCodeVerifier().verify(readClass(ClassWithStaticInitializer.class)).errors);
     }
 
     @Test
     public void testUseOfSynchronized()
     {
         assertEquals(new HashSet<>(Collections.singletonList("use of synchronized")),
-                     new UDFByteCodeVerifier().verify(readClass(UseOfSynchronized.class)));
+                     new JavaUDFByteCodeVerifier().verify(readClass(UseOfSynchronized.class)).errors);
     }
 
     @Test
     public void testUseOfSynchronizedWithNotify()
     {
         assertEquals(new HashSet<>(Arrays.asList("use of synchronized", "call to notify()")),
-                     new UDFByteCodeVerifier().verify(readClass(UseOfSynchronizedWithNotify.class)));
+                     new JavaUDFByteCodeVerifier().verify(readClass(UseOfSynchronizedWithNotify.class)).errors);
     }
 
     @Test
     public void testUseOfSynchronizedWithNotifyAll()
     {
         assertEquals(new HashSet<>(Arrays.asList("use of synchronized", "call to notifyAll()")),
-                     new UDFByteCodeVerifier().verify(readClass(UseOfSynchronizedWithNotifyAll.class)));
+                     new JavaUDFByteCodeVerifier().verify(readClass(UseOfSynchronizedWithNotifyAll.class)).errors);
     }
 
     @Test
     public void testUseOfSynchronizedWithWait()
     {
         assertEquals(new HashSet<>(Arrays.asList("use of synchronized", "call to wait()")),
-                     new UDFByteCodeVerifier().verify(readClass(UseOfSynchronizedWithWait.class)));
+                     new JavaUDFByteCodeVerifier().verify(readClass(UseOfSynchronizedWithWait.class)).errors);
     }
 
     @Test
     public void testUseOfSynchronizedWithWaitL()
     {
         assertEquals(new HashSet<>(Arrays.asList("use of synchronized", "call to wait()")),
-                     new UDFByteCodeVerifier().verify(readClass(UseOfSynchronizedWithWaitL.class)));
+                     new JavaUDFByteCodeVerifier().verify(readClass(UseOfSynchronizedWithWaitL.class)).errors);
     }
 
     @Test
     public void testUseOfSynchronizedWithWaitI()
     {
         assertEquals(new HashSet<>(Arrays.asList("use of synchronized", "call to wait()")),
-                     new UDFByteCodeVerifier().verify(readClass(UseOfSynchronizedWithWaitLI.class)));
+                     new JavaUDFByteCodeVerifier().verify(readClass(UseOfSynchronizedWithWaitLI.class)).errors);
     }
 
     @Test
     public void testCallClone()
     {
         assertEquals(new HashSet<>(Collections.singletonList("call to clone()")),
-                     new UDFByteCodeVerifier().verify(readClass(CallClone.class)));
+                     new JavaUDFByteCodeVerifier().verify(readClass(CallClone.class)).errors);
     }
 
     @Test
     public void testCallFinalize()
     {
         assertEquals(new HashSet<>(Collections.singletonList("call to finalize()")),
-                     new UDFByteCodeVerifier().verify(readClass(CallFinalize.class)));
+                     new JavaUDFByteCodeVerifier().verify(readClass(CallFinalize.class)).errors);
     }
 
     @Test
     public void testCallComDatastax()
     {
         assertEquals(new HashSet<>(Collections.singletonList("call to com/datastax/driver/core/DataType.cint()")),
-                     new UDFByteCodeVerifier().addDisallowedPackage("com/").verify(readClass(CallComDatastax.class)));
+                     new JavaUDFByteCodeVerifier().addDisallowedPackage("com/").verify(readClass(CallComDatastax.class)).errors);
     }
 
     @Test
     public void testCallOrgApache()
     {
         assertEquals(new HashSet<>(Collections.singletonList("call to org/apache/cassandra/config/DatabaseDescriptor.getClusterName()")),
-                     new UDFByteCodeVerifier().addDisallowedPackage("org/").verify(readClass(CallOrgApache.class)));
+                     new JavaUDFByteCodeVerifier().addDisallowedPackage("org/").verify(readClass(CallOrgApache.class)).errors);
     }
 
     @SuppressWarnings("resource")
@@ -303,5 +321,136 @@ public class UFVerifierTest extends CQLTester
                              "CALLED ON NULL INPUT " +
                              "RETURNS double " +
                              "LANGUAGE java AS $$" + body + "$$");
+    }
+
+    //
+    // advanced timeout detection
+    //
+
+    static class UFVerifierTestClassLoader extends ClassLoader
+    {
+        private final byte[] bytecode;
+        private final String name;
+
+        UFVerifierTestClassLoader(String name, byte[] bytecode)
+        {
+            super(Thread.currentThread().getContextClassLoader());
+            this.name = name;
+            this.bytecode = bytecode;
+        }
+
+        public Class<?> loadClass(String name) throws ClassNotFoundException
+        {
+            if (this.name.equals(name))
+                return defineClass(name, bytecode, 0, bytecode.length);
+            return super.loadClass(name);
+        }
+    }
+
+    private static void testAmokClass(Class<?> clazz) throws Exception
+    {
+        byte[] bytecode = readClass(clazz);
+
+//        dumpBytecode("original " + clazz.getCanonicalName(), bytecode);
+
+        JavaUDFByteCodeVerifier.ClassAndErrors result = new JavaUDFByteCodeVerifier().verify(bytecode);
+        assertEquals(Collections.emptySet(), result.errors);
+
+        dumpBytecode("transformed " + clazz.getCanonicalName(), result.bytecode);
+
+        Class<?> secured = Class.forName(clazz.getName(),
+                                         true,
+                                         new UFVerifierTestClassLoader(clazz.getName(), result.bytecode));
+        Method mExecImpl = secured.getDeclaredMethod("executeImpl", int.class, List.class);
+        mExecImpl.setAccessible(true);
+        Object instance = secured.getDeclaredConstructor(DataType.class, DataType[].class).newInstance(null, null);
+
+        Class<?> cTimeoutHandler = Class.forName("org.apache.cassandra.cql3.functions.JavaUDFQuotaHandler");
+        Method mBeforeStart = cTimeoutHandler.getDeclaredMethod("beforeStart", long.class, long.class, long.class, long.class);
+        mBeforeStart.setAccessible(true);
+        Method mUdfExecCall = cTimeoutHandler.getDeclaredMethod("udfExecCall");
+        mUdfExecCall.setAccessible(true);
+
+        ExecutorService executor = Executors.newFixedThreadPool(1);
+        try
+        {
+            Future<Object> future = executor.submit(() -> {
+                try
+                {
+                    mBeforeStart.invoke(null, 20L, 0L, 20L, 0L);
+                    return mExecImpl.invoke(instance, 3, null);
+                }
+                catch (Exception e)
+                {
+                    throw new RuntimeException(e);
+                }
+                finally
+                {
+                    for (int i = 0; i < 16; i++)
+                        if ((Boolean)mUdfExecCall.invoke(null))
+                            throw new RuntimeException("failure detected");
+                }
+            });
+
+            try
+            {
+                future.get(2500, TimeUnit.MILLISECONDS);
+                fail();
+            }
+            catch (ExecutionException ee)
+            {
+                Throwable cause = ee.getCause();
+                assertEquals("failure detected", cause.getMessage());
+            }
+        }
+        finally
+        {
+            executor.shutdown();
+        }
+    }
+
+    private static void dumpBytecode(String title, byte[] bytecode)
+    {
+        ClassReader classReader = new ClassReader(bytecode);
+
+        System.out.println("******************* byte code for " + title);
+        TraceClassVisitor traceClassVisitor = new TraceClassVisitor(new PrintWriter(System.out));
+        classReader.accept(traceClassVisitor, 0);
+    }
+
+    @Test
+    public void testEndlessLoopClass() throws Exception
+    {
+        testAmokClass(EndlessLoopClass.class);
+    }
+
+    @Test
+    public void testGotoEndlessLoopClass() throws Exception
+    {
+        testAmokClass(GotoEndlessLoopClass.class);
+    }
+
+    @Test
+    public void testNestedLoopsClass() throws Exception
+    {
+        testAmokClass(NestedLoopsClass.class);
+    }
+
+    @Test
+    public void testNestedTryCatchLoopsClass() throws Exception
+    {
+        testAmokClass(NestedTryCatchLoopsClass.class);
+    }
+
+    @Test
+    public void testAllocWarn() throws Exception
+    {
+        testAmokClass(HugeAllocClass.class);
+    }
+
+    @Test
+    public void testManyAllocWarn() throws Exception
+    {
+        testAmokClass(ManyHugeAllocClass.class);
     }
 }

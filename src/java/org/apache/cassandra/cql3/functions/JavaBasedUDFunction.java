@@ -30,9 +30,7 @@ import java.nio.ByteBuffer;
 import java.security.*;
 import java.security.cert.Certificate;
 import java.util.*;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.ThreadLocalRandom;
+import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import com.google.common.io.ByteStreams;
@@ -41,13 +39,21 @@ import org.slf4j.LoggerFactory;
 
 import com.datastax.driver.core.DataType;
 import org.apache.cassandra.concurrent.NamedThreadFactory;
+import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.cql3.ColumnIdentifier;
 import org.apache.cassandra.db.marshal.AbstractType;
+import org.apache.cassandra.exceptions.FunctionExecutionException;
 import org.apache.cassandra.exceptions.InvalidRequestException;
+import org.apache.cassandra.service.ClientWarn;
 import org.apache.cassandra.utils.FBUtilities;
 import org.eclipse.jdt.core.compiler.IProblem;
-import org.eclipse.jdt.internal.compiler.*;
+import org.eclipse.jdt.internal.compiler.ClassFile;
+import org.eclipse.jdt.internal.compiler.CompilationResult;
 import org.eclipse.jdt.internal.compiler.Compiler;
+import org.eclipse.jdt.internal.compiler.DefaultErrorHandlingPolicies;
+import org.eclipse.jdt.internal.compiler.ICompilerRequestor;
+import org.eclipse.jdt.internal.compiler.IErrorHandlingPolicy;
+import org.eclipse.jdt.internal.compiler.IProblemFactory;
 import org.eclipse.jdt.internal.compiler.classfmt.ClassFileReader;
 import org.eclipse.jdt.internal.compiler.classfmt.ClassFormatException;
 import org.eclipse.jdt.internal.compiler.env.ICompilationUnit;
@@ -75,7 +81,7 @@ final class JavaBasedUDFunction extends UDFunction
 
     private static final EcjTargetClassLoader targetClassLoader = new EcjTargetClassLoader();
 
-    private static final UDFByteCodeVerifier udfByteCodeVerifier = new UDFByteCodeVerifier();
+    private static final JavaUDFByteCodeVerifier udfByteCodeVerifier = new JavaUDFByteCodeVerifier();
 
     private static final ProtectionDomain protectionDomain;
 
@@ -108,7 +114,17 @@ final class JavaBasedUDFunction extends UDFunction
         udfByteCodeVerifier.addDisallowedMethodCall("java/lang/ClassLoader", "setClassAssertionStatus");
         udfByteCodeVerifier.addDisallowedMethodCall("java/lang/ClassLoader", "setDefaultAssertionStatus");
         udfByteCodeVerifier.addDisallowedMethodCall("java/lang/ClassLoader", "setPackageAssertionStatus");
+        udfByteCodeVerifier.addDisallowedMethodCall("java/lang/System", "console");
+        udfByteCodeVerifier.addDisallowedMethodCall("java/lang/System", "gc");
+        udfByteCodeVerifier.addDisallowedMethodCall("java/lang/System", "runFinalization");
         udfByteCodeVerifier.addDisallowedMethodCall("java/nio/ByteBuffer", "allocateDirect");
+        udfByteCodeVerifier.addDisallowedMethodCall("java/util/Collections", "synchronizedCollection");
+        udfByteCodeVerifier.addDisallowedMethodCall("java/util/Collections", "synchronizedList");
+        udfByteCodeVerifier.addDisallowedMethodCall("java/util/Collections", "synchronizedMap");
+        udfByteCodeVerifier.addDisallowedMethodCall("java/util/Collections", "synchronizedNavigableMap");
+        udfByteCodeVerifier.addDisallowedMethodCall("java/util/Collections", "synchronizedNavigableSet");
+        udfByteCodeVerifier.addDisallowedMethodCall("java/util/Collections", "synchronizedSet");
+        udfByteCodeVerifier.addDisallowedMethodCall("java/util/Collections", "synchronizedSortedSet");
 
         Map<String, String> settings = new HashMap<>();
         settings.put(CompilerOptions.OPTION_LineNumberAttribute,
@@ -273,10 +289,10 @@ final class JavaBasedUDFunction extends UDFunction
             }
 
             // Verify the UDF bytecode against use of probably dangerous code
-            Set<String> errors = udfByteCodeVerifier.verify(targetClassLoader.classData(targetClassName));
+            JavaUDFByteCodeVerifier.ClassAndErrors verifyResult = udfByteCodeVerifier.verify(targetClassLoader.classData(targetClassName));
             String validDeclare = "not allowed method declared: " + executeInternalName + '(';
             String validCall = "call to " + targetClassName.replace('.', '/') + '.' + executeInternalName + "()";
-            for (Iterator<String> i = errors.iterator(); i.hasNext();)
+            for (Iterator<String> i = verifyResult.errors.iterator(); i.hasNext();)
             {
                 String error = i.next();
                 // we generate a random name of the private, internal execute method, which is detected by the byte-code verifier
@@ -285,8 +301,10 @@ final class JavaBasedUDFunction extends UDFunction
                     i.remove();
                 }
             }
-            if (!errors.isEmpty())
-                throw new InvalidRequestException("Java UDF validation failed: " + errors);
+            if (!verifyResult.errors.isEmpty())
+                throw new InvalidRequestException("Java UDF validation failed: " + verifyResult.errors);
+
+            targetClassLoader.addClass(targetClassName, verifyResult.bytecode);
 
             // Load the class and create a new instance of it
             Thread thread = Thread.currentThread();
@@ -325,16 +343,87 @@ final class JavaBasedUDFunction extends UDFunction
         }
     }
 
-    protected ExecutorService executor()
+    protected ByteBuffer executeAsync(int protocolVersion, List<ByteBuffer> parameters)
     {
-        return executor;
+        Future<JavaUDFExecResult> future = executor.submit(() -> executeUserDefinedInternal(protocolVersion, parameters));
+
+        JavaUDFExecResult result;
+        try
+        {
+            result = future.get();
+        }
+        catch (InterruptedException e)
+        {
+            Thread.currentThread().interrupt();
+            throw new RuntimeException(e);
+        }
+        catch (ExecutionException e)
+        {
+            Throwable c = e.getCause();
+            if (c instanceof RuntimeException)
+                throw (RuntimeException) c;
+            throw new RuntimeException(c);
+        }
+        checkExecResult(result);
+        return result.result;
     }
 
     protected ByteBuffer executeUserDefined(int protocolVersion, List<ByteBuffer> params)
     {
-        return javaUDF.executeImpl(protocolVersion, params);
+        JavaUDFExecResult result = executeUserDefinedInternal(protocolVersion, params);
+
+        checkExecResult(result);
+
+        return result.result;
     }
 
+    private void checkExecResult(JavaUDFExecResult result)
+    {
+        if (result.warnTimeExceeded)
+        {
+            String warn = String.format("User defined function %s ran longer than %dms", this, DatabaseDescriptor.getUserDefinedFunctionWarnTimeout());
+            logger.warn(warn);
+            ClientWarn.warn(warn);
+        }
+        if (result.failTimeExceeded)
+        {
+            TimeoutException cause = new TimeoutException(String.format("User defined function %s ran longer than %dms",
+                                                                        this,
+                                                                        DatabaseDescriptor.getUserDefinedFunctionFailTimeout()));
+            throw FunctionExecutionException.create(this, cause);
+        }
+        if (result.warnBytesExceeded)
+        {
+            String warn = String.format("User defined function %s allocated more than %dMB heap", this, DatabaseDescriptor.getUserDefinedFunctionWarnMb());
+            logger.warn(warn);
+            ClientWarn.warn(warn);
+        }
+        if (result.failBytesExceeded)
+        {
+            RuntimeException cause = new RuntimeException(String.format("User defined function %s allocated more than %dMB heap",
+                                                          this,
+                                                          DatabaseDescriptor.getUserDefinedFunctionFailMb()));
+            throw FunctionExecutionException.create(this, cause);
+        }
+    }
+
+    private JavaUDFExecResult executeUserDefinedInternal(int protocolVersion, List<ByteBuffer> params)
+    {
+        JavaUDFExecResult result = new JavaUDFExecResult();
+        JavaUDFQuotaHandler.beforeStart(DatabaseDescriptor.getUserDefinedFunctionFailTimeout(),
+                                        DatabaseDescriptor.getUserDefinedFunctionWarnTimeout(),
+                                        DatabaseDescriptor.getUserDefinedFunctionFailMb(),
+                                        DatabaseDescriptor.getUserDefinedFunctionWarnMb());
+        try
+        {
+            result.result = javaUDF.executeImpl(protocolVersion, params);
+        }
+        finally
+        {
+            JavaUDFQuotaHandler.afterExec(result);
+        }
+        return result;
+    }
 
     private static int countNewlines(StringBuilder javaSource)
     {

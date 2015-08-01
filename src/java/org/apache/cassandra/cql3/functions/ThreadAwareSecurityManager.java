@@ -31,7 +31,7 @@ import java.util.Enumeration;
 
 /**
  * Custom {@link SecurityManager} and {@link Policy} implementation that only performs access checks
- * if explicitly enabled.
+ * if the calling thread is running in a {@link SecurityThreadGroup}.
  * <p>
  * This implementation gives no measurable performance panalty
  * (see <a href="http://cstar.datastax.com/tests/id/1d461628-12ba-11e5-918f-42010af0688f">see cstar test</a>).

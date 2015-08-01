@@ -76,6 +76,13 @@ public class DebuggableThreadPoolExecutor extends ThreadPoolExecutor implements 
         }
     };
 
+    static
+    {
+        // "link" DebuggableThreadPoolExecutor to TraceSessionWrapper (prevent AccessControlException against
+        // org.apache.cassandra.concurrent for script UDFs).
+        TraceSessionWrapper.class.toGenericString();
+    }
+
     public DebuggableThreadPoolExecutor(String threadPoolName, int priority)
     {
         this(1, Integer.MAX_VALUE, TimeUnit.SECONDS, new LinkedBlockingQueue<Runnable>(), new NamedThreadFactory(threadPoolName, priority));

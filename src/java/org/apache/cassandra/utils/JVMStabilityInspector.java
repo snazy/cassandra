@@ -93,7 +93,7 @@ public final class JVMStabilityInspector
 
     public static void userFunctionTimeout(Throwable t)
     {
-        switch (DatabaseDescriptor.getUserFunctionTimeoutPolicy())
+        switch (DatabaseDescriptor.getUserFunctionFailPolicy())
         {
             case die:
                 // policy to give 250ms grace time to
