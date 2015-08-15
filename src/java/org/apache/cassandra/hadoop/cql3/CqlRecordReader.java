@@ -30,7 +30,7 @@ import com.google.common.base.Splitter;
 import com.google.common.collect.AbstractIterator;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.Maps;
-import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -45,6 +45,7 @@ import com.datastax.driver.core.Session;
 import com.datastax.driver.core.TableMetadata;
 import com.datastax.driver.core.Token;
 import com.datastax.driver.core.TupleValue;
+import com.datastax.driver.core.TypeCodec;
 import com.datastax.driver.core.UDTValue;
 import com.google.common.reflect.TypeToken;
 import org.apache.cassandra.db.marshal.AbstractType;
@@ -343,6 +344,42 @@ public class CqlRecordReader extends RecordReader<Long, Row>
         public Object getObject(String s)
         {
             return row.getObject(s);
+        }
+
+        @Override
+        public <T> T get(int i, Class<T> aClass)
+        {
+            return row.get(i, aClass);
+        }
+
+        @Override
+        public <T> T get(int i, TypeToken<T> typeToken)
+        {
+            return row.get(i, typeToken);
+        }
+
+        @Override
+        public <T> T get(int i, TypeCodec<T> typeCodec)
+        {
+            return row.get(i, typeCodec);
+        }
+
+        @Override
+        public <T> T get(String s, Class<T> aClass)
+        {
+            return row.get(s, aClass);
+        }
+
+        @Override
+        public <T> T get(String s, TypeToken<T> typeToken)
+        {
+            return row.get(s, typeToken);
+        }
+
+        @Override
+        public <T> T get(String s, TypeCodec<T> typeCodec)
+        {
+            return row.get(s, typeCodec);
         }
 
         @Override
