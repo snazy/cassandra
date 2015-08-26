@@ -127,7 +127,7 @@ public class BytesReadTracker implements DataInputPlus
 
     public String readUTF() throws IOException
     {
-        return DataInputStream.readUTF(this);
+        return ByteBufferUtil.readUTF(this);
     }
 
     public int readUnsignedByte() throws IOException

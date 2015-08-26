@@ -19,10 +19,10 @@ package org.apache.cassandra.io.util;
 
 import java.io.DataOutput;
 import java.io.IOException;
-import java.io.UTFDataFormatException;
 import java.nio.ByteBuffer;
 import java.nio.channels.WritableByteChannel;
 
+import org.apache.cassandra.utils.ByteBufferUtil;
 import org.apache.cassandra.utils.memory.MemoryUtil;
 
 import com.google.common.base.Function;
@@ -37,8 +37,6 @@ import com.google.common.base.Function;
  */
 public abstract class UnbufferedDataOutputStreamPlus extends DataOutputStreamPlus
 {
-    private static final byte[] zeroBytes = new byte[2];
-
     protected UnbufferedDataOutputStreamPlus()
     {
         super();
@@ -253,91 +251,7 @@ public abstract class UnbufferedDataOutputStreamPlus extends DataOutputStreamPlu
      */
     public static void writeUTF(String str, DataOutput out) throws IOException
     {
-        int length = str.length();
-        if (length == 0)
-        {
-            out.write(zeroBytes);
-            return;
-        }
-
-        int utfCount = 0;
-        int maxSize = 2;
-        for (int i = 0 ; i < length ; i++)
-        {
-            int ch = str.charAt(i);
-            if ((ch > 0) & (ch <= 127))
-                utfCount += 1;
-            else if (ch <= 2047)
-                utfCount += 2;
-            else
-                utfCount += maxSize = 3;
-        }
-
-        if (utfCount > 65535)
-            throw new UTFDataFormatException(); //$NON-NLS-1$
-
-        byte[] utfBytes = retrieveTemporaryBuffer(utfCount + 2);
-
-        int bufferLength = utfBytes.length;
-        if (utfCount == length)
-        {
-            utfBytes[0] = (byte) (utfCount >> 8);
-            utfBytes[1] = (byte) utfCount;
-            int firstIndex = 2;
-            for (int offset = 0 ; offset < length ; offset += bufferLength)
-            {
-                int runLength = Math.min(bufferLength - firstIndex, length - offset) + firstIndex;
-                offset -= firstIndex;
-                for (int i = firstIndex ; i < runLength; i++)
-                    utfBytes[i] = (byte) str.charAt(offset + i);
-                out.write(utfBytes, 0, runLength);
-                firstIndex = 0;
-            }
-        }
-        else
-        {
-            int utfIndex = 2;
-            int offset = 0;
-            utfBytes[0] = (byte) (utfCount >> 8);
-            utfBytes[1] = (byte) utfCount;
-
-            while (length > 0)
-            {
-                int charRunLength = (utfBytes.length - utfIndex) / maxSize;
-                if (charRunLength < 128 && charRunLength < length)
-                {
-                    out.write(utfBytes, 0, utfIndex);
-                    utfIndex = 0;
-                }
-                if (charRunLength > length)
-                    charRunLength = length;
-
-                for (int i = 0 ; i < charRunLength ; i++)
-                {
-                    char ch = str.charAt(offset + i);
-                    if ((ch > 0) && (ch <= 127))
-                    {
-                        utfBytes[utfIndex++] = (byte) ch;
-                    }
-                    else if (ch <= 2047)
-                    {
-                        utfBytes[utfIndex++] = (byte) (0xc0 | (0x1f & (ch >> 6)));
-                        utfBytes[utfIndex++] = (byte) (0x80 | (0x3f & ch));
-                    }
-                    else
-                    {
-                        utfBytes[utfIndex++] = (byte) (0xe0 | (0x0f & (ch >> 12)));
-                        utfBytes[utfIndex++] = (byte) (0x80 | (0x3f & (ch >> 6)));
-                        utfBytes[utfIndex++] = (byte) (0x80 | (0x3f & ch));
-                    }
-                }
-
-                offset += charRunLength;
-                length -= charRunLength;
-            }
-
-            out.write(utfBytes, 0, utfIndex);
-        }
+        ByteBufferUtil.writeUTF(str, out);
     }
 
     /**

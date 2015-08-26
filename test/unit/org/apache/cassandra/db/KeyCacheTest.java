@@ -17,11 +17,6 @@
  */
 package org.apache.cassandra.db;
 
-import java.io.IOError;
-import java.io.IOException;
-import java.io.UTFDataFormatException;
-import java.nio.ByteBuffer;
-import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.Map;
@@ -29,7 +24,6 @@ import java.util.Set;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 
-import org.apache.commons.io.output.ByteArrayOutputStream;
 import org.junit.AfterClass;
 import org.junit.BeforeClass;
 import org.junit.Test;
@@ -37,7 +31,6 @@ import org.junit.Test;
 import org.apache.cassandra.SchemaLoader;
 import org.apache.cassandra.Util;
 import org.apache.cassandra.cache.KeyCacheKey;
-import org.apache.cassandra.cache.OHCKeyCache;
 import org.apache.cassandra.config.CFMetaData;
 import org.apache.cassandra.config.Config;
 import org.apache.cassandra.config.DatabaseDescriptor;
@@ -46,17 +39,14 @@ import org.apache.cassandra.db.compaction.CompactionManager;
 import org.apache.cassandra.db.lifecycle.TransactionLog;
 import org.apache.cassandra.exceptions.ConfigurationException;
 import org.apache.cassandra.io.sstable.format.SSTableReader;
-import org.apache.cassandra.io.util.WrappedDataOutputStreamPlus;
 import org.apache.cassandra.schema.KeyspaceParams;
 import org.apache.cassandra.service.CacheService;
 import org.apache.cassandra.utils.concurrent.Refs;
 
-import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
-import static org.junit.Assert.fail;
 
 public class KeyCacheTest
 {
@@ -296,142 +286,4 @@ public class KeyCacheTest
         }
         assertEquals(expected, size);
     }
-
-
-    @Test
-    public void testStringReadWriteChar0()
-    {
-        assertEquals(2, OHCKeyCache.SerializationUtil.stringSerializedSize("\u0000"));
-
-        // heap/array ByteBuffer
-        ByteBuffer bb = ByteBuffer.allocate(4);
-        OHCKeyCache.SerializationUtil.writeUTF("\u0000", bb);
-        assertArrayEquals(new byte[]{ 0, 2, (byte)0xc0, (byte)0x80 }, bb.array());
-        bb.flip();
-        assertEquals("\u0000", OHCKeyCache.SerializationUtil.readUTF(bb));
-        ByteBuffer bbHeap = bb;
-
-        // direct ByteBuffer
-        bb = ByteBuffer.allocateDirect(4);
-        OHCKeyCache.SerializationUtil.writeUTF("\u0000", bb);
-        assertEquals(bbHeap, bb);
-        bb.flip();
-        assertEquals("\u0000", OHCKeyCache.SerializationUtil.readUTF(bb));
-    }
-
-    @Test
-    public void testStringReadWrite()
-    {
-        String[] strings = {
-                           "",
-                           "\u00e4\u00f6\u00fc\u00df",
-                           "hello world",
-                           "k\u00f6lsche jung",
-                           "\u07FF",
-                           "\u0800",
-                           "\u007F",
-                           "\u0080",
-                           "\uffff",
-                           "\u3456\u07ff\u0800\u007f\u0080\uffff foo bar baz",
-                           "foo bar baz \u3456\u07ff\u0800\u007f\u0080\uffff"
-        };
-
-        // heap/array ByteBuffer
-        for (String s : strings)
-        {
-            int bbuSize = OHCKeyCache.SerializationUtil.stringSerializedSize(s);
-            byte[] refBytes = s.getBytes(StandardCharsets.UTF_8);
-            assertEquals(refBytes.length, bbuSize);
-
-            ByteBuffer bb = ByteBuffer.allocate(2 + bbuSize);
-            OHCKeyCache.SerializationUtil.writeUTF(s, bb);
-            assertEquals(bbuSize + 2, bb.position());
-            bb.flip();
-            String read = OHCKeyCache.SerializationUtil.readUTF(bb);
-            assertEquals(s, read);
-            assertEquals(bbuSize + 2, bb.position());
-        }
-
-        // direct ByteBuffer
-        for (String s : strings)
-        {
-            int bbuSize = OHCKeyCache.SerializationUtil.stringSerializedSize(s);
-            byte[] refBytes = s.getBytes(StandardCharsets.UTF_8);
-            assertEquals(refBytes.length, bbuSize);
-
-            ByteBuffer bb = ByteBuffer.allocateDirect(2 + bbuSize);
-            OHCKeyCache.SerializationUtil.writeUTF(s, bb);
-            assertEquals(bbuSize + 2, bb.position());
-            bb.flip();
-            String read = OHCKeyCache.SerializationUtil.readUTF(bb);
-            assertEquals(s, read);
-            assertEquals(bbuSize + 2, bb.position());
-        }
-    }
-
-    @Test
-    public void testBigStringReadWrite() throws IOException
-    {
-        String ref = bigString();
-        assertEquals(65535, OHCKeyCache.SerializationUtil.stringSerializedSize(ref));
-
-        ByteBuffer buf = ByteBuffer.allocate(65537);
-        OHCKeyCache.SerializationUtil.writeUTF(ref, buf);
-        buf.flip();
-
-        String str = OHCKeyCache.SerializationUtil.readUTF(buf);
-        assertEquals(ref, str);
-    }
-
-    @Test
-    public void testBigStringUTFReadWrite() throws IOException
-    {
-        String ref = bigStringUTF();
-        assertEquals(65535, OHCKeyCache.SerializationUtil.stringSerializedSize(ref));
-
-        ByteBuffer buf = ByteBuffer.allocate(65537);
-        OHCKeyCache.SerializationUtil.writeUTF(ref, buf);
-        buf.flip();
-
-        String str = OHCKeyCache.SerializationUtil.readUTF(buf);
-        assertEquals(ref, str);
-    }
-
-    @Test
-    public void testStringTooLong() throws IOException
-    {
-        String tooLong = bigString() + 'a';
-        ByteBuffer bb = ByteBuffer.allocate(65538);
-        try
-        {
-            OHCKeyCache.SerializationUtil.writeUTF(tooLong, bb);
-            fail();
-        }
-        catch (IOError e)
-        {
-            assertTrue(e.getCause() instanceof UTFDataFormatException);
-        }
-    }
-
-    private static String bigString()
-    {
-        StringBuilder bigString = new StringBuilder();
-        for (int i = 0; i < 65535; i++)
-        {
-            bigString.append((char)('a' + i % 26));
-        }
-        return bigString.toString();
-    }
-
-    private static String bigStringUTF()
-    {
-        StringBuilder bigString = new StringBuilder();
-        bigString.append("\u00e4\u00f6\u00fc\u00df");
-        for (int i = 0; i < 65527; i++)
-        {
-            bigString.append((char)('a' + i % 26));
-        }
-        return bigString.toString();
-    }
-
 }

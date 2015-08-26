@@ -19,15 +19,18 @@
 package org.apache.cassandra.utils;
 
 import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.DataInputStream;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.charset.CharacterCodingException;
+import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 
 import org.junit.Test;
 
 import org.apache.cassandra.io.util.DataOutputBuffer;
+import org.apache.cassandra.io.util.WrappedDataOutputStreamPlus;
 
 import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
@@ -246,5 +249,152 @@ public class ByteBufferUtilTest
         ByteBuffer bb2 = ByteBufferUtil.hexToBytes(s);
         assertEquals(bb, bb2);
         assertEquals("0102", s);
+    }
+
+    @Test
+    public void testStringReadWriteChar0()
+    {
+        assertEquals(2, ByteBufferUtil.stringSerializedSize("\u0000"));
+
+        // heap/array ByteBuffer
+        ByteBuffer bb = ByteBuffer.allocate(4);
+        ByteBufferUtil.writeUTF("\u0000", bb);
+        assertArrayEquals(new byte[]{ 0, 2, (byte)0xc0, (byte)0x80 }, bb.array());
+        bb.flip();
+        assertEquals("\u0000", ByteBufferUtil.readUTF(bb));
+        ByteBuffer bbHeap = bb;
+
+        // direct ByteBuffer
+        bb = ByteBuffer.allocateDirect(4);
+        ByteBufferUtil.writeUTF("\u0000", bb);
+        assertEquals(bbHeap, bb);
+        bb.flip();
+        assertEquals("\u0000", ByteBufferUtil.readUTF(bb));
+    }
+
+    @Test
+    public void testStringReadWrite()
+    {
+        String[] strings = {
+                           "",
+                           "\u00e4\u00f6\u00fc\u00df",
+                           "hello world",
+                           "k\u00f6lsche jung",
+                           "\u07FF",
+                           "\u0800",
+                           "\u007F",
+                           "\u0080",
+                           "\uffff",
+                           "\u3456\u07ff\u0800\u007f\u0080\uffff foo bar baz",
+                           "foo bar baz \u3456\u07ff\u0800\u007f\u0080\uffff"
+        };
+
+        // heap/array ByteBuffer
+        for (String s : strings)
+        {
+            int bbuSize = ByteBufferUtil.stringSerializedSize(s);
+            byte[] refBytes = s.getBytes(StandardCharsets.UTF_8);
+            assertEquals(refBytes.length, bbuSize);
+
+            ByteBuffer bb = ByteBuffer.allocate(2 + bbuSize);
+            ByteBufferUtil.writeUTF(s, bb);
+            assertEquals(bbuSize + 2, bb.position());
+            bb.flip();
+            String read = ByteBufferUtil.readUTF(bb);
+            assertEquals(s, read);
+            assertEquals(bbuSize + 2, bb.position());
+        }
+
+        // direct ByteBuffer
+        for (String s : strings)
+        {
+            int bbuSize = ByteBufferUtil.stringSerializedSize(s);
+            byte[] refBytes = s.getBytes(StandardCharsets.UTF_8);
+            assertEquals(refBytes.length, bbuSize);
+
+            ByteBuffer bb = ByteBuffer.allocateDirect(2 + bbuSize);
+            ByteBufferUtil.writeUTF(s, bb);
+            assertEquals(bbuSize + 2, bb.position());
+            bb.flip();
+            String read = ByteBufferUtil.readUTF(bb);
+            assertEquals(s, read);
+            assertEquals(bbuSize + 2, bb.position());
+        }
+    }
+
+    @Test
+    public void testStreamStringReadWrite() throws IOException
+    {
+        String ref = bigString();
+
+        ByteArrayOutputStream baos = new ByteArrayOutputStream();
+        WrappedDataOutputStreamPlus wrapped = new WrappedDataOutputStreamPlus(baos);
+        wrapped.writeUTF(ref);
+
+        ByteArrayInputStream bais = new ByteArrayInputStream(baos.toByteArray());
+        DataInputStream dis = new DataInputStream(bais);
+        String str = ByteBufferUtil.readUTF(dis);
+        assertEquals(ref, str);
+    }
+
+    @Test
+    public void testBigStringReadWrite() throws IOException
+    {
+        String ref = bigString();
+
+        ByteBuffer buf = ByteBuffer.allocate(65537);
+        ByteBufferUtil.writeUTF(ref, buf);
+        buf.flip();
+
+        String str = ByteBufferUtil.readUTF(buf);
+        assertEquals(ref, str);
+    }
+
+    @Test
+    public void testBigStringReadWriteBB() throws IOException
+    {
+        String ref = bigString();
+
+        ByteBuffer buf = ByteBuffer.allocateDirect(65537);
+        ByteBufferUtil.writeUTF(ref, buf);
+        buf.flip();
+
+        String str = ByteBufferUtil.readUTF(buf);
+        assertEquals(ref, str);
+    }
+
+    @Test(expected = IllegalArgumentException.class)
+    public void testStringTooLong() throws IOException
+    {
+        String tooLong = bigString() + 'a';
+        ByteBuffer bb = ByteBuffer.allocate(65538);
+        ByteBufferUtil.writeUTF(tooLong, bb);
+    }
+
+    @Test(expected = IllegalArgumentException.class)
+    public void testStringTooLongBB() throws IOException
+    {
+        String tooLong = bigString() + 'a';
+        ByteBuffer bb = ByteBuffer.allocateDirect(65538);
+        ByteBufferUtil.writeUTF(tooLong, bb);
+    }
+
+    @Test(expected = IllegalArgumentException.class)
+    public void testStringTooLongStream() throws IOException
+    {
+        String tooLong = bigString() + 'a';
+        ByteArrayOutputStream baos = new ByteArrayOutputStream();
+        WrappedDataOutputStreamPlus wrapped = new WrappedDataOutputStreamPlus(baos);
+        wrapped.writeUTF(tooLong);
+    }
+
+    private static String bigString()
+    {
+        StringBuilder bigString = new StringBuilder();
+        for (int i = 0; i < 65535; i++)
+        {
+            bigString.append((char)('a' + i % 26));
+        }
+        return bigString.toString();
     }
 }
