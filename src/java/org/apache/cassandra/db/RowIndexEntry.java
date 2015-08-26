@@ -145,9 +145,15 @@ public class RowIndexEntry<T> implements IMeasurableMemory
 
                 int entries = in.readInt();
                 IndexHelper.IndexInfo.Serializer idxSerializer = metadata.serializers().indexSerializer(version);
-                List<IndexHelper.IndexInfo> columnsIndex = new ArrayList<>(entries);
-                for (int i = 0; i < entries; i++)
-                    columnsIndex.add(idxSerializer.deserialize(in, header));
+                List<IndexHelper.IndexInfo> columnsIndex;
+                if (entries == 1)
+                    columnsIndex = Collections.singletonList(idxSerializer.deserialize(in, header));
+                else
+                {
+                    columnsIndex = new ArrayList<>(entries);
+                    for (int i = 0; i < entries; i++)
+                        columnsIndex.add(idxSerializer.deserialize(in, header));
+                }
 
                 return new IndexedEntry(position, deletionTime, columnsIndex);
             }

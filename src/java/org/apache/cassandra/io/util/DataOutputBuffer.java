@@ -40,7 +40,7 @@ public class DataOutputBuffer extends BufferedDataOutputStreamPlus
         super(ByteBuffer.allocate(size));
     }
 
-    protected DataOutputBuffer(ByteBuffer buffer)
+    public DataOutputBuffer(ByteBuffer buffer)
     {
         super(buffer);
     }

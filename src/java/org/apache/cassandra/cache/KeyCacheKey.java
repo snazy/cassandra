@@ -25,7 +25,7 @@ import org.apache.cassandra.io.sstable.Descriptor;
 import org.apache.cassandra.utils.ByteBufferUtil;
 import org.apache.cassandra.utils.ObjectSizes;
 
-public class KeyCacheKey implements CacheKey
+public final class KeyCacheKey implements CacheKey
 {
     public final UUID cfId;
     public final Descriptor desc;
@@ -36,12 +36,17 @@ public class KeyCacheKey implements CacheKey
     // without extra copies on lookup since client-provided key ByteBuffers will be array-backed already
     public final byte[] key;
 
-    public KeyCacheKey(UUID cfId, Descriptor desc, ByteBuffer key)
+    KeyCacheKey(UUID cfId, Descriptor desc, byte[] key)
     {
         this.cfId = cfId;
         this.desc = desc;
-        this.key = ByteBufferUtil.getArray(key);
+        this.key = key;
         assert this.key != null;
+    }
+
+    public KeyCacheKey(UUID cfId, Descriptor desc, ByteBuffer key)
+    {
+        this(cfId, desc, ByteBufferUtil.getArray(key));
     }
 
     public UUID getCFId()

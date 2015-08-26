@@ -18,9 +18,14 @@
 package org.apache.cassandra.db;
 
 import java.io.*;
+import java.util.Arrays;
+import java.util.List;
+import java.util.concurrent.atomic.AtomicReference;
 
 import org.apache.cassandra.config.CFMetaData;
+import org.apache.cassandra.db.marshal.AbstractType;
 import org.apache.cassandra.io.ISerializer;
+import org.apache.cassandra.io.sstable.format.big.BigFormat;
 import org.apache.cassandra.io.util.DataInputPlus;
 import org.apache.cassandra.io.util.DataOutputPlus;
 import org.apache.cassandra.io.sstable.format.Version;
@@ -33,40 +38,66 @@ import static org.apache.cassandra.io.sstable.IndexHelper.IndexInfo;
 public class Serializers
 {
     private final CFMetaData metadata;
+    private final AtomicReference<IndexInfo.Serializer[]> serializers;
 
     public Serializers(CFMetaData metadata)
     {
         this.metadata = metadata;
+        serializers = new AtomicReference<>(new IndexInfo.Serializer[]{new IndexInfo.Serializer(metadata, BigFormat.latestVersion)});
     }
 
     public IndexInfo.Serializer indexSerializer(Version version)
     {
-        return new IndexInfo.Serializer(metadata, version);
+        // A poor-man's singleton approach to reduce the garbage by new IndexInfo.Serializer instances,
+        // since this method is called very often with off-heap key-cache.
+
+        IndexInfo.Serializer[] arr = serializers.get();
+        for (IndexInfo.Serializer serializer : arr)
+        {
+            if (serializer.getVersion().equals(version))
+                return serializer;
+        }
+
+        arr = Arrays.copyOf(arr, arr.length + 1);
+        IndexInfo.Serializer ser = new IndexInfo.Serializer(metadata, version);
+        arr[arr.length - 1] = ser;
+        serializers.set(arr);
+        return ser;
     }
 
     // Note that for the old layout, this will actually discard the cellname parts that are not strictly
     // part of the clustering prefix. Don't use this if that's not what you want.
-    public ISerializer<ClusteringPrefix> clusteringPrefixSerializer(final Version version, final SerializationHeader header)
+    public static ISerializer<ClusteringPrefix> clusteringPrefixSerializer(final Version version, final SerializationHeader header)
     {
         if (!version.storeRows())
             throw new UnsupportedOperationException();
 
-        return new ISerializer<ClusteringPrefix>()
+        return new ClusteringPrefixSerializer(version.correspondingMessagingVersion(), header.clusteringTypes());
+    }
+
+    private static final class ClusteringPrefixSerializer implements ISerializer<ClusteringPrefix>
+    {
+        private final int messagingVersion;
+        private final List<AbstractType<?>> clusteringTypes;
+        ClusteringPrefixSerializer(int messagingVersion, List<AbstractType<?>> clusteringTypes)
         {
-            public void serialize(ClusteringPrefix clustering, DataOutputPlus out) throws IOException
-            {
-                ClusteringPrefix.serializer.serialize(clustering, out, version.correspondingMessagingVersion(), header.clusteringTypes());
-            }
+            this.messagingVersion = messagingVersion;
+            this.clusteringTypes = clusteringTypes;
+        }
 
-            public ClusteringPrefix deserialize(DataInputPlus in) throws IOException
-            {
-                return ClusteringPrefix.serializer.deserialize(in, version.correspondingMessagingVersion(), header.clusteringTypes());
-            }
+        public void serialize(ClusteringPrefix clustering, DataOutputPlus out) throws IOException
+        {
+            ClusteringPrefix.serializer.serialize(clustering, out, messagingVersion, clusteringTypes);
+        }
 
-            public long serializedSize(ClusteringPrefix clustering)
-            {
-                return ClusteringPrefix.serializer.serializedSize(clustering, version.correspondingMessagingVersion(), header.clusteringTypes());
-            }
-        };
+        public ClusteringPrefix deserialize(DataInputPlus in) throws IOException
+        {
+            return ClusteringPrefix.serializer.deserialize(in, messagingVersion, clusteringTypes);
+        }
+
+        public long serializedSize(ClusteringPrefix clustering)
+        {
+            return ClusteringPrefix.serializer.serializedSize(clustering, messagingVersion, clusteringTypes);
+        }
     }
 }
