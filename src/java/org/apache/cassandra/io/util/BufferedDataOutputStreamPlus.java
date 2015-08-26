@@ -30,6 +30,7 @@ import com.google.common.base.Preconditions;
 import net.nicoulaj.compilecommand.annotations.DontInline;
 
 import org.apache.cassandra.config.Config;
+import org.apache.cassandra.utils.ByteBufferUtil;
 import org.apache.cassandra.utils.memory.MemoryUtil;
 import org.apache.cassandra.utils.vint.VIntCoding;
 
@@ -300,7 +301,7 @@ public class BufferedDataOutputStreamPlus extends DataOutputStreamPlus
     @Override
     public void writeUTF(String s) throws IOException
     {
-        UnbufferedDataOutputStreamPlus.writeUTF(s, this);
+        ByteBufferUtil.writeUTF(s, this);
     }
 
     @Override

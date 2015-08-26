@@ -19,6 +19,8 @@ package org.apache.cassandra.io.util;
 
 import java.io.*;
 
+import org.apache.cassandra.utils.ByteBufferUtil;
+
 public abstract class AbstractDataInput extends InputStream implements DataInputPlus
 {
     public abstract void seek(long position) throws IOException;
@@ -338,6 +340,6 @@ public abstract class AbstractDataInput extends InputStream implements DataInput
      *             if the bytes read cannot be decoded into a character string.
      */
     public final String readUTF() throws IOException {
-        return DataInputStream.readUTF(this);
+        return ByteBufferUtil.readUTF(this);
     }
 }

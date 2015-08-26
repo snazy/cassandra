@@ -25,6 +25,7 @@ package org.apache.cassandra.utils;
 
 import java.io.*;
 import java.net.InetAddress;
+import java.nio.BufferOverflowException;
 import java.nio.ByteBuffer;
 import java.nio.charset.CharacterCodingException;
 import java.nio.charset.Charset;
@@ -33,6 +34,7 @@ import java.util.Arrays;
 import java.util.UUID;
 
 import net.nicoulaj.compilecommand.annotations.Inline;
+import org.apache.cassandra.config.Config;
 import org.apache.cassandra.db.TypeSizes;
 import org.apache.cassandra.io.util.DataInputPlus;
 import org.apache.cassandra.io.util.DataOutputPlus;
@@ -77,11 +79,76 @@ import org.apache.cassandra.io.util.FileUtils;
  * }
  *
  */
-public class ByteBufferUtil
+public final class ByteBufferUtil
 {
     public static final ByteBuffer EMPTY_BYTE_BUFFER = ByteBuffer.wrap(new byte[0]);
     /** Represents an unset value in bound variables */
     public static final ByteBuffer UNSET_BYTE_BUFFER = ByteBuffer.wrap(new byte[]{});
+
+    private static final int initialBufferSize =
+            Integer.getInteger(Config.PROPERTY_PREFIX + "temporary_serialization_buffer_initial_size", 2048);
+    private static final int maxBufferSize =
+            Integer.getInteger(Config.PROPERTY_PREFIX + "temporary_serialization_buffer_max_size", 65537); // max string length + 2 byte len
+    private static final ThreadLocal<ByteBuffer> tempByteBuffer = new ThreadLocal<ByteBuffer>()
+    {
+        protected ByteBuffer initialValue()
+        {
+            return ByteBuffer.allocate(initialBufferSize);
+        }
+    };
+
+    /**
+     * Retrieve the per-thread byte buffer temporary buffer.
+     * Be very careful when using a buffer from this method passed to other methods even in this class!
+     */
+    public static ByteBuffer temporaryByteBuffer(int minSize)
+    {
+        if (minSize > maxBufferSize)
+            return ByteBuffer.allocate(minSize);
+
+        ByteBuffer bytes = tempByteBuffer.get();
+        if (bytes.capacity() < minSize)
+        {
+            // increase in powers of 2, to avoid wasted repeat allocations
+            bytes = ByteBuffer.allocate(Math.max(maxBufferSize, 2 * Integer.highestOneBit(minSize)));
+            tempByteBuffer.set(bytes);
+        }
+        bytes.clear();
+        return bytes;
+    }
+
+    /**
+     * Increase capacity of the {@link ByteBuffer} retrieved by {@link #tempByteBuffer}.
+     * Be very careful when using a buffer from this method passed to other methods even in this class!
+     */
+    public static ByteBuffer resizeByteBuffer(ByteBuffer oldBuffer)
+    {
+        return temporaryByteBuffer(oldBuffer.capacity() * 2);
+    }
+
+    private static final ThreadLocal<StringBuilder> tempStringBuilder = new ThreadLocal<StringBuilder>()
+    {
+        protected StringBuilder initialValue()
+        {
+            return new StringBuilder(initialBufferSize);
+        }
+    };
+    private static StringBuilder temporaryStringBuilder()
+    {
+        StringBuilder sb = tempStringBuilder.get();
+        sb.setLength(0);
+        return sb;
+    }
+    private static void validateStringBuilder(StringBuilder sb)
+    {
+        // do not permanently reference a string builder bigger than maximum buffer size
+        if (sb.length() > maxBufferSize)
+            tempStringBuilder.set(new StringBuilder(initialBufferSize));
+    }
+
+    private ByteBufferUtil()
+    {
+    }
 
     @Inline
     public static int compareUnsigned(ByteBuffer o1, ByteBuffer o2)
@@ -580,12 +647,6 @@ public class ByteBufferUtil
         return prefix.equals(value.duplicate().limit(value.remaining() - diff));
     }
 
-    /** trims size of bytebuffer to exactly number of bytes in it, to do not hold too much memory */
-    public static ByteBuffer minimalBufferFor(ByteBuffer buf)
-    {
-        return buf.capacity() > buf.remaining() || !buf.hasArray() ? ByteBuffer.wrap(getArray(buf)) : buf;
-    }
-
     // Doesn't change bb position
     public static int getShortLength(ByteBuffer bb, int position)
     {
@@ -621,5 +682,269 @@ public class ByteBufferUtil
     {
         int length = readShortLength(bb);
         return readBytes(bb, length);
+    }
+
+    /**
+     * Writes the given string to a {@link DataOutput}.
+     * Ideally this method does not allocate an object - assuming that the per-thread serialization
+     * {@link ByteBuffer} is big enough.
+     */
+    public static void writeUTF(String str, DataOutput out) throws IOException
+    {
+        // sufficient for calls, since strings should be almost 7-bit ASCII
+        ByteBuffer temp = temporaryByteBuffer(2 + str.length());
+        while (true)
+        {
+            try
+            {
+                writeUTF(str, temp);
+                temp.flip();
+                out.write(temp.array(), temp.position(), temp.limit());
+                return;
+            }
+            catch (BufferOverflowException resize)
+            {
+                temp = resizeByteBuffer(temp);
+            }
+        }
+    }
+
+    /**
+     * Writes given string to a byte buffer (and changes its position) using
+     * a {@code short} for string's length in bytes in UTF-8 charset.
+     * Each serialized string starts with an unsigned 16 bit length followed by the UTF-8 representation of the string.
+     * Note: this implementation uses two bytes for {@code (char)0}.
+     */
+    public static void writeUTF(String str, ByteBuffer target)
+    {
+        if (target.hasArray())
+            writeUTFArray(str, target);
+        else
+            writeUTFDirect(str, target);
+    }
+
+    private static void writeUTFArray(String str, ByteBuffer target)
+    {
+        byte[] arr = target.array();
+        int arrOff = target.arrayOffset();
+        int pos = arrOff + target.position();
+
+        int strlen = str.length();
+        if (strlen == 0)
+        {
+            arr[pos++] = 0;
+            arr[pos++] = 0;
+            target.position(pos);
+            return;
+        }
+
+        int lenPos = pos;
+        pos += 2;
+        for (int i = 0; i < strlen; i++)
+        {
+            char c = str.charAt(i);
+            if (c > 0 && c <= 127)
+            {
+                // Note: Java DataOutputStream.writeUTF uses _two_ bytes for (char)0, but UTF-8 defines _one_ byte
+                arr[pos++] = (byte) c;
+            }
+            else
+            {
+                if (c < 0x800)
+                {
+                    // two byte representation
+                    arr[pos++] = (byte) (0xC0 | ((c >> 6) & 0x1F));
+                }
+                else
+                {
+                    // three byte representation
+                    arr[pos++] = (byte) (0xE0 | ((c >> 12) & 0x0F));
+                    arr[pos++] = (byte) (0x80 | ((c >> 6) & 0x3F));
+                }
+                arr[pos++] = (byte) (0x80 | (c & 0x3F));
+            }
+        }
+
+        int bytes = pos - lenPos - 2;
+        // ensure 0..65535 bytes
+        if (bytes > 65535)
+            throw new IllegalArgumentException("String too long, max bytes=65535, has bytes=" + bytes);
+        arr[lenPos] = (byte) (bytes >> 8);
+        arr[lenPos + 1] = (byte) bytes;
+        target.position(pos - arrOff);
+    }
+
+    private static void writeUTFDirect(String str, ByteBuffer target)
+    {
+        int strlen = str.length();
+        if (strlen == 0)
+        {
+            target.putShort((short) 0);
+            return;
+        }
+
+        int lenPos = target.position();
+        target.position(lenPos + 2);
+        for (int i = 0; i < strlen; i++)
+        {
+            char c = str.charAt(i);
+            if (c > 0 && c <= 127)
+            {
+                // Note: Java DataOutputStream.writeUTF uses _two_ bytes for (char)0, but UTF-8 defines _one_ byte
+                target.put((byte) c);
+            }
+            else
+            {
+                if (c < 0x800)
+                {
+                    // two byte representation
+                    target.put((byte) (0xC0 | ((c >> 6) & 0x1F)));
+                }
+                else
+                {
+                    // three byte representation
+                    target.put((byte) (0xE0 | ((c >> 12) & 0x0F)));
+                    target.put((byte) (0x80 | ((c >> 6) & 0x3F)));
+                }
+                target.put((byte) (0x80 | (c & 0x3F)));
+            }
+        }
+
+        int bytes = target.position() - lenPos - 2;
+        // ensure 0..65535 bytes
+        if (bytes > 65535)
+            throw new IllegalArgumentException("String too long, max bytes=65535, has bytes=" + bytes);
+        target.putShort(lenPos,(short) bytes);
+    }
+
+    public static String readUTF(DataInput input) throws IOException
+    {
+        int l = input.readUnsignedShort();
+        if (l == 0)
+            return "";
+
+        ByteBuffer buffer = temporaryByteBuffer(l);
+        input.readFully(buffer.array(), 0, l);
+        buffer.limit(l);
+
+        return readUTF(l, buffer);
+    }
+
+    /**
+     * Reads a string to a byte buffer (and changes its position) using
+     * a {@code short} for string's length in bytes in UTF-8 charset.
+     * Each serialized string starts with an unsigned 16 bit length followed by the UTF-8 representation of the string.
+     * Note: this implementation uses two bytes for {@code (char)0}.
+     */
+    public static String readUTF(ByteBuffer source)
+    {
+        int l = source.getShort() & 0xffff;
+        if (l == 0)
+            return "";
+
+        return readUTF(l, source);
+    }
+
+    private static String readUTF(int l, ByteBuffer source)
+    {
+        if (source.hasArray())
+            return readUTFArray(l, source);
+        return readUTFDirect(l, source);
+    }
+
+    private static String readUTFArray(int l, ByteBuffer source)
+    {
+        // Implementation note:
+        //      new String(tmp, 0, l, StandardCharsets.UTF_8);
+        // using a (shared, temporary) byte[] is not that cheap as it appears as it creates Decoder and
+        // char[] instances plus the code path is somewhat longer.
+
+        byte[] arr = source.array();
+        int arrOff = source.arrayOffset();
+        int pos = source.position() + arrOff;
+
+        StringBuilder sb = temporaryStringBuilder();
+        int end = pos + l;
+        int b, b2, b3;
+        while (pos < end)
+        {
+            b = arr[pos++] & 0xff;
+            switch (b >> 4) {
+                case 0: case 1: case 2: case 3: case 4: case 5: case 6: case 7:
+                    sb.append((char)b);
+                    break;
+                case 12: case 13:
+                    b2 = arr[pos++] & 0xff;
+                    sb.append((char)(((b & 0x1F) << 6) | (b2 & 0x3F)));
+                    break;
+                case 14:
+                    b2 = arr[pos++] & 0xff;
+                    b3 = arr[pos++] & 0xff;
+                    sb.append((char)(((b & 0x0F) << 12) | ((b2 & 0x3F) << 6) | (b3 & 0x3F)));
+                    break;
+                default:
+                    throw new IllegalArgumentException("Invalid UTF-8 sequence in serialized representaion 0x" + Integer.toHexString(b & 0xff));
+            }
+        }
+        source.position(pos - arrOff);
+        validateStringBuilder(sb);
+        return sb.toString();
+    }
+
+    private static String readUTFDirect(int l, ByteBuffer source)
+    {
+        // Implementation note:
+        //      new String(tmp, 0, l, StandardCharsets.UTF_8);
+        // using a (shared, temporary) byte[] is not that cheap as it appears as it creates Decoder and
+        // char[] instances plus the code path is somewhat longer.
+
+        StringBuilder sb = temporaryStringBuilder();
+        int end = source.position() + l;
+        int b, b2, b3;
+        while (source.position() < end)
+        {
+            b = source.get() & 0xff;
+            switch (b >> 4) {
+                case 0: case 1: case 2: case 3: case 4: case 5: case 6: case 7:
+                    sb.append((char)b);
+                    break;
+                case 12: case 13:
+                    b2 = source.get() & 0xff;
+                    sb.append((char)(((b & 0x1F) << 6) | (b2 & 0x3F)));
+                    break;
+                case 14:
+                    b2 = source.get() & 0xff;
+                    b3 = source.get() & 0xff;
+                    sb.append((char)(((b & 0x0F) << 12) | ((b2 & 0x3F) << 6) | (b3 & 0x3F)));
+                    break;
+                default:
+                    throw new IllegalArgumentException("Invalid UTF-8 sequence in serialized representaion 0x" + Integer.toHexString(b & 0xff));
+            }
+        }
+        validateStringBuilder(sb);
+        return sb.toString();
+    }
+
+    /**
+     * Get the length in bytes for a given string using UTF-8.
+     * Note: this implementation uses the correct one byte length for {@code (char)0} as {@code StandardCharsets.UTF_8}
+     * does, but the custom implementations in Java for streams use <i>two</i> bytes for {@code (char)0}.
+     */
+    public static int stringSerializedSize(String s)
+    {
+        int l = s.length();
+        int bytes = 0;
+        for (int i = 0; i < l; i++)
+        {
+            char c = s.charAt(i);
+            if (c > 0 && c <= 127)
+                // Note: Java's DataOutputStream.writeUTF uses _two_ bytes for (char)0, but UTF-8 defines _one_ byte
+                bytes++;
+            else if (c < 0x800)
+                bytes += 2;
+            else
+                bytes += 3;
+        }
+        return bytes;
     }
 }

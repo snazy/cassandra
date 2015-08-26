@@ -19,7 +19,6 @@
 package org.apache.cassandra.cache;
 
 import java.io.File;
-import java.io.IOError;
 import java.io.IOException;
 import java.nio.BufferOverflowException;
 import java.nio.ByteBuffer;
@@ -28,7 +27,6 @@ import java.util.Optional;
 import java.util.UUID;
 
 import org.apache.cassandra.config.CFMetaData;
-import org.apache.cassandra.config.Config;
 import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.config.Schema;
 import org.apache.cassandra.db.ColumnFamilyStore;
@@ -42,10 +40,9 @@ import org.apache.cassandra.io.sstable.Descriptor;
 import org.apache.cassandra.io.sstable.format.SSTableFormat;
 import org.apache.cassandra.io.sstable.format.Version;
 import org.apache.cassandra.io.util.DataInputBuffer;
-import org.apache.cassandra.io.util.DataOutputBuffer;
 import org.apache.cassandra.io.util.DataOutputBufferFixed;
-import org.apache.cassandra.io.util.UnbufferedDataOutputStreamPlus;
 import org.apache.cassandra.schema.IndexMetadata;
+import org.apache.cassandra.utils.ByteBufferUtil;
 import org.caffinitas.ohc.CacheSerializer;
 import org.caffinitas.ohc.OHCache;
 import org.caffinitas.ohc.OHCacheBuilder;
@@ -183,7 +180,7 @@ public final class OHCKeyCache
             // TODO remove KeyCacheValue.buffer when using OHC's chunked implementation (CASSANDRA-9929) and move
             // code from serializedSize() to serialize(). (OHC chunked implementation provides a mechanism for a
             // thread-local serialization buffer and won't call serializedSize())
-            ByteBuffer buf = SerializationUtil.temporaryByteBuffer(0);
+            ByteBuffer buf = ByteBufferUtil.temporaryByteBuffer(0);
             while (true)
             {
                 try
@@ -205,7 +202,7 @@ public final class OHCKeyCache
                     {
                         // base table (not a 2i)
                         cfm = Schema.instance.getCFMetaData(ksName, cfName);
-                        SerializationUtil.writeUTF("", buf);
+                        ByteBufferUtil.writeUTF("", buf);
                     }
                     else
                     {
@@ -217,14 +214,14 @@ public final class OHCKeyCache
                             return 0;
                         cfm = CassandraIndex.indexCfsMetadata(cfm, indexMeta.get());
 
-                        SerializationUtil.writeUTF(indexName, buf);
+                        ByteBufferUtil.writeUTF(indexName, buf);
                     }
 
                     if (cfm == null)
                         return 0;
 
                     buf.putShort((short) desc.formatType.ordinal());
-                    SerializationUtil.writeUTF(desc.version.getVersion(), buf);
+                    ByteBufferUtil.writeUTF(desc.version.getVersion(), buf);
 
                     DataOutputBufferFixed out = new DataOutputBufferFixed(buf);
                     RowIndexEntry.IndexSerializer<?> indexSerializer = desc.getFormat().getIndexSerializer(cfm,
@@ -245,7 +242,7 @@ public final class OHCKeyCache
                 }
                 catch (BufferOverflowException resize)
                 {
-                    buf = SerializationUtil.resizeByteBuffer(buf);
+                    buf = ByteBufferUtil.resizeByteBuffer(buf);
                 }
             }
         }
@@ -273,7 +270,7 @@ public final class OHCKeyCache
             }
 
             // either an empty string for base CF or just the index name
-            String indexName = SerializationUtil.readUTF(buf);
+            String indexName = ByteBufferUtil.readUTF(buf);
             if (!indexName.isEmpty())
             {
                 // special handling for 2i - we need the 2i's CFS
@@ -293,7 +290,7 @@ public final class OHCKeyCache
                 return null;
 
             SSTableFormat.Type formatType = SSTableFormat.Type.values()[buf.getShort()];
-            Version version = formatType.info.getVersion(SerializationUtil.readUTF(buf));
+            Version version = formatType.info.getVersion(ByteBufferUtil.readUTF(buf));
 
             DataInputBuffer input = new DataInputBuffer(buf, false);
 
@@ -321,12 +318,12 @@ public final class OHCKeyCache
 
         public void serialize(KeyCacheKey keyCacheKey, ByteBuffer buf)
         {
-            SerializationUtil.writeUTF(keyCacheKey.desc.ksname, buf);
-            SerializationUtil.writeUTF(keyCacheKey.desc.cfname, buf);
-            SerializationUtil.writeUTF(keyCacheKey.desc.directory.getPath(), buf);
+            ByteBufferUtil.writeUTF(keyCacheKey.desc.ksname, buf);
+            ByteBufferUtil.writeUTF(keyCacheKey.desc.cfname, buf);
+            ByteBufferUtil.writeUTF(keyCacheKey.desc.directory.getPath(), buf);
             buf.putShort((short) keyCacheKey.desc.formatType.ordinal());
             buf.putInt(keyCacheKey.desc.generation);
-            SerializationUtil.writeUTF(keyCacheKey.desc.version.getVersion(), buf);
+            ByteBufferUtil.writeUTF(keyCacheKey.desc.version.getVersion(), buf);
 
             buf.put(keyCacheKey.key);
 
@@ -337,12 +334,12 @@ public final class OHCKeyCache
         {
             int sz = 0;
 
-            sz += 2 + SerializationUtil.stringSerializedSize(keyCacheKey.desc.ksname);
-            sz += 2 + SerializationUtil.stringSerializedSize(keyCacheKey.desc.cfname);
-            sz += 2 + SerializationUtil.stringSerializedSize(keyCacheKey.desc.directory.getPath());
+            sz += 2 + ByteBufferUtil.stringSerializedSize(keyCacheKey.desc.ksname);
+            sz += 2 + ByteBufferUtil.stringSerializedSize(keyCacheKey.desc.cfname);
+            sz += 2 + ByteBufferUtil.stringSerializedSize(keyCacheKey.desc.directory.getPath());
             sz += 2; //keyCacheKey.desc.formatType
             sz += 4; //keyCacheKey.desc.generation;
-            sz += 2 + SerializationUtil.stringSerializedSize(keyCacheKey.desc.version.getVersion());
+            sz += 2 + ByteBufferUtil.stringSerializedSize(keyCacheKey.desc.version.getVersion());
 
             sz += keyCacheKey.key.length;
 
@@ -351,18 +348,18 @@ public final class OHCKeyCache
 
         public KeyCacheKey deserialize(ByteBuffer buf)
         {
-            String ksname = SerializationUtil.readUTF(buf);
-            String cfname = SerializationUtil.readUTF(buf);
+            String ksname = ByteBufferUtil.readUTF(buf);
+            String cfname = ByteBufferUtil.readUTF(buf);
 
             // cannot use cfId here since that will be the same for the table and its secondary indexes
             CFMetaData cfm = Schema.instance.getCFMetaData(ksname, cfname);
             if (cfm == null)
                 return null;
 
-            File directory = new File(SerializationUtil.readUTF(buf));
+            File directory = new File(ByteBufferUtil.readUTF(buf));
             SSTableFormat.Type formatType = SSTableFormat.Type.values()[buf.getShort()];
             int generation = buf.getInt();
-            String version = SerializationUtil.readUTF(buf);
+            String version = ByteBufferUtil.readUTF(buf);
 
             Descriptor desc = new Descriptor(version, directory, ksname, cfname, generation, formatType);
 
@@ -372,117 +369,6 @@ public final class OHCKeyCache
             assert buf.remaining() == 0;
 
             return new KeyCacheKey(cfm.cfId, desc, key);
-        }
-    }
-
-    // separate class as this stuff is going to be removed here in favor of having more optimized versions
-    // in ByteBufferUtil with CASSANDRA-10189
-    public static final class SerializationUtil
-    {
-
-        private static final int initialBufferSize =
-                Integer.getInteger(Config.PROPERTY_PREFIX + "temporary_serialization_buffer_initial_size", 2048);
-        private static final int maxBufferSize =
-                Integer.getInteger(Config.PROPERTY_PREFIX + "temporary_serialization_buffer_max_size", 16384);
-        private static final ThreadLocal<ByteBuffer> tempByteBuffer = new ThreadLocal<ByteBuffer>()
-        {
-            protected ByteBuffer initialValue()
-            {
-                return ByteBuffer.allocate(initialBufferSize);
-            }
-        };
-
-        private SerializationUtil()
-        {
-        }
-
-        /**
-         * Retrieve the per-thread byte buffer temporary buffer.
-         * Be very careful when using a buffer from this method passed to other methods even in this class!
-         */
-        public static ByteBuffer temporaryByteBuffer(int minSize)
-        {
-            if (minSize > maxBufferSize)
-                return ByteBuffer.allocate(minSize);
-
-            ByteBuffer bytes = tempByteBuffer.get();
-            if (bytes.capacity() < minSize)
-            {
-                // increase in powers of 2, to avoid wasted repeat allocations
-                bytes = ByteBuffer.allocate(Math.max(maxBufferSize, 2 * Integer.highestOneBit(minSize)));
-                tempByteBuffer.set(bytes);
-            }
-            bytes.clear();
-            return bytes;
-        }
-
-        /**
-         * Increase capacity of the {@link ByteBuffer} retrieved by {@link #tempByteBuffer}.
-         * Be very careful when using a buffer from this method passed to other methods even in this class!
-         */
-        public static ByteBuffer resizeByteBuffer(ByteBuffer oldBuffer)
-        {
-            return temporaryByteBuffer(oldBuffer.capacity() + 4096);
-        }
-
-        /**
-         * Writes given string to a byte buffer (and changes its position) using
-         * a {@code short} for string's length in bytes in UTF-8 charset.
-         * Each serialized string starts with an unsigned 16 bit length followed by the UTF-8 representation of the string.
-         * Note: this implementation uses two bytes for {@code (char)0}.
-         */
-        public static void writeUTF(String str, ByteBuffer target)
-        {
-            try
-            {
-                UnbufferedDataOutputStreamPlus.writeUTF(str, new DataOutputBuffer(target));
-            }
-            catch (IOException e)
-            {
-                throw new IOError(e);
-            }
-        }
-
-        /**
-         * Reads a string to a byte buffer (and changes its position) using
-         * a {@code short} for string's length in bytes in UTF-8 charset.
-         * Each serialized string starts with an unsigned 16 bit length followed by the UTF-8 representation of the string.
-         * Note: this implementation uses two bytes for {@code (char)0}.
-         */
-        @SuppressWarnings("resource")
-        public static String readUTF(ByteBuffer source)
-        {
-            try
-            {
-                return new DataInputBuffer(source, false).readUTF();
-            }
-            catch (IOException e)
-            {
-                throw new IOError(e);
-            }
-        }
-
-        /**
-         * Get the length in bytes for a given string using UTF-8.
-         * Note: this implementation uses the correct one byte length for {@code (char)0} as {@code StandardCharsets.UTF_8}
-         * does, but the custom implementations in Java for streams use <i>two</i> bytes for {@code (char)0}.
-         */
-        public static int stringSerializedSize(String s)
-        {
-            int l = s.length();
-            int bytes = 0;
-            for (int i = 0; i < l; i++)
-            {
-                char c = s.charAt(i);
-                if (c > 0 && c <= 127)
-                    // Note: Java's DataOutputStream.writeUTF uses _two_ bytes for (char)0, but UTF-8 defines _one_ byte
-                    bytes++;
-                else if (c < 0x800)
-                    bytes += 2;
-                else
-                    bytes += 3;
-            }
-            return bytes;
         }
     }
 }

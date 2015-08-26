@@ -27,6 +27,7 @@ import java.nio.ByteOrder;
 import java.nio.channels.ReadableByteChannel;
 import java.nio.channels.SeekableByteChannel;
 
+import org.apache.cassandra.utils.ByteBufferUtil;
 import org.apache.cassandra.utils.vint.VIntCoding;
 
 import com.google.common.base.Preconditions;
@@ -358,7 +359,7 @@ public class NIODataInputStream extends InputStream implements DataInputPlus, Cl
     @Override
     public String readUTF() throws IOException
     {
-        return DataInputStream.readUTF(this);
+        return ByteBufferUtil.readUTF(this);
     }
 
     @Override
