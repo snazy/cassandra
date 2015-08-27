@@ -301,7 +301,7 @@ public class KeyCacheTest
     @Test
     public void testStringReadWriteChar0()
     {
-        assertEquals(2, OHCKeyCache.SerializationUtil.stringSerializedSize("\u0000"));
+        assertEquals(4, OHCKeyCache.SerializationUtil.stringSerializedSize("\u0000"));
 
         // heap/array ByteBuffer
         ByteBuffer bb = ByteBuffer.allocate(4);
@@ -339,7 +339,7 @@ public class KeyCacheTest
         // heap/array ByteBuffer
         for (String s : strings)
         {
-            int bbuSize = OHCKeyCache.SerializationUtil.stringSerializedSize(s);
+            int bbuSize = OHCKeyCache.SerializationUtil.stringSerializedSize(s) - 2;
             byte[] refBytes = s.getBytes(StandardCharsets.UTF_8);
             assertEquals(refBytes.length, bbuSize);
 
@@ -355,7 +355,7 @@ public class KeyCacheTest
         // direct ByteBuffer
         for (String s : strings)
         {
-            int bbuSize = OHCKeyCache.SerializationUtil.stringSerializedSize(s);
+            int bbuSize = OHCKeyCache.SerializationUtil.stringSerializedSize(s) - 2;
             byte[] refBytes = s.getBytes(StandardCharsets.UTF_8);
             assertEquals(refBytes.length, bbuSize);
 
@@ -373,7 +373,7 @@ public class KeyCacheTest
     public void testBigStringReadWrite() throws IOException
     {
         String ref = bigString();
-        assertEquals(65535, OHCKeyCache.SerializationUtil.stringSerializedSize(ref));
+        assertEquals(65535, OHCKeyCache.SerializationUtil.stringSerializedSize(ref) - 2);
 
         ByteBuffer buf = ByteBuffer.allocate(65537);
         OHCKeyCache.SerializationUtil.writeUTF(ref, buf);
@@ -387,7 +387,7 @@ public class KeyCacheTest
     public void testBigStringUTFReadWrite() throws IOException
     {
         String ref = bigStringUTF();
-        assertEquals(65535, OHCKeyCache.SerializationUtil.stringSerializedSize(ref));
+        assertEquals(65535, OHCKeyCache.SerializationUtil.stringSerializedSize(ref) - 2);
 
         ByteBuffer buf = ByteBuffer.allocate(65537);
         OHCKeyCache.SerializationUtil.writeUTF(ref, buf);

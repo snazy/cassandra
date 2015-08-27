@@ -18,13 +18,13 @@
 
 package org.apache.cassandra.cql3;
 
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 
 import org.junit.Assert;
 import org.junit.Test;
 
-import org.apache.cassandra.db.ColumnFamilyStore;
 import org.apache.cassandra.db.Keyspace;
 import org.apache.cassandra.metrics.CacheMetrics;
 import org.apache.cassandra.metrics.CassandraMetricsRegistry;
@@ -32,7 +32,6 @@ import org.apache.cassandra.service.CacheService;
 import org.apache.cassandra.service.StorageService;
 
 import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertTrue;
 
 public class KeyCacheCqlTest extends CQLTester
 {
@@ -45,7 +44,8 @@ public class KeyCacheCqlTest extends CQLTester
     "clust_key_c    frozen<list<text>>," + // to make it really big
     "col_text       text," +
     "col_int        int," +
-    "col_long       bigint,";
+    "col_long       bigint," +
+    "col_blob       blob,";
     static final String commonColumns =
     "part_key_a," +
     "part_key_b," +
@@ -76,7 +76,7 @@ public class KeyCacheCqlTest extends CQLTester
         long hits = metrics.hits.getCount();
         long requests = metrics.requests.getCount();
         assertEquals(0, hits);
-        assertEquals(206, requests);
+        assertEquals(210, requests);
 
         //
 
@@ -93,9 +93,7 @@ public class KeyCacheCqlTest extends CQLTester
         hits = metrics.hits.getCount();
         requests = metrics.requests.getCount();
         assertEquals(200, hits);
-        assertEquals(412, requests);
-
-        CacheService.instance.keyCache.submitWrite(Integer.MAX_VALUE).get();
+        assertEquals(420, requests);
     }
 
     @Test
@@ -202,9 +200,7 @@ public class KeyCacheCqlTest extends CQLTester
     // Clustered tables receive 50 CQL rows per partition.
     private void insertData(String table, String index, boolean withClustering) throws Throwable
     {
-        StorageService.instance.disableAutoCompaction(KEYSPACE, table);
-        Keyspace.open(KEYSPACE).getColumnFamilyStore(table).forceFlush().get();
-        Keyspace.open(KEYSPACE).getColumnFamilyStore(table).truncateBlocking();
+        prepareTable(table);
         if (index != null)
         {
             StorageService.instance.disableAutoCompaction(KEYSPACE, table + '.' + index);
@@ -236,6 +232,13 @@ public class KeyCacheCqlTest extends CQLTester
                     Keyspace.open(KEYSPACE).getColumnFamilyStore(table).indexManager.getIndexByName(index).getBlockingFlushTask().call();
             }
         }
+    }
+
+    private static void prepareTable(String table) throws IOException, InterruptedException, java.util.concurrent.ExecutionException
+    {
+        StorageService.instance.disableAutoCompaction(KEYSPACE, table);
+        Keyspace.open(KEYSPACE).getColumnFamilyStore(table).forceFlush().get();
+        Keyspace.open(KEYSPACE).getColumnFamilyStore(table).truncateBlocking();
     }
 
     private static List<String> makeList(String value)
