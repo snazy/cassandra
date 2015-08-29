@@ -29,7 +29,6 @@ import java.util.Set;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 
-import org.apache.commons.io.output.ByteArrayOutputStream;
 import org.junit.AfterClass;
 import org.junit.BeforeClass;
 import org.junit.Test;
@@ -46,7 +45,6 @@ import org.apache.cassandra.db.compaction.CompactionManager;
 import org.apache.cassandra.db.lifecycle.TransactionLog;
 import org.apache.cassandra.exceptions.ConfigurationException;
 import org.apache.cassandra.io.sstable.format.SSTableReader;
-import org.apache.cassandra.io.util.WrappedDataOutputStreamPlus;
 import org.apache.cassandra.schema.KeyspaceParams;
 import org.apache.cassandra.service.CacheService;
 import org.apache.cassandra.utils.concurrent.Refs;
@@ -151,7 +149,10 @@ public class KeyCacheTest
             RowIndexEntry expected = entry.getValue();
             RowIndexEntry actual = CacheService.instance.keyCache.get(entry.getKey());
             assertEquals(expected.position, actual.position);
-            assertEquals(expected.columnsIndex(), actual.columnsIndex());
+            assertEquals(expected.columnsCount(), actual.columnsCount());
+            int sz = expected.columnsCount();
+            for (int i = 0; i < sz; i++)
+                assertEquals(expected.indexInfo(i), actual.indexInfo(i));
             if (expected.isIndexed())
             {
                 assertEquals(expected.deletionTime(), actual.deletionTime());

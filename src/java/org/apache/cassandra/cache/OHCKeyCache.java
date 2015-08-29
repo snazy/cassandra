@@ -78,7 +78,7 @@ public final class OHCKeyCache
         final KeyCacheKey key;
         final RowIndexEntry value;
         ByteBuffer buffer;
-        RowIndexEntry.IndexSerializer<?> indexSerializer;
+        RowIndexEntry.IndexSerializer indexSerializer;
 
         KeyCacheValue(KeyCacheKey key, RowIndexEntry value)
         {
@@ -334,7 +334,7 @@ public final class OHCKeyCache
 
             // following basically what CacheService.KeyCacheSerializer does
 
-            RowIndexEntry.IndexSerializer<?> indexSerializer;
+            RowIndexEntry.IndexSerializer indexSerializer;
             indexSerializer = formatType.info.getIndexSerializer(version,
                                                                  SerializationHeader.forKeyCache(cfs.metadata));
             try

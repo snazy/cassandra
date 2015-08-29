@@ -28,12 +28,11 @@ import org.apache.cassandra.Util;
 import org.apache.cassandra.db.ClusteringComparator;
 import org.apache.cassandra.db.ClusteringPrefix;
 import org.apache.cassandra.db.DeletionTime;
+import org.apache.cassandra.db.RowIndexEntry;
 import org.apache.cassandra.db.marshal.AbstractType;
-import org.apache.cassandra.db.marshal.IntegerType;
 import org.apache.cassandra.db.marshal.LongType;
 import org.apache.cassandra.utils.FBUtilities;
 
-import static org.apache.cassandra.io.sstable.IndexHelper.IndexInfo;
 import static org.junit.Assert.assertEquals;
 
 public class IndexHelperTest
@@ -55,26 +54,48 @@ public class IndexHelperTest
         indexes.add(new IndexInfo(cn(10L), cn(15L), 0, 0, deletionInfo));
         indexes.add(new IndexInfo(cn(20L), cn(25L), 0, 0, deletionInfo));
 
+        RowIndexEntry rie = new MockRowIndexEntry(indexes);
 
-        assertEquals(0, IndexHelper.indexFor(cn(-1L), indexes, comp, false, -1));
-        assertEquals(0, IndexHelper.indexFor(cn(5L), indexes, comp, false, -1));
-        assertEquals(1, IndexHelper.indexFor(cn(12L), indexes, comp, false, -1));
-        assertEquals(2, IndexHelper.indexFor(cn(17L), indexes, comp, false, -1));
-        assertEquals(3, IndexHelper.indexFor(cn(100L), indexes, comp, false, -1));
-        assertEquals(3, IndexHelper.indexFor(cn(100L), indexes, comp, false, 0));
-        assertEquals(3, IndexHelper.indexFor(cn(100L), indexes, comp, false, 1));
-        assertEquals(3, IndexHelper.indexFor(cn(100L), indexes, comp, false, 2));
-        assertEquals(3, IndexHelper.indexFor(cn(100L), indexes, comp, false, 3));
+        assertEquals(0, rie.indexOf(cn(-1L), comp, false, -1));
+        assertEquals(0, rie.indexOf(cn(5L), comp, false, -1));
+        assertEquals(1, rie.indexOf(cn(12L), comp, false, -1));
+        assertEquals(2, rie.indexOf(cn(17L), comp, false, -1));
+        assertEquals(3, rie.indexOf(cn(100L), comp, false, -1));
+        assertEquals(3, rie.indexOf(cn(100L), comp, false, 0));
+        assertEquals(3, rie.indexOf(cn(100L), comp, false, 1));
+        assertEquals(3, rie.indexOf(cn(100L), comp, false, 2));
+        assertEquals(3, rie.indexOf(cn(100L), comp, false, 3));
 
-        assertEquals(-1, IndexHelper.indexFor(cn(-1L), indexes, comp, true, -1));
-        assertEquals(0, IndexHelper.indexFor(cn(5L), indexes, comp, true, 3));
-        assertEquals(0, IndexHelper.indexFor(cn(5L), indexes, comp, true, 2));
-        assertEquals(1, IndexHelper.indexFor(cn(17L), indexes, comp, true, 3));
-        assertEquals(2, IndexHelper.indexFor(cn(100L), indexes, comp, true, 3));
-        assertEquals(2, IndexHelper.indexFor(cn(100L), indexes, comp, true, 4));
-        assertEquals(1, IndexHelper.indexFor(cn(12L), indexes, comp, true, 3));
-        assertEquals(1, IndexHelper.indexFor(cn(12L), indexes, comp, true, 2));
-        assertEquals(1, IndexHelper.indexFor(cn(100L), indexes, comp, true, 1));
-        assertEquals(2, IndexHelper.indexFor(cn(100L), indexes, comp, true, 2));
+        assertEquals(-1, rie.indexOf(cn(-1L), comp, true, -1));
+        assertEquals(0, rie.indexOf(cn(5L), comp, true, 3));
+        assertEquals(0, rie.indexOf(cn(5L), comp, true, 2));
+        assertEquals(1, rie.indexOf(cn(17L), comp, true, 3));
+        assertEquals(2, rie.indexOf(cn(100L), comp, true, 3));
+        assertEquals(2, rie.indexOf(cn(100L), comp, true, 4));
+        assertEquals(1, rie.indexOf(cn(12L), comp, true, 3));
+        assertEquals(1, rie.indexOf(cn(12L), comp, true, 2));
+        assertEquals(1, rie.indexOf(cn(100L), comp, true, 1));
+        assertEquals(2, rie.indexOf(cn(100L), comp, true, 2));
+    }
+    
+    static class MockRowIndexEntry extends RowIndexEntry
+    {
+        private final List<IndexInfo> list;
+
+        MockRowIndexEntry(List<IndexInfo> list)
+        {
+            super(0L);
+            this.list = list;
+        }
+
+        public int columnsCount()
+        {
+            return list.size();
+        }
+
+        public IndexInfo indexInfo(int indexIdx)
+        {
+            return list.get(indexIdx);
+        }
     }
 }

@@ -238,7 +238,7 @@ public class BigTableReader extends SSTableReader
                         }
                         if (op == Operator.EQ && updateCacheAndStats)
                             bloomFilterTracker.addTruePositive();
-                        Tracing.trace("Partition index with {} entries found for sstable {}", indexEntry.columnsIndex().size(), descriptor.generation);
+                        Tracing.trace("Partition index with {} entries found for sstable {}", indexEntry.columnsCount(), descriptor.generation);
                         return indexEntry;
                     }
 

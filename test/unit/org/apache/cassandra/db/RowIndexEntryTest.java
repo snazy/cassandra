@@ -24,7 +24,6 @@ import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.cql3.CQLTester;
 import org.apache.cassandra.db.rows.EncodingStats;
 import org.apache.cassandra.db.partitions.*;
-import org.apache.cassandra.io.sstable.IndexHelper;
 import org.apache.cassandra.io.sstable.format.big.BigFormat;
 import org.apache.cassandra.io.util.DataOutputBuffer;
 import org.apache.cassandra.io.util.SequentialWriter;
@@ -61,11 +60,11 @@ public class RowIndexEntryTest extends CQLTester
         File tempFile = File.createTempFile("row_index_entry_test", null);
         tempFile.deleteOnExit();
         SequentialWriter writer = SequentialWriter.open(tempFile);
-        ColumnIndex columnIndex = ColumnIndex.writeAndBuildIndex(partition.unfilteredIterator(), writer, header, BigFormat.latestVersion);
-        RowIndexEntry<IndexHelper.IndexInfo> withIndex = RowIndexEntry.create(0xdeadbeef, DeletionTime.LIVE, columnIndex);
+        RowIndexEntry withIndex = RowIndexEntry.buildIndex(0xdeadbeef, DeletionTime.LIVE,
+                                                           partition.unfilteredIterator(), writer, header, BigFormat.latestVersion);
 
         // sanity check
-        assertTrue(columnIndex.columnsIndex.size() >= 3);
+        assertTrue(withIndex.columnsCount() >= 3);
 
         serializer.serialize(withIndex, buffer);
         assertEquals(buffer.getLength(), serializer.serializedSize(withIndex));
