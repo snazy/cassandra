@@ -21,7 +21,6 @@ import java.io.*;
 import java.util.Collections;
 import java.util.List;
 
-import org.apache.cassandra.config.CFMetaData;
 import org.apache.cassandra.db.*;
 import org.apache.cassandra.io.ISerializer;
 import org.apache.cassandra.io.sstable.format.Version;
@@ -140,12 +139,10 @@ public class IndexHelper
 
         public static class Serializer
         {
-            private final CFMetaData metadata;
             private final Version version;
 
-            public Serializer(CFMetaData metadata, Version version)
+            public Serializer(Version version)
             {
-                this.metadata = metadata;
                 this.version = version;
             }
 

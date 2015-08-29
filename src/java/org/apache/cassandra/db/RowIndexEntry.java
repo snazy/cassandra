@@ -26,9 +26,7 @@ import java.util.List;
 
 import com.google.common.primitives.Ints;
 
-import org.apache.cassandra.config.CFMetaData;
 import org.apache.cassandra.cache.IMeasurableMemory;
-import org.apache.cassandra.io.ISerializer;
 import org.apache.cassandra.io.sstable.IndexHelper;
 import org.apache.cassandra.io.sstable.format.Version;
 import org.apache.cassandra.io.util.DataInputPlus;
@@ -47,7 +45,7 @@ public class RowIndexEntry<T> implements IMeasurableMemory
         this.position = position;
     }
 
-    public int promotedSize(CFMetaData metadata, Version version, SerializationHeader header)
+    public int promotedSize(Version version, SerializationHeader header)
     {
         return 0;
     }
@@ -108,13 +106,11 @@ public class RowIndexEntry<T> implements IMeasurableMemory
 
     public static class Serializer implements IndexSerializer<IndexHelper.IndexInfo>
     {
-        private final CFMetaData metadata;
         private final Version version;
         private final SerializationHeader header;
 
-        public Serializer(CFMetaData metadata, Version version, SerializationHeader header)
+        public Serializer(Version version, SerializationHeader header)
         {
-            this.metadata = metadata;
             this.version = version;
             this.header = header;
         }
@@ -122,13 +118,13 @@ public class RowIndexEntry<T> implements IMeasurableMemory
         public void serialize(RowIndexEntry<IndexHelper.IndexInfo> rie, DataOutputPlus out) throws IOException
         {
             out.writeLong(rie.position);
-            out.writeInt(rie.promotedSize(metadata, version, header));
+            out.writeInt(rie.promotedSize(version, header));
 
             if (rie.isIndexed())
             {
                 DeletionTime.serializer.serialize(rie.deletionTime(), out);
                 out.writeInt(rie.columnsIndex().size());
-                IndexHelper.IndexInfo.Serializer idxSerializer = metadata.serializers().indexSerializer(version);
+                IndexHelper.IndexInfo.Serializer idxSerializer = Serializers.indexSerializer(version);
                 for (IndexHelper.IndexInfo info : rie.columnsIndex())
                     idxSerializer.serialize(info, out, header);
             }
@@ -144,7 +140,7 @@ public class RowIndexEntry<T> implements IMeasurableMemory
                 DeletionTime deletionTime = DeletionTime.serializer.deserialize(in);
 
                 int entries = in.readInt();
-                IndexHelper.IndexInfo.Serializer idxSerializer = metadata.serializers().indexSerializer(version);
+                IndexHelper.IndexInfo.Serializer idxSerializer = Serializers.indexSerializer(version);
                 List<IndexHelper.IndexInfo> columnsIndex;
                 if (entries == 1)
                     columnsIndex = Collections.singletonList(idxSerializer.deserialize(in, header));
@@ -180,7 +176,7 @@ public class RowIndexEntry<T> implements IMeasurableMemory
 
         public int serializedSize(RowIndexEntry<IndexHelper.IndexInfo> rie)
         {
-            int size = TypeSizes.sizeof(rie.position) + TypeSizes.sizeof(rie.promotedSize(metadata, version, header));
+            int size = TypeSizes.sizeof(rie.position) + TypeSizes.sizeof(rie.promotedSize(version, header));
 
             if (rie.isIndexed())
             {
@@ -189,7 +185,7 @@ public class RowIndexEntry<T> implements IMeasurableMemory
                 size += DeletionTime.serializer.serializedSize(rie.deletionTime());
                 size += TypeSizes.sizeof(index.size());
 
-                IndexHelper.IndexInfo.Serializer idxSerializer = metadata.serializers().indexSerializer(version);
+                IndexHelper.IndexInfo.Serializer idxSerializer = Serializers.indexSerializer(version);
                 for (IndexHelper.IndexInfo info : index)
                     size += idxSerializer.serializedSize(info, header);
             }
@@ -232,11 +228,11 @@ public class RowIndexEntry<T> implements IMeasurableMemory
         }
 
         @Override
-        public int promotedSize(CFMetaData metadata, Version version, SerializationHeader header)
+        public int promotedSize(Version version, SerializationHeader header)
         {
             long size = DeletionTime.serializer.serializedSize(deletionTime);
             size += TypeSizes.sizeof(columnsIndex.size()); // number of entries
-            IndexHelper.IndexInfo.Serializer idxSerializer = metadata.serializers().indexSerializer(version);
+            IndexHelper.IndexInfo.Serializer idxSerializer = Serializers.indexSerializer(version);
             for (IndexHelper.IndexInfo info : columnsIndex)
                 size += idxSerializer.serializedSize(info, header);
 

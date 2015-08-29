@@ -270,8 +270,7 @@ public final class OHCKeyCache
             DataOutputBufferFixed out = new DataOutputBufferFixed(buf);
             if (rowIndexEntry.indexSerializer == null) // cheap optimization for "conventional path"
             {
-                rowIndexEntry.indexSerializer = desc.getFormat().getIndexSerializer(cfm,
-                                                                                    desc.version,
+                rowIndexEntry.indexSerializer = desc.getFormat().getIndexSerializer(desc.version,
                                                                                     SerializationHeader.forKeyCache(cfm));
             }
             try
@@ -336,8 +335,7 @@ public final class OHCKeyCache
             // following basically what CacheService.KeyCacheSerializer does
 
             RowIndexEntry.IndexSerializer<?> indexSerializer;
-            indexSerializer = formatType.info.getIndexSerializer(cfs.metadata,
-                                                                 version,
+            indexSerializer = formatType.info.getIndexSerializer(version,
                                                                  SerializationHeader.forKeyCache(cfs.metadata));
             try
             {

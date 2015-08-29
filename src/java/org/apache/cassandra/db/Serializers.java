@@ -35,18 +35,15 @@ import static org.apache.cassandra.io.sstable.IndexHelper.IndexInfo;
 /**
  * Holds references on serializers that depend on the table definition.
  */
-public class Serializers
+public final class Serializers
 {
-    private final CFMetaData metadata;
-    private final AtomicReference<IndexInfo.Serializer[]> serializers;
+    private static final AtomicReference<IndexInfo.Serializer[]> serializers = new AtomicReference<>(new IndexInfo.Serializer[]{new IndexInfo.Serializer(BigFormat.latestVersion)});
 
-    public Serializers(CFMetaData metadata)
+    private Serializers()
     {
-        this.metadata = metadata;
-        serializers = new AtomicReference<>(new IndexInfo.Serializer[]{new IndexInfo.Serializer(metadata, BigFormat.latestVersion)});
     }
 
-    public IndexInfo.Serializer indexSerializer(Version version)
+    public static IndexInfo.Serializer indexSerializer(Version version)
     {
         // A poor-man's singleton approach to reduce the garbage by new IndexInfo.Serializer instances,
         // since this method is called very often with off-heap key-cache.
@@ -59,7 +56,7 @@ public class Serializers
         }
 
         arr = Arrays.copyOf(arr, arr.length + 1);
-        IndexInfo.Serializer ser = new IndexInfo.Serializer(metadata, version);
+        IndexInfo.Serializer ser = new IndexInfo.Serializer(version);
         arr[arr.length - 1] = ser;
         serializers.set(arr);
         return ser;

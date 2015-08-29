@@ -86,8 +86,6 @@ public final class CFMetaData
     public volatile ClusteringComparator comparator;  // bytes, long, timeuuid, utf8, etc. This is built directly from clusteringColumns
     public final IPartitioner partitioner;            // partitioner the table uses
 
-    private final Serializers serializers;
-
     // non-final, for now
     public volatile TableParams params = TableParams.DEFAULT;
 
@@ -279,7 +277,6 @@ public final class CFMetaData
         this.clusteringColumns = clusteringColumns;
         this.partitionColumns = partitionColumns;
 
-        this.serializers = new Serializers(this);
         rebuild();
     }
 
@@ -1073,11 +1070,6 @@ public final class CFMetaData
     public boolean isMaterializedView()
     {
         return isMaterializedView;
-    }
-
-    public Serializers serializers()
-    {
-        return serializers;
     }
 
     public AbstractType<?> makeLegacyDefaultValidator()
