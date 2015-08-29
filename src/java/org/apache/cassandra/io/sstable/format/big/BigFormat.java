@@ -74,7 +74,7 @@ public final class BigFormat implements SSTableFormat
     }
 
     @Override
-    public RowIndexEntry.IndexSerializer getIndexSerializer(Version version, SerializationHeader header)
+    public RowIndexEntry.Serializer getIndexSerializer(Version version, SerializationHeader header)
     {
         return new RowIndexEntry.Serializer(version, header);
     }

@@ -166,14 +166,7 @@ public class RowIndexEntry implements IMeasurableMemory
         return EMPTY_SIZE;
     }
 
-    public interface IndexSerializer
-    {
-        void serialize(RowIndexEntry rie, DataOutputPlus out) throws IOException;
-        RowIndexEntry deserialize(DataInputPlus in) throws IOException;
-        int serializedSize(RowIndexEntry rie);
-    }
-
-    public static class Serializer implements IndexSerializer
+    public static class Serializer
     {
         private final Version version;
         private final SerializationHeader header;
@@ -193,7 +186,7 @@ public class RowIndexEntry implements IMeasurableMemory
             {
                 DeletionTime.serializer.serialize(rie.deletionTime(), out);
                 out.writeInt(rie.columnsCount());
-                IndexInfo.Serializer idxSerializer = Serializers.indexSerializer(version);
+                IndexInfo.Serializer idxSerializer = IndexInfo.indexSerializer(version);
                 int sz = rie.columnsCount();
                 for (int i = 0; i < sz; i++)
                     idxSerializer.serialize(rie.indexInfo(i), out, header);
@@ -210,7 +203,7 @@ public class RowIndexEntry implements IMeasurableMemory
                 DeletionTime deletionTime = DeletionTime.serializer.deserialize(in);
 
                 int entries = in.readInt();
-                IndexInfo.Serializer idxSerializer = Serializers.indexSerializer(version);
+                IndexInfo.Serializer idxSerializer = IndexInfo.indexSerializer(version);
                 List<IndexInfo> columnsIndex;
                 if (entries == 1)
                     columnsIndex = Collections.singletonList(idxSerializer.deserialize(in, header));
@@ -253,7 +246,7 @@ public class RowIndexEntry implements IMeasurableMemory
                 size += DeletionTime.serializer.serializedSize(rie.deletionTime());
                 size += TypeSizes.sizeof(rie.columnsCount());
 
-                IndexInfo.Serializer idxSerializer = Serializers.indexSerializer(version);
+                IndexInfo.Serializer idxSerializer = IndexInfo.indexSerializer(version);
                 int sz = rie.columnsCount();
                 for (int i = 0; i < sz; i++)
                     size += idxSerializer.serializedSize(rie.indexInfo(i), header);
@@ -305,7 +298,7 @@ public class RowIndexEntry implements IMeasurableMemory
         {
             long size = DeletionTime.serializer.serializedSize(deletionTime);
             size += TypeSizes.sizeof(columnsIndex.size()); // number of entries
-            IndexInfo.Serializer idxSerializer = Serializers.indexSerializer(version);
+            IndexInfo.Serializer idxSerializer = IndexInfo.indexSerializer(version);
             for (IndexInfo info : columnsIndex)
                 size += idxSerializer.serializedSize(info, header);
 

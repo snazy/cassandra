@@ -19,6 +19,8 @@
 package org.apache.cassandra.io.sstable;
 
 import java.io.IOException;
+import java.util.Arrays;
+import java.util.concurrent.atomic.AtomicReference;
 
 import org.apache.cassandra.db.ClusteringPrefix;
 import org.apache.cassandra.db.DeletionTime;
@@ -27,6 +29,7 @@ import org.apache.cassandra.db.Serializers;
 import org.apache.cassandra.db.TypeSizes;
 import org.apache.cassandra.io.ISerializer;
 import org.apache.cassandra.io.sstable.format.Version;
+import org.apache.cassandra.io.sstable.format.big.BigFormat;
 import org.apache.cassandra.io.util.DataInputPlus;
 import org.apache.cassandra.io.util.DataOutputPlus;
 import org.apache.cassandra.utils.ObjectSizes;
@@ -34,6 +37,8 @@ import org.apache.cassandra.utils.ObjectSizes;
 public class IndexInfo
 {
     private static final long EMPTY_SIZE = ObjectSizes.measure(new IndexInfo(null, null, 0, 0, null));
+
+    private static final AtomicReference<Serializer[]> serializers = new AtomicReference<>(new Serializer[]{ new Serializer(BigFormat.latestVersion)});
 
     private final long width;
     private final ClusteringPrefix lastName;
@@ -55,6 +60,25 @@ public class IndexInfo
         this.offset = offset;
         this.width = width;
         this.endOpenMarker = endOpenMarker;
+    }
+
+    public static Serializer indexSerializer(Version version)
+    {
+        // A poor-man's singleton approach to reduce the garbage by new IndexInfo.Serializer instances,
+        // since this method is called very often with off-heap key-cache.
+
+        Serializer[] arr = serializers.get();
+        for (Serializer serializer : arr)
+        {
+            if (serializer.getVersion().equals(version))
+                return serializer;
+        }
+
+        arr = Arrays.copyOf(arr, arr.length + 1);
+        Serializer ser = new Serializer(version);
+        arr[arr.length - 1] = ser;
+        serializers.set(arr);
+        return ser;
     }
 
     public long getWidth()
@@ -82,11 +106,11 @@ public class IndexInfo
         return endOpenMarker;
     }
 
-    public static class Serializer
+    public static final class Serializer
     {
         private final Version version;
 
-        public Serializer(Version version)
+        Serializer(Version version)
         {
             this.version = version;
         }

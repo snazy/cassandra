@@ -54,7 +54,7 @@ public abstract class SSTableWriter extends SSTable implements Transactional
     protected long maxDataAge = -1;
     protected final long keyCount;
     protected final MetadataCollector metadataCollector;
-    protected final RowIndexEntry.IndexSerializer rowIndexEntrySerializer;
+    protected final RowIndexEntry.Serializer rowIndexEntrySerializer;
     protected final SerializationHeader header;
     protected final TransactionalProxy txnProxy = txnProxy();
 

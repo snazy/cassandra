@@ -54,7 +54,7 @@ public class Verifier implements Closeable
     private final RandomAccessReader dataFile;
     private final RandomAccessReader indexFile;
     private final VerifyInfo verifyInfo;
-    private final RowIndexEntry.IndexSerializer rowIndexEntrySerializer;
+    private final RowIndexEntry.Serializer rowIndexEntrySerializer;
 
     private int goodRows;
     private int badRows;

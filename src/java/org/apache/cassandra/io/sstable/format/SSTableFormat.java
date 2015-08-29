@@ -36,7 +36,7 @@ public interface SSTableFormat
     SSTableWriter.Factory getWriterFactory();
     SSTableReader.Factory getReaderFactory();
 
-    RowIndexEntry.IndexSerializer getIndexSerializer(Version version, SerializationHeader header);
+    RowIndexEntry.Serializer getIndexSerializer(Version version, SerializationHeader header);
 
     public static enum Type
     {

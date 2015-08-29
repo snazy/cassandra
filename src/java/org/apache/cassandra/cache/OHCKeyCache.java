@@ -70,7 +70,7 @@ public final class OHCKeyCache
     /**
      * A temporary helper object to pass the {@link KeyCacheKey} to the value serializer.
      * Also allows the {@link org.apache.cassandra.cache.OHCKeyCache.ValueSerializer#serialize(KeyCacheValue, ByteBuffer)}
-     * method to reuse the same {@link RowIndexEntry.IndexSerializer} instance that
+     * method to reuse the same {@link RowIndexEntry.Serializer} instance that
      * {@link org.apache.cassandra.cache.OHCKeyCache.ValueSerializer#serializedSize(KeyCacheValue)} used.
      */
     private static final class KeyCacheValue
@@ -78,7 +78,7 @@ public final class OHCKeyCache
         final KeyCacheKey key;
         final RowIndexEntry value;
         ByteBuffer buffer;
-        RowIndexEntry.IndexSerializer indexSerializer;
+        RowIndexEntry.Serializer indexSerializer;
 
         KeyCacheValue(KeyCacheKey key, RowIndexEntry value)
         {
@@ -334,7 +334,7 @@ public final class OHCKeyCache
 
             // following basically what CacheService.KeyCacheSerializer does
 
-            RowIndexEntry.IndexSerializer indexSerializer;
+            RowIndexEntry.Serializer indexSerializer;
             indexSerializer = formatType.info.getIndexSerializer(version,
                                                                  SerializationHeader.forKeyCache(cfs.metadata));
             try

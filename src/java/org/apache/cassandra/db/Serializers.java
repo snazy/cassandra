@@ -36,29 +36,8 @@ import org.apache.cassandra.io.sstable.IndexInfo;
  */
 public final class Serializers
 {
-    private static final AtomicReference<IndexInfo.Serializer[]> serializers = new AtomicReference<>(new IndexInfo.Serializer[]{new IndexInfo.Serializer(BigFormat.latestVersion)});
-
     private Serializers()
     {
-    }
-
-    public static IndexInfo.Serializer indexSerializer(Version version)
-    {
-        // A poor-man's singleton approach to reduce the garbage by new IndexInfo.Serializer instances,
-        // since this method is called very often with off-heap key-cache.
-
-        IndexInfo.Serializer[] arr = serializers.get();
-        for (IndexInfo.Serializer serializer : arr)
-        {
-            if (serializer.getVersion().equals(version))
-                return serializer;
-        }
-
-        arr = Arrays.copyOf(arr, arr.length + 1);
-        IndexInfo.Serializer ser = new IndexInfo.Serializer(version);
-        arr[arr.length - 1] = ser;
-        serializers.set(arr);
-        return ser;
     }
 
     // Note that for the old layout, this will actually discard the cellname parts that are not strictly
