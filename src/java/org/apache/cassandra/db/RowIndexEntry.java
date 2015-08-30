@@ -23,8 +23,6 @@ import java.nio.ByteBuffer;
 import java.util.Comparator;
 import java.util.List;
 
-import com.google.common.primitives.Ints;
-
 import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.db.marshal.AbstractType;
 import org.apache.cassandra.db.rows.RangeTombstoneMarker;
@@ -70,12 +68,10 @@ public class RowIndexEntry
 {
 
     public final long position;
-    protected final SerializationHeader header;
 
-    public RowIndexEntry(long position, SerializationHeader header)
+    public RowIndexEntry(long position)
     {
         this.position = position;
-        this.header = header;
     }
 
     // Note that for the old layout, this will actually discard the cellname parts that are not strictly
@@ -215,13 +211,14 @@ public class RowIndexEntry
 
         public Serializer(Version version, SerializationHeader header)
         {
-            // TODO check whether this can ever be called with a version != BigFormat.latestVersion (for serialization)
             this.version = version;
             this.header = header;
         }
 
         public void serialize(RowIndexEntry rie, DataOutputPlus out) throws IOException
         {
+            assert BigFormat.latestVersion.equals(version);
+
             rie.serialize(version, out);
         }
 
@@ -239,22 +236,29 @@ public class RowIndexEntry
                     return new IndexedEntry(clusteringPrefixSerializer(version, header), position, buffer, header);
                 }
 
-                // TODO convert from old format
-                throw new AssertionError("TODO convert from old format");
+                // convert from old format - TODO untested code, add upgrade tests (or are there some??)
 
-//                DeletionTime deletionTime = DeletionTime.serializer.deserialize(in);
-//
-//                int entries = in.readInt();
-//                IndexInfo.Serializer idxSerializer = IndexInfo.indexSerializer(version);
-//                List<IndexInfo> columnsIndex = new ArrayList<>(entries);
-//                for (int i = 0; i < entries; i++)
-//                    columnsIndex.add(idxSerializer.deserialize(in, header));
-//
-//                return new IndexedEntry(position, buffer);
+                DataOutputBuffer output = new DataOutputBuffer(4096);
+
+                DeletionTime deletionTime = DeletionTime.serializer.deserialize(in);
+                int entries = in.readInt();
+
+                DeletionTime.serializer.serialize(deletionTime, output);
+                output.writeInt(entries);
+
+                IndexInfo.Serializer idxDeserializer = IndexInfo.indexSerializer(version);
+                ISerializer<ClusteringPrefix> prefixSer = clusteringPrefixSerializer(BigFormat.latestVersion, header);
+                for (int i = 0; i < entries; i++)
+                {
+                    IndexInfo info = idxDeserializer.deserialize(in, header);
+                    IndexInfo.Serializer.serialize(info, output, header, BigFormat.latestVersion, prefixSer);
+                }
+
+                return new IndexedEntry(clusteringPrefixSerializer(BigFormat.latestVersion, header), position, output.buffer(), header);
             }
             else
             {
-                return new RowIndexEntry(position, header);
+                return new RowIndexEntry(position);
             }
         }
 
@@ -279,6 +283,7 @@ public class RowIndexEntry
      */
     private static class IndexedEntry extends RowIndexEntry
     {
+        private final SerializationHeader header;
         private final ISerializer<ClusteringPrefix> clusteringSerializer;
         private final ByteBuffer buffer;
         private final int[] indexInfoOffsets;
@@ -288,10 +293,9 @@ public class RowIndexEntry
 
         private IndexedEntry(ISerializer<ClusteringPrefix> clusteringSerializer, long position, ByteBuffer buffer, SerializationHeader header)
         {
-            super(position, header);
-            this.clusteringSerializer = clusteringSerializer != null
-                                        ? clusteringSerializer
-                                        : clusteringPrefixSerializer(BigFormat.latestVersion, header);
+            super(position);
+            this.header = header;
+            this.clusteringSerializer = clusteringSerializer;
             this.buffer = buffer;
             this.indexInfoOffsets = new int[columnsCount()];
         }
@@ -310,7 +314,8 @@ public class RowIndexEntry
 
         public IndexInfo indexInfo(int indexIdx)
         {
-            // this method is often called with the same indexIdx argument
+            // This method is often called with the same indexIdx argument.
+            // (see org.apache.cassandra.db.columniterator.AbstractSSTableIterator.IndexState.currentIndex())
             if (indexIdx == currentIndex && currentInfo != null)
                 return currentInfo;
 
@@ -354,7 +359,7 @@ public class RowIndexEntry
                     }
                 }
 
-                IndexInfo info = IndexInfo.latestVersionSerializer.deserialize(input, header);
+                IndexInfo info = IndexInfo.latestVersionSerializer.deserialize(input, clusteringSerializer);
 
                 if (indexInfoOffsets.length > indexIdx + 1)
                     // we know the offset of the next IndexInfo - so store it
@@ -381,50 +386,15 @@ public class RowIndexEntry
         {
             out.writeLong(position);
 
-            if (nativeBinaryCompatible(version))
-            {
-                out.writeInt(buffer.limit());
-                out.write(buffer.array(), 0, buffer.limit());
-                return;
-            }
+            // note: can only serialize with latest version
 
-            // serialize using a different version (TODO is this possible/allowed at all?)
-
-            out.writeInt(promotedSize(version, header));
-
-            DeletionTime.serializer.serialize(deletionTime(), out);
-            int sz = columnsCount();
-            out.writeInt(sz);
-            IndexInfo.Serializer idxSerializer = IndexInfo.indexSerializer(version);
-            for (int i = 0; i < sz; i++)
-                idxSerializer.serialize(indexInfo(i), out, header);
-        }
-
-        private int promotedSize(Version version, SerializationHeader header)
-        {
-            if (nativeBinaryCompatible(version))
-                return nativeSize();
-
-            // version is not BigFormat.latestVersion - need to calculate by deserializing (TODO is this possible/allowed at all?)
-
-            return promotedSizeIterative(version, header);
+            out.writeInt(buffer.limit());
+            out.write(buffer.array(), 0, buffer.limit());
         }
 
         public int nativeSize()
         {
             return super.nativeSize() + buffer.limit();
-        }
-
-        private int promotedSizeIterative(Version version, SerializationHeader header)
-        {
-            long size = DeletionTime.serializer.serializedSize(null);
-            size += TypeSizes.sizeof(0); // columnsCount()
-
-            IndexInfo.Serializer idxSerializer = IndexInfo.indexSerializer(version);
-            for (int i = 0; i < columnsCount(); i++)
-                size += idxSerializer.serializedSize(indexInfo(i), header);
-
-            return Ints.checkedCast(size);
         }
     }
 
@@ -568,7 +538,7 @@ public class RowIndexEntry
 
             // It's possible we add no rows, just a top level deletion
             if (written == 0)
-                return new RowIndexEntry(position, header);
+                return new RowIndexEntry(position);
 
             // the last column may have fallen on an index boundary already.  if not, index it explicitly.
             if (firstClustering != null)
@@ -586,14 +556,15 @@ public class RowIndexEntry
                 return new IndexedEntry(clusteringSerializer, position, buf, header);
             }
             else
-                return new RowIndexEntry(position, header);
+                return new RowIndexEntry(position);
         }
     }
 
     static boolean nativeBinaryCompatible(Version version)
     {
-        return BigFormat.latestVersion.storeRows() == version.storeRows() &&
-               BigFormat.latestVersion.correspondingMessagingVersion() == version.correspondingMessagingVersion();
+        return BigFormat.latestVersion.equals(version) ||
+               (BigFormat.latestVersion.storeRows() == version.storeRows() &&
+                BigFormat.latestVersion.correspondingMessagingVersion() == version.correspondingMessagingVersion());
     }
 
     private static final class ClusteringPrefixSerializer implements ISerializer<ClusteringPrefix>

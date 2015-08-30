@@ -41,6 +41,7 @@ public class IndexInfo
     private static final AtomicReference<Serializer[]> serializers = new AtomicReference<>(new Serializer[0]);
 
     private final long width;
+    // TODO let lastName + firstName being backed by ByteBuffer in RowIndexEntry.IndexedEntry
     private final ClusteringPrefix lastName;
     private final ClusteringPrefix firstName;
     private final long offset;
@@ -149,7 +150,11 @@ public class IndexInfo
         public IndexInfo deserialize(DataInputPlus in, SerializationHeader header) throws IOException
         {
             ISerializer<ClusteringPrefix> clusteringSerializer = RowIndexEntry.clusteringPrefixSerializer(version, header);
+            return deserialize(in, clusteringSerializer);
+        }
 
+        public IndexInfo deserialize(DataInputPlus in, ISerializer<ClusteringPrefix> clusteringSerializer) throws IOException
+        {
             ClusteringPrefix firstName = clusteringSerializer.deserialize(in);
             ClusteringPrefix lastName = clusteringSerializer.deserialize(in);
             long offset = in.readLong();

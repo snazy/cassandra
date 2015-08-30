@@ -40,7 +40,7 @@ import org.apache.cassandra.utils.ChecksumType;
 public final class BigFormat implements SSTableFormat
 {
     public static final BigFormat instance = new BigFormat();
-    public static final Version latestVersion = new BigVersion(BigVersion.current_version);
+    public static final Version latestVersion = BigVersion.get(BigVersion.current_version);
     private static final SSTableReader.Factory readerFactory = new ReaderFactory();
     private static final SSTableWriter.Factory writerFactory = new WriterFactory();
 

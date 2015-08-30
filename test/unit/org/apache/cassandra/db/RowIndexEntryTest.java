@@ -43,7 +43,7 @@ public class RowIndexEntryTest extends CQLTester
 
         DataOutputBuffer buffer = new DataOutputBuffer();
         SerializationHeader header = new SerializationHeader(cfs.metadata, cfs.metadata.partitionColumns(), EncodingStats.NO_STATS);
-        final RowIndexEntry simple = new RowIndexEntry(123, header);
+        final RowIndexEntry simple = new RowIndexEntry(123);
         RowIndexEntry.Serializer serializer = new RowIndexEntry.Serializer(BigFormat.latestVersion, header);
 
         serializer.serialize(simple, buffer);
