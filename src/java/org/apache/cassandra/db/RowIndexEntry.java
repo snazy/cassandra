@@ -454,8 +454,9 @@ public class RowIndexEntry
 
         private final long position;
         private final DeletionTime deletionTime;
-        private final DataOutputBuffer bufferOut;
+        private DataOutputBuffer bufferOut;
         private int columnsIndexCount;
+        private IndexInfo firstIndex;
 
         Builder(long position,
                 DeletionTime deletionTime,
@@ -473,7 +474,6 @@ public class RowIndexEntry
             this.version = version;
 
             this.initialPosition = writer.getFilePointer();
-            this.bufferOut = new DataOutputBuffer(1024);
 
             clusteringSerializer = clusteringPrefixSerializer(BigFormat.latestVersion, header);
         }
@@ -486,17 +486,8 @@ public class RowIndexEntry
                 UnfilteredSerializer.serializer.serialize(iterator.staticRow(), header, writer, version);
         }
 
-        private void writeIndexHeader() throws IOException
-        {
-            DeletionTime.serializer.serialize(deletionTime, bufferOut); // placeholder
-            bufferOut.writeInt(0); // placeholder
-
-            assert bufferOut.getLength() == DeletionTime.serializer.serializedSize(null) + 4;
-        }
-
         public RowIndexEntry build() throws IOException
         {
-            writeIndexHeader();
             writePartitionHeader(iterator);
 
             while (iterator.hasNext())
@@ -512,13 +503,35 @@ public class RowIndexEntry
 
         private void addIndexBlock() throws IOException
         {
+            // A RowIndexEntry.IndexedEntry (that with IndexInfo objects) is only written,
+            // if there are at least TWO IndexInfo objects. We only need a bufferOut for
+            // such an RowIndexEntry.IndexedEntry. So prevent allocating bufferOut if it is
+            // not necessary.
+
             IndexInfo cIndexInfo = new IndexInfo(firstClustering,
                                                  lastClustering,
                                                  startPosition,
                                                  currentPosition() - startPosition,
                                                  openMarker);
-            IndexInfo.Serializer.serialize(cIndexInfo, bufferOut, header,
-                                           BigFormat.latestVersion, clusteringSerializer);
+            if (bufferOut == null)
+            {
+                if (firstIndex == null)
+                    firstIndex = cIndexInfo;
+                else
+                {
+                    bufferOut = new DataOutputBuffer(4096);
+
+                    DeletionTime.serializer.serialize(deletionTime, bufferOut); // placeholder
+                    bufferOut.writeInt(0); // placeholder
+
+                    IndexInfo.Serializer.serialize(firstIndex, bufferOut, header,
+                                                   BigFormat.latestVersion, clusteringSerializer);
+                    firstIndex = null;
+                }
+            }
+            if (bufferOut != null)
+                IndexInfo.Serializer.serialize(cIndexInfo, bufferOut, header,
+                                               BigFormat.latestVersion, clusteringSerializer);
 
             columnsIndexCount ++;
             firstClustering = null;
