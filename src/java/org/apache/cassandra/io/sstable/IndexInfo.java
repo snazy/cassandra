@@ -22,6 +22,8 @@ import java.io.IOException;
 import java.util.Arrays;
 import java.util.concurrent.atomic.AtomicReference;
 
+import com.google.common.base.MoreObjects;
+
 import org.apache.cassandra.db.ClusteringPrefix;
 import org.apache.cassandra.db.DeletionTime;
 import org.apache.cassandra.db.SerializationHeader;
@@ -38,7 +40,7 @@ public class IndexInfo
 {
     private static final long EMPTY_SIZE = ObjectSizes.measure(new IndexInfo(null, null, 0, 0, null));
 
-    private static final AtomicReference<Serializer[]> serializers = new AtomicReference<>(new Serializer[]{ new Serializer(BigFormat.latestVersion)});
+    private static final AtomicReference<Serializer[]> serializers = new AtomicReference<>(new Serializer[0]);
 
     private final long width;
     private final ClusteringPrefix lastName;
@@ -66,6 +68,9 @@ public class IndexInfo
     {
         // A poor-man's singleton approach to reduce the garbage by new IndexInfo.Serializer instances,
         // since this method is called very often with off-heap key-cache.
+
+        if (version == BigFormat.latestVersion)
+            return latestVersionSerializer;
 
         Serializer[] arr = serializers.get();
         for (Serializer serializer : arr)
@@ -105,6 +110,8 @@ public class IndexInfo
     {
         return endOpenMarker;
     }
+
+    public static final Serializer latestVersionSerializer = new Serializer(BigFormat.latestVersion);
 
     public static final class Serializer
     {
@@ -175,5 +182,16 @@ public class IndexInfo
                + getFirstName().unsharedHeapSize()
                + getLastName().unsharedHeapSize()
                + (getEndOpenMarker() == null ? 0 : getEndOpenMarker().unsharedHeapSize());
+    }
+
+    public String toString()
+    {
+        return MoreObjects.toStringHelper(this)
+                          .add("width", width)
+                          .add("lastName", lastName)
+                          .add("firstName", firstName)
+                          .add("offset", offset)
+                          .add("endOpenMarker", endOpenMarker)
+                          .toString();
     }
 }

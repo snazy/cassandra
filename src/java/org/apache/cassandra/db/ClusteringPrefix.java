@@ -341,6 +341,8 @@ public interface ClusteringPrefix extends IMeasurableMemory, Clusterable
                 int limit = Math.min(size, offset + 32);
                 while (offset < limit)
                 {
+                    if (types.size() <= offset)    // TODO remove this assertion
+                        throw new AssertionError();
                     values[offset] = isNull(header, offset)
                                 ? null
                                 : (isEmpty(header, offset) ? ByteBufferUtil.EMPTY_BYTE_BUFFER : types.get(offset).readValue(in));

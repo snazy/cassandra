@@ -84,7 +84,7 @@ public class IndexHelperTest
 
         MockRowIndexEntry(List<IndexInfo> list)
         {
-            super(0L);
+            super(0L, null);
             this.list = list;
         }
 

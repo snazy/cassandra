@@ -40,14 +40,15 @@ public class RowIndexEntryTest extends CQLTester
         String tableName = createTable("CREATE TABLE %s (a int, b text, c int, PRIMARY KEY(a, b))");
         ColumnFamilyStore cfs = Keyspace.open(KEYSPACE).getColumnFamilyStore(tableName);
 
-        final RowIndexEntry simple = new RowIndexEntry(123);
 
         DataOutputBuffer buffer = new DataOutputBuffer();
         SerializationHeader header = new SerializationHeader(cfs.metadata, cfs.metadata.partitionColumns(), EncodingStats.NO_STATS);
+        final RowIndexEntry simple = new RowIndexEntry(123, header);
         RowIndexEntry.Serializer serializer = new RowIndexEntry.Serializer(BigFormat.latestVersion, header);
 
         serializer.serialize(simple, buffer);
 
+        assertEquals(12, buffer.getLength()); // as of Cassandra 3.0
         assertEquals(buffer.getLength(), serializer.serializedSize(simple));
 
         // write enough rows to ensure we get a few column index entries
@@ -67,6 +68,7 @@ public class RowIndexEntryTest extends CQLTester
         assertTrue(withIndex.columnsCount() >= 3);
 
         serializer.serialize(withIndex, buffer);
+        assertEquals(169, buffer.getLength()); // as of Cassandra 3.0
         assertEquals(buffer.getLength(), serializer.serializedSize(withIndex));
     }
 }

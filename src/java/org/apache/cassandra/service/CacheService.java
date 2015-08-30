@@ -468,7 +468,7 @@ public class CacheService implements CacheServiceMBean
                 return null;
             }
             RowIndexEntry.Serializer indexSerializer = reader.descriptor.getFormat().getIndexSerializer(reader.descriptor.version,
-                                                                                                             SerializationHeader.forKeyCache(cfs.metadata));
+                                                                                                        SerializationHeader.forKeyCache(cfs.metadata));
             RowIndexEntry entry = indexSerializer.deserialize(input);
             return Futures.immediateFuture(Pair.create(new KeyCacheKey(cfs.metadata.cfId, reader.descriptor, key), entry));
         }

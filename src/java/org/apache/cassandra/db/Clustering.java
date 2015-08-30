@@ -73,6 +73,12 @@ public class Clustering extends AbstractClusteringPrefix
     public static final Clustering EMPTY = new Clustering(EMPTY_VALUES_ARRAY)
     {
         @Override
+        public String toString()
+        {
+            return "EMPTY";
+        }
+
+        @Override
         public String toString(CFMetaData metadata)
         {
             return "EMPTY";

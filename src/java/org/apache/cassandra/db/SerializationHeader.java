@@ -20,7 +20,6 @@ package org.apache.cassandra.db;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.*;
-import java.util.concurrent.atomic.AtomicReference;
 
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Lists;
@@ -30,7 +29,6 @@ import org.apache.cassandra.config.ColumnDefinition;
 import org.apache.cassandra.db.filter.ColumnFilter;
 import org.apache.cassandra.db.rows.*;
 import org.apache.cassandra.db.marshal.AbstractType;
-import org.apache.cassandra.db.marshal.BytesType;
 import org.apache.cassandra.db.marshal.UTF8Type;
 import org.apache.cassandra.db.marshal.TypeParser;
 import org.apache.cassandra.io.sstable.format.SSTableReader;
@@ -67,47 +65,10 @@ public class SerializationHeader
         this.typeMap = typeMap;
     }
 
-    // A poor-man's singleton approach to reduce the garbage by new SerializationHeader instances,
-    // since this method is called very often with off-heap key-cache.
-    private static final AtomicReference<SerializationHeader[]> keyCacheSerializationHeaders = new AtomicReference<>(new SerializationHeader[] {
-        forKeyCache0(0),
-        forKeyCache0(1), forKeyCache0(2), forKeyCache0(3), forKeyCache0(4),
-        forKeyCache0(5), forKeyCache0(6), forKeyCache0(7), forKeyCache0(8)
-    });
-
     public static SerializationHeader forKeyCache(CFMetaData metadata)
     {
-        // We don't save type information in the key cache (we could change
-        // that but it's easier right now), so instead we simply use BytesType
-        // for both serialization and deserialization. Note that we also only
-        // serializer clustering prefixes in the key cache, so only the clusteringTypes
-        // really matter.
-        //
-        // Implementation is intentionally "racy" - it can store a smaller
-        // array in keyCacheSerializationHeaders. But it buys no synchronization.
-        int size = metadata.clusteringColumns().size();
-        SerializationHeader[] cache = keyCacheSerializationHeaders.get();
-        if (cache.length <= size)
-        {
-            cache = new SerializationHeader[size + 1];
-            for (int i = 0; i < size; i++)
-            {
-                cache[i] = forKeyCache0(i);
-            }
-            keyCacheSerializationHeaders.set(cache);
-        }
-        return cache[size];
-    }
-
-    private static SerializationHeader forKeyCache0(int size)
-    {
-        AbstractType<?>[] clusteringTypes = new AbstractType[size];
-        Arrays.fill(clusteringTypes, BytesType.instance);
-        return new SerializationHeader(BytesType.instance,
-                                       Arrays.asList(clusteringTypes),
-                                       PartitionColumns.NONE,
-                                       EncodingStats.NO_STATS,
-                                       Collections.<ByteBuffer, AbstractType<?>>emptyMap());
+        // We need the type information in the key cache since CASSANDRA-9738
+        return new SerializationHeader(metadata, metadata.partitionColumns(), EncodingStats.NO_STATS);
     }
 
     public static SerializationHeader make(CFMetaData metadata, Collection<SSTableReader> sstables)

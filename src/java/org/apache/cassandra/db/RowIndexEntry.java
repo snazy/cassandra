@@ -19,11 +19,8 @@ package org.apache.cassandra.db;
 
 import java.io.DataInput;
 import java.io.IOException;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Collections;
+import java.nio.ByteBuffer;
 import java.util.Comparator;
-import java.util.List;
 
 import com.google.common.primitives.Ints;
 
@@ -35,22 +32,50 @@ import org.apache.cassandra.db.rows.UnfilteredRowIterator;
 import org.apache.cassandra.db.rows.UnfilteredSerializer;
 import org.apache.cassandra.io.sstable.IndexInfo;
 import org.apache.cassandra.io.sstable.format.Version;
+import org.apache.cassandra.io.sstable.format.big.BigFormat;
+import org.apache.cassandra.io.util.DataInputBuffer;
 import org.apache.cassandra.io.util.DataInputPlus;
+import org.apache.cassandra.io.util.DataOutputBuffer;
 import org.apache.cassandra.io.util.DataOutputPlus;
 import org.apache.cassandra.io.util.FileUtils;
 import org.apache.cassandra.io.util.SequentialWriter;
 import org.apache.cassandra.utils.ByteBufferUtil;
 import org.apache.cassandra.utils.ObjectSizes;
 
+/**
+ * Binary format of {@code RowIndexEntry} is defined as follows:
+ * {@code
+ * (long) position
+ *  (int) serialized size of data that follows
+ *  (int) DeletionTime.localDeletionTime
+ * (long) DeletionTime.markedForDeletionAt
+ *  (int) number of IndexInfo objects
+ *    (*) serialized IndexInfo objects, see below
+ * }
+ * <p>
+ * Each {@link IndexInfo} object is serialized as follows:
+ * {@code
+ *    (*) IndexInfo.firstName (ClusteringPrefix serializer, either Clustering.serializer.serialize or Slice.Bound.serializer.serialize)
+ *    (*) IndexInfo.lastName (ClusteringPrefix serializer)
+ * (long) IndexInfo.offset
+ * (long) IndexInfo.width
+ * (bool) IndexInfo.endOpenMarker != null              (if version.storeRows)
+ *  (int) IndexInfo.endOpenMarker.localDeletionTime    (if version.storeRows && IndexInfo.endOpenMarker != null)
+ * (long) IndexInfo.endOpenMarker.markedForDeletionAt  (if version.storeRows && IndexInfo.endOpenMarker != null)
+ * }
+ * </p>
+ */
 public class RowIndexEntry implements IMeasurableMemory
 {
-    private static final long EMPTY_SIZE = ObjectSizes.measure(new RowIndexEntry(0));
+    private static final long EMPTY_SIZE = ObjectSizes.measure(new RowIndexEntry(0, null));
 
     public final long position;
+    protected final SerializationHeader header;
 
-    public RowIndexEntry(long position)
+    public RowIndexEntry(long position, SerializationHeader header)
     {
         this.position = position;
+        this.header = header;
     }
 
     public int promotedSize(Version version, SerializationHeader header)
@@ -173,24 +198,14 @@ public class RowIndexEntry implements IMeasurableMemory
 
         public Serializer(Version version, SerializationHeader header)
         {
+            // TODO check whether this can ever be called with a version != BigFormat.latestVersion (for serialization)
             this.version = version;
             this.header = header;
         }
 
         public void serialize(RowIndexEntry rie, DataOutputPlus out) throws IOException
         {
-            out.writeLong(rie.position);
-            out.writeInt(rie.promotedSize(version, header));
-
-            if (rie.isIndexed())
-            {
-                DeletionTime.serializer.serialize(rie.deletionTime(), out);
-                out.writeInt(rie.columnsCount());
-                IndexInfo.Serializer idxSerializer = IndexInfo.indexSerializer(version);
-                int sz = rie.columnsCount();
-                for (int i = 0; i < sz; i++)
-                    idxSerializer.serialize(rie.indexInfo(i), out, header);
-            }
+            rie.serialize(version, out);
         }
 
         public RowIndexEntry deserialize(DataInputPlus in) throws IOException
@@ -200,25 +215,29 @@ public class RowIndexEntry implements IMeasurableMemory
             int size = in.readInt();
             if (size > 0)
             {
-                DeletionTime deletionTime = DeletionTime.serializer.deserialize(in);
-
-                int entries = in.readInt();
-                IndexInfo.Serializer idxSerializer = IndexInfo.indexSerializer(version);
-                List<IndexInfo> columnsIndex;
-                if (entries == 1)
-                    columnsIndex = Collections.singletonList(idxSerializer.deserialize(in, header));
-                else
+                if (nativeBinaryCompatible(version))
                 {
-                    columnsIndex = new ArrayList<>(entries);
-                    for (int i = 0; i < entries; i++)
-                        columnsIndex.add(idxSerializer.deserialize(in, header));
+                    ByteBuffer buffer = ByteBuffer.allocate(size);
+                    in.readFully(buffer.array());
+                    return new IndexedEntry(position, buffer, header);
                 }
 
-                return new IndexedEntry(position, deletionTime, columnsIndex);
+                // TODO convert from old format
+                throw new AssertionError("TODO convert from old format");
+
+//                DeletionTime deletionTime = DeletionTime.serializer.deserialize(in);
+//
+//                int entries = in.readInt();
+//                IndexInfo.Serializer idxSerializer = IndexInfo.indexSerializer(version);
+//                List<IndexInfo> columnsIndex = new ArrayList<>(entries);
+//                for (int i = 0; i < entries; i++)
+//                    columnsIndex.add(idxSerializer.deserialize(in, header));
+//
+//                return new IndexedEntry(position, buffer);
             }
             else
             {
-                return new RowIndexEntry(position);
+                return new RowIndexEntry(position, header);
             }
         }
 
@@ -237,23 +256,19 @@ public class RowIndexEntry implements IMeasurableMemory
             FileUtils.skipBytesFully(in, size);
         }
 
+        // TODO this is only used from OHCKeyCache and not really neccessary
         public int serializedSize(RowIndexEntry rie)
         {
-            int size = TypeSizes.sizeof(rie.position) + TypeSizes.sizeof(rie.promotedSize(version, header));
-
-            if (rie.isIndexed())
-            {
-                size += DeletionTime.serializer.serializedSize(rie.deletionTime());
-                size += TypeSizes.sizeof(rie.columnsCount());
-
-                IndexInfo.Serializer idxSerializer = IndexInfo.indexSerializer(version);
-                int sz = rie.columnsCount();
-                for (int i = 0; i < sz; i++)
-                    size += idxSerializer.serializedSize(rie.indexInfo(i), header);
-            }
-
-            return size;
+            return TypeSizes.sizeof(rie.position)
+                   + TypeSizes.sizeof(0/*promoted size*/)
+                   + rie.promotedSize(version, header);
         }
+    }
+
+    void serialize(Version version, DataOutputPlus out) throws IOException
+    {
+        out.writeLong(position);
+        out.writeInt(0);
     }
 
     /**
@@ -261,46 +276,88 @@ public class RowIndexEntry implements IMeasurableMemory
      */
     private static class IndexedEntry extends RowIndexEntry
     {
-        private final DeletionTime deletionTime;
-        private final List<IndexInfo> columnsIndex;
-        private static final long BASE_SIZE =
-                ObjectSizes.measure(new IndexedEntry(0, DeletionTime.LIVE, Arrays.<IndexInfo>asList(null, null)))
-              + ObjectSizes.measure(new ArrayList<>(1));
+        private final ByteBuffer buffer;
+        private static final long BASE_SIZE = ObjectSizes.measure(new IndexedEntry(0, ByteBuffer.allocate(16), null));
 
-        private IndexedEntry(long position, DeletionTime deletionTime, List<IndexInfo> columnsIndex)
+        private IndexedEntry(long position, ByteBuffer buffer, SerializationHeader header)
         {
-            super(position);
-            assert deletionTime != null;
-            assert columnsIndex != null && columnsIndex.size() > 1;
-            this.deletionTime = deletionTime;
-            this.columnsIndex = columnsIndex;
+            super(position, header);
+            this.buffer = buffer;
         }
 
         @Override
         public DeletionTime deletionTime()
         {
-            return deletionTime;
+            return DeletionTime.serializer.deserialize(buffer, 0);
         }
 
         @Override
         public int columnsCount()
         {
-            return columnsIndex.size();
+            return buffer.getInt((int) DeletionTime.serializer.serializedSize(null));
         }
 
         public IndexInfo indexInfo(int indexIdx)
         {
-            return columnsIndex.get(indexIdx);
+            ByteBuffer buf = buffer.duplicate();
+            buf.position((int) (TypeSizes.sizeof(0)/*columnsCount*/ + DeletionTime.serializer.serializedSize(null)));
+            DataInputBuffer input = new DataInputBuffer(buf, false);
+
+            try
+            {
+                IndexInfo.Serializer idxSerializer = IndexInfo.indexSerializer(BigFormat.latestVersion);
+                while (indexIdx-- > 0)
+                    idxSerializer.deserialize(input, header);
+                return idxSerializer.deserialize(input, header);
+            }
+            catch (IOException e)
+            {
+                throw new RuntimeException(e);
+            }
+        }
+
+        void serialize(Version version, DataOutputPlus out) throws IOException
+        {
+            out.writeLong(position);
+
+            if (nativeBinaryCompatible(version))
+            {
+                out.writeInt(buffer.limit());
+                out.write(buffer.array(), 0, buffer.limit());
+                return;
+            }
+
+            // serialize using a different version (TODO is this possible/allowed at all?)
+
+            out.writeInt(promotedSize(version, header));
+
+            DeletionTime.serializer.serialize(deletionTime(), out);
+            int sz = columnsCount();
+            out.writeInt(sz);
+            IndexInfo.Serializer idxSerializer = IndexInfo.indexSerializer(version);
+            for (int i = 0; i < sz; i++)
+                idxSerializer.serialize(indexInfo(i), out, header);
         }
 
         @Override
         public int promotedSize(Version version, SerializationHeader header)
         {
-            long size = DeletionTime.serializer.serializedSize(deletionTime);
-            size += TypeSizes.sizeof(columnsIndex.size()); // number of entries
+            if (nativeBinaryCompatible(version))
+                return buffer.limit();
+
+            // version is not BigFormat.latestVersion - need to calculate by deserializing (TODO is this possible/allowed at all?)
+
+            return promotedSizeIterative(version, header);
+        }
+
+        private int promotedSizeIterative(Version version, SerializationHeader header)
+        {
+            long size = DeletionTime.serializer.serializedSize(null);
+            size += TypeSizes.sizeof(0); // columnsCount()
+
             IndexInfo.Serializer idxSerializer = IndexInfo.indexSerializer(version);
-            for (IndexInfo info : columnsIndex)
-                size += idxSerializer.serializedSize(info, header);
+            for (int i = 0; i < columnsCount(); i++)
+                size += idxSerializer.serializedSize(indexInfo(i), header);
 
             return Ints.checkedCast(size);
         }
@@ -308,14 +365,7 @@ public class RowIndexEntry implements IMeasurableMemory
         @Override
         public long unsharedHeapSize()
         {
-            long entrySize = 0;
-            for (IndexInfo idx : columnsIndex)
-                entrySize += idx.unsharedHeapSize();
-
-            return BASE_SIZE
-                   + entrySize
-                   + deletionTime.unsharedHeapSize()
-                   + ObjectSizes.sizeOfReferenceArray(columnsIndex.size());
+            return BASE_SIZE + buffer.capacity();
         }
     }
 
@@ -344,7 +394,8 @@ public class RowIndexEntry implements IMeasurableMemory
 
         private final long position;
         private final DeletionTime deletionTime;
-        private final List<IndexInfo> columnsIndex = new ArrayList<>();
+        private final DataOutputBuffer bufferOut;
+        private int columnsIndexCount;
 
         Builder(long position,
                 DeletionTime deletionTime,
@@ -362,6 +413,7 @@ public class RowIndexEntry implements IMeasurableMemory
             this.version = version;
 
             this.initialPosition = writer.getFilePointer();
+            this.bufferOut = new DataOutputBuffer(1024);
         }
 
         private void writePartitionHeader(UnfilteredRowIterator iterator) throws IOException
@@ -372,8 +424,17 @@ public class RowIndexEntry implements IMeasurableMemory
                 UnfilteredSerializer.serializer.serialize(iterator.staticRow(), header, writer, version);
         }
 
+        private void writeIndexHeader() throws IOException
+        {
+            DeletionTime.serializer.serialize(deletionTime, bufferOut); // placeholder
+            bufferOut.writeInt(0); // placeholder
+
+            assert bufferOut.getLength() == DeletionTime.serializer.serializedSize(null) + 4;
+        }
+
         public RowIndexEntry build() throws IOException
         {
+            writeIndexHeader();
             writePartitionHeader(iterator);
 
             while (iterator.hasNext())
@@ -387,14 +448,17 @@ public class RowIndexEntry implements IMeasurableMemory
             return writer.getFilePointer() - initialPosition;
         }
 
-        private void addIndexBlock()
+        private void addIndexBlock() throws IOException
         {
             IndexInfo cIndexInfo = new IndexInfo(firstClustering,
                                                  lastClustering,
                                                  startPosition,
                                                  currentPosition() - startPosition,
                                                  openMarker);
-            columnsIndex.add(cIndexInfo);
+            // TODO always instantiates new "ISerializer<ClusteringPrefix> clusteringSerializer" - optimize!
+            IndexInfo.latestVersionSerializer.serialize(cIndexInfo, bufferOut, header);
+
+            columnsIndexCount ++;
             firstClustering = null;
         }
 
@@ -429,21 +493,31 @@ public class RowIndexEntry implements IMeasurableMemory
 
             // It's possible we add no rows, just a top level deletion
             if (written == 0)
-                return new RowIndexEntry(position);
+                return new RowIndexEntry(position, header);
 
             // the last column may have fallen on an index boundary already.  if not, index it explicitly.
             if (firstClustering != null)
                 addIndexBlock();
 
-            assert !columnsIndex.isEmpty();
+            assert columnsIndexCount > 0;
 
             // we only consider the columns summary when determining whether to create an IndexedEntry,
             // since if there are insufficient columns to be worth indexing we're going to seek to
             // the beginning of the row anyway, so we might as well read the tombstone there as well.
-            if (columnsIndex.size() > 1)
-                return new IndexedEntry(position, deletionTime, columnsIndex);
+            if (columnsIndexCount > 1)
+            {
+                ByteBuffer buf = bufferOut.buffer();
+                buf.putInt((int) DeletionTime.serializer.serializedSize(null), columnsIndexCount);
+                return new IndexedEntry(position, buf, header);
+            }
             else
-                return new RowIndexEntry(position);
+                return new RowIndexEntry(position, header);
         }
+    }
+
+    static boolean nativeBinaryCompatible(Version version)
+    {
+        return BigFormat.latestVersion.storeRows() == version.storeRows() &&
+               BigFormat.latestVersion.correspondingMessagingVersion() == version.correspondingMessagingVersion();
     }
 }
