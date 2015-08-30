@@ -42,8 +42,6 @@ import org.apache.cassandra.utils.memory.AbstractAllocator;
  */
 public class Clustering extends AbstractClusteringPrefix
 {
-    public static final Serializer serializer = new Serializer();
-
     /**
      * The special cased clustering used by all static rows. It is a special case in the
      * sense that it's always empty, no matter how many clustering columns the table has.
@@ -135,27 +133,39 @@ public class Clustering extends AbstractClusteringPrefix
      * Because every clustering in a given table must have the same size (ant that size cannot actually change once the table
      * has been defined), we don't record that size.
      */
-    public static class Serializer
+    public static final class Serializer
     {
-        public void serialize(Clustering clustering, DataOutputPlus out, int version, List<AbstractType<?>> types) throws IOException
+        private Serializer()
+        {
+        }
+
+        public static void serialize(Clustering clustering, DataOutputPlus out, int version, List<AbstractType<?>> types) throws IOException
         {
             assert clustering != STATIC_CLUSTERING : "We should never serialize a static clustering";
             assert clustering.size() == types.size() : "Invalid clustering for the table: " + clustering;
             ClusteringPrefix.serializer.serializeValuesWithoutSize(clustering, out, version, types);
         }
 
-        public long serializedSize(Clustering clustering, int version, List<AbstractType<?>> types)
+        public static long serializedSize(Clustering clustering, int version, List<AbstractType<?>> types)
         {
             return ClusteringPrefix.serializer.valuesWithoutSizeSerializedSize(clustering, version, types);
         }
 
-        public Clustering deserialize(DataInputPlus in, int version, List<AbstractType<?>> types) throws IOException
+        public static Clustering deserialize(DataInputPlus in, int version, List<AbstractType<?>> types) throws IOException
         {
             if (types.isEmpty())
                 return EMPTY;
 
             ByteBuffer[] values = ClusteringPrefix.serializer.deserializeValuesWithoutSize(in, types.size(), version, types);
             return new Clustering(values);
+        }
+
+        public static void skip(DataInputPlus in, int version, List<AbstractType<?>> types) throws IOException
+        {
+            if (types.isEmpty())
+                return;
+
+            ClusteringPrefix.serializer.deserializeValuesWithoutSize(in, types.size(), version, types);
         }
     }
 }

@@ -552,6 +552,15 @@ public class Slice
                 ByteBuffer[] values = ClusteringPrefix.serializer.deserializeValuesWithoutSize(in, size, version, types);
                 return Slice.Bound.create(kind, values);
             }
+
+            public static void skipValues(DataInputPlus in, Kind kind, int version, List<AbstractType<?>> types) throws IOException
+            {
+                int size = in.readUnsignedShort();
+                if (size == 0)
+                    return;
+
+                ClusteringPrefix.serializer.skipValuesWithoutSize(in, size, version, types);
+            }
         }
     }
 }

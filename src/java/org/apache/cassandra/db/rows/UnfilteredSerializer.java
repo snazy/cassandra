@@ -119,7 +119,7 @@ public class UnfilteredSerializer
 
         out.writeByte((byte)flags);
         if (!isStatic)
-            Clustering.serializer.serialize(row.clustering(), out, version, header.clusteringTypes());
+            Clustering.Serializer.serialize(row.clustering(), out, version, header.clusteringTypes());
 
         if ((flags & HAS_TIMESTAMP) != 0)
             header.writeTimestamp(pkLiveness.timestamp(), out);
@@ -191,7 +191,7 @@ public class UnfilteredSerializer
         boolean hasAllColumns = (row.size() == headerColumns.size());
 
         if (!isStatic)
-            size += Clustering.serializer.serializedSize(row.clustering(), version, header.clusteringTypes());
+            size += Clustering.Serializer.serializedSize(row.clustering(), version, header.clusteringTypes());
 
         if (!pkLiveness.isEmpty())
             size += header.timestampSerializedSize(pkLiveness.timestamp());
@@ -277,7 +277,7 @@ public class UnfilteredSerializer
         else
         {
             assert !isStatic(flags); // deserializeStaticRow should be used for that.
-            builder.newRow(Clustering.serializer.deserialize(in, helper.version, header.clusteringTypes()));
+            builder.newRow(Clustering.Serializer.deserialize(in, helper.version, header.clusteringTypes()));
             return deserializeRowBody(in, header, helper, flags, builder);
         }
     }

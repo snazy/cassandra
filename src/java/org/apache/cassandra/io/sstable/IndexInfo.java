@@ -26,19 +26,17 @@ import com.google.common.base.MoreObjects;
 
 import org.apache.cassandra.db.ClusteringPrefix;
 import org.apache.cassandra.db.DeletionTime;
+import org.apache.cassandra.db.RowIndexEntry;
 import org.apache.cassandra.db.SerializationHeader;
-import org.apache.cassandra.db.Serializers;
 import org.apache.cassandra.db.TypeSizes;
 import org.apache.cassandra.io.ISerializer;
 import org.apache.cassandra.io.sstable.format.Version;
 import org.apache.cassandra.io.sstable.format.big.BigFormat;
 import org.apache.cassandra.io.util.DataInputPlus;
 import org.apache.cassandra.io.util.DataOutputPlus;
-import org.apache.cassandra.utils.ObjectSizes;
 
 public class IndexInfo
 {
-    private static final long EMPTY_SIZE = ObjectSizes.measure(new IndexInfo(null, null, 0, 0, null));
 
     private static final AtomicReference<Serializer[]> serializers = new AtomicReference<>(new Serializer[0]);
 
@@ -129,7 +127,12 @@ public class IndexInfo
 
         public void serialize(IndexInfo info, DataOutputPlus out, SerializationHeader header) throws IOException
         {
-            ISerializer<ClusteringPrefix> clusteringSerializer = Serializers.clusteringPrefixSerializer(version, header);
+            ISerializer<ClusteringPrefix> clusteringSerializer = RowIndexEntry.clusteringPrefixSerializer(version, header);
+            serialize(info, out, header, version, clusteringSerializer);
+        }
+
+        public static void serialize(IndexInfo info, DataOutputPlus out, SerializationHeader header, Version version, ISerializer<ClusteringPrefix> clusteringSerializer) throws IOException
+        {
             clusteringSerializer.serialize(info.getFirstName(), out);
             clusteringSerializer.serialize(info.getLastName(), out);
             out.writeLong(info.getOffset());
@@ -145,7 +148,7 @@ public class IndexInfo
 
         public IndexInfo deserialize(DataInputPlus in, SerializationHeader header) throws IOException
         {
-            ISerializer<ClusteringPrefix> clusteringSerializer = Serializers.clusteringPrefixSerializer(version, header);
+            ISerializer<ClusteringPrefix> clusteringSerializer = RowIndexEntry.clusteringPrefixSerializer(version, header);
 
             ClusteringPrefix firstName = clusteringSerializer.deserialize(in);
             ClusteringPrefix lastName = clusteringSerializer.deserialize(in);
@@ -158,9 +161,18 @@ public class IndexInfo
             return new IndexInfo(firstName, lastName, offset, width, endOpenMarker);
         }
 
+        public void skip(DataInputPlus in, SerializationHeader header, ISerializer<ClusteringPrefix> clusteringSerializer) throws IOException
+        {
+            /*ClusteringPrefix firstName*/ ClusteringPrefix.Serializer.skip(in, version.correspondingMessagingVersion(), header.clusteringTypes());
+            /*ClusteringPrefix lastName*/ ClusteringPrefix.Serializer.skip(in, version.correspondingMessagingVersion(), header.clusteringTypes());
+            in.skipBytes(8 + 8); // offset + width
+            if (version.storeRows() && in.readBoolean())
+                in.skipBytes((int) DeletionTime.serializer.serializedSize(null));
+        }
+
         public long serializedSize(IndexInfo info, SerializationHeader header)
         {
-            ISerializer<ClusteringPrefix> clusteringSerializer = Serializers.clusteringPrefixSerializer(version, header);
+            ISerializer<ClusteringPrefix> clusteringSerializer = RowIndexEntry.clusteringPrefixSerializer(version, header);
             long size = clusteringSerializer.serializedSize(info.getFirstName())
                         + clusteringSerializer.serializedSize(info.getLastName())
                         + TypeSizes.sizeof(info.getOffset())
@@ -174,14 +186,6 @@ public class IndexInfo
             }
             return size;
         }
-    }
-
-    public long unsharedHeapSize()
-    {
-        return EMPTY_SIZE
-               + getFirstName().unsharedHeapSize()
-               + getLastName().unsharedHeapSize()
-               + (getEndOpenMarker() == null ? 0 : getEndOpenMarker().unsharedHeapSize());
     }
 
     public String toString()

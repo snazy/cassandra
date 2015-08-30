@@ -35,6 +35,7 @@ import org.apache.cassandra.utils.ObjectSizes;
 /**
  * Information on deletion of a storage engine object.
  */
+// TODO remove IMeasurableMemory ??
 public class DeletionTime implements Comparable<DeletionTime>, IMeasurableMemory
 {
     private static final long EMPTY_SIZE = ObjectSizes.measure(new DeletionTime(0, 0));

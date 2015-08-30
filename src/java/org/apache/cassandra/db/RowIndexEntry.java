@@ -21,15 +21,17 @@ import java.io.DataInput;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.Comparator;
+import java.util.List;
 
 import com.google.common.primitives.Ints;
 
-import org.apache.cassandra.cache.IMeasurableMemory;
 import org.apache.cassandra.config.DatabaseDescriptor;
+import org.apache.cassandra.db.marshal.AbstractType;
 import org.apache.cassandra.db.rows.RangeTombstoneMarker;
 import org.apache.cassandra.db.rows.Unfiltered;
 import org.apache.cassandra.db.rows.UnfilteredRowIterator;
 import org.apache.cassandra.db.rows.UnfilteredSerializer;
+import org.apache.cassandra.io.ISerializer;
 import org.apache.cassandra.io.sstable.IndexInfo;
 import org.apache.cassandra.io.sstable.format.Version;
 import org.apache.cassandra.io.sstable.format.big.BigFormat;
@@ -40,7 +42,6 @@ import org.apache.cassandra.io.util.DataOutputPlus;
 import org.apache.cassandra.io.util.FileUtils;
 import org.apache.cassandra.io.util.SequentialWriter;
 import org.apache.cassandra.utils.ByteBufferUtil;
-import org.apache.cassandra.utils.ObjectSizes;
 
 /**
  * Binary format of {@code RowIndexEntry} is defined as follows:
@@ -65,9 +66,8 @@ import org.apache.cassandra.utils.ObjectSizes;
  * }
  * </p>
  */
-public class RowIndexEntry implements IMeasurableMemory
+public class RowIndexEntry
 {
-    private static final long EMPTY_SIZE = ObjectSizes.measure(new RowIndexEntry(0, null));
 
     public final long position;
     protected final SerializationHeader header;
@@ -76,6 +76,16 @@ public class RowIndexEntry implements IMeasurableMemory
     {
         this.position = position;
         this.header = header;
+    }
+
+    // Note that for the old layout, this will actually discard the cellname parts that are not strictly
+    // part of the clustering prefix. Don't use this if that's not what you want.
+    public static ISerializer<ClusteringPrefix> clusteringPrefixSerializer(final Version version, final SerializationHeader header)
+    {
+        if (!version.storeRows())
+            throw new UnsupportedOperationException();
+
+        return new ClusteringPrefixSerializer(version.correspondingMessagingVersion(), header.clusteringTypes());
     }
 
     public int promotedSize(Version version, SerializationHeader header)
@@ -186,11 +196,6 @@ public class RowIndexEntry implements IMeasurableMemory
         return -(low + 1);  // key not found
     }
 
-    public long unsharedHeapSize()
-    {
-        return EMPTY_SIZE;
-    }
-
     public static class Serializer
     {
         private final Version version;
@@ -219,7 +224,7 @@ public class RowIndexEntry implements IMeasurableMemory
                 {
                     ByteBuffer buffer = ByteBuffer.allocate(size);
                     in.readFully(buffer.array());
-                    return new IndexedEntry(position, buffer, header);
+                    return new IndexedEntry(clusteringPrefixSerializer(version, header), position, buffer, header);
                 }
 
                 // TODO convert from old format
@@ -276,13 +281,21 @@ public class RowIndexEntry implements IMeasurableMemory
      */
     private static class IndexedEntry extends RowIndexEntry
     {
+        private final ISerializer<ClusteringPrefix> clusteringSerializer;
         private final ByteBuffer buffer;
-        private static final long BASE_SIZE = ObjectSizes.measure(new IndexedEntry(0, ByteBuffer.allocate(16), null));
+        private final int[] indexInfoOffsets;
 
-        private IndexedEntry(long position, ByteBuffer buffer, SerializationHeader header)
+        private int currentIndex = -1;
+        private IndexInfo currentInfo;
+
+        private IndexedEntry(ISerializer<ClusteringPrefix> clusteringSerializer, long position, ByteBuffer buffer, SerializationHeader header)
         {
             super(position, header);
+            this.clusteringSerializer = clusteringSerializer != null
+                                        ? clusteringSerializer
+                                        : clusteringPrefixSerializer(BigFormat.latestVersion, header);
             this.buffer = buffer;
+            this.indexInfoOffsets = new int[columnsCount()];
         }
 
         @Override
@@ -299,16 +312,59 @@ public class RowIndexEntry implements IMeasurableMemory
 
         public IndexInfo indexInfo(int indexIdx)
         {
+            // this method is often called with the same indexIdx argument
+            if (indexIdx == currentIndex && currentInfo != null)
+                return currentInfo;
+
             ByteBuffer buf = buffer.duplicate();
-            buf.position((int) (TypeSizes.sizeof(0)/*columnsCount*/ + DeletionTime.serializer.serializedSize(null)));
-            DataInputBuffer input = new DataInputBuffer(buf, false);
 
             try
             {
-                IndexInfo.Serializer idxSerializer = IndexInfo.indexSerializer(BigFormat.latestVersion);
-                while (indexIdx-- > 0)
-                    idxSerializer.deserialize(input, header);
-                return idxSerializer.deserialize(input, header);
+                DataInputBuffer input = new DataInputBuffer(buf, false);
+
+                int offset = indexInfoOffsets[indexIdx];
+                if (offset > 0)
+                {
+                    // we already know the offset of the requested IndexInfo, so just "seek" and deserialize
+                    buf.position(offset);
+                }
+                else
+                {
+                    int i = 0;
+                    while (i < indexIdx && indexInfoOffsets[i] != 0)
+                        i++;
+
+                    // "seek" to last known IndexInfo
+                    if (i == 0)
+                        offset = (int) (TypeSizes.sizeof(0)/*columnsCount*/ + DeletionTime.serializer.serializedSize(null));
+                    else
+                    {
+                        i--;
+                        offset = indexInfoOffsets[i];
+                    }
+                    buf.position(offset);
+
+                    // need to read through all IndexInfo objects until we reach the requested one
+                    for (; ; i++)
+                    {
+                        indexInfoOffsets[i] = buf.position();
+
+                        if (i == indexIdx)
+                            break;
+
+                        IndexInfo.latestVersionSerializer.skip(input, header, clusteringSerializer);
+                    }
+                }
+
+                IndexInfo info = IndexInfo.latestVersionSerializer.deserialize(input, header);
+
+                if (indexInfoOffsets.length > indexIdx + 1)
+                    // we know the offset of the next IndexInfo - so store it
+                    indexInfoOffsets[indexIdx + 1] = buf.position();
+
+                currentIndex = indexIdx;
+                currentInfo = info;
+                return info;
             }
             catch (IOException e)
             {
@@ -361,12 +417,6 @@ public class RowIndexEntry implements IMeasurableMemory
 
             return Ints.checkedCast(size);
         }
-
-        @Override
-        public long unsharedHeapSize()
-        {
-            return BASE_SIZE + buffer.capacity();
-        }
     }
 
 
@@ -377,6 +427,7 @@ public class RowIndexEntry implements IMeasurableMemory
      */
     private static class Builder
     {
+        private final ISerializer<ClusteringPrefix> clusteringSerializer;
         private final UnfilteredRowIterator iterator;
         private final SequentialWriter writer;
         private final SerializationHeader header;
@@ -414,6 +465,8 @@ public class RowIndexEntry implements IMeasurableMemory
 
             this.initialPosition = writer.getFilePointer();
             this.bufferOut = new DataOutputBuffer(1024);
+
+            clusteringSerializer = clusteringPrefixSerializer(BigFormat.latestVersion, header);
         }
 
         private void writePartitionHeader(UnfilteredRowIterator iterator) throws IOException
@@ -455,8 +508,8 @@ public class RowIndexEntry implements IMeasurableMemory
                                                  startPosition,
                                                  currentPosition() - startPosition,
                                                  openMarker);
-            // TODO always instantiates new "ISerializer<ClusteringPrefix> clusteringSerializer" - optimize!
-            IndexInfo.latestVersionSerializer.serialize(cIndexInfo, bufferOut, header);
+            IndexInfo.Serializer.serialize(cIndexInfo, bufferOut, header,
+                                           BigFormat.latestVersion, clusteringSerializer);
 
             columnsIndexCount ++;
             firstClustering = null;
@@ -508,7 +561,7 @@ public class RowIndexEntry implements IMeasurableMemory
             {
                 ByteBuffer buf = bufferOut.buffer();
                 buf.putInt((int) DeletionTime.serializer.serializedSize(null), columnsIndexCount);
-                return new IndexedEntry(position, buf, header);
+                return new IndexedEntry(clusteringSerializer, position, buf, header);
             }
             else
                 return new RowIndexEntry(position, header);
@@ -519,5 +572,32 @@ public class RowIndexEntry implements IMeasurableMemory
     {
         return BigFormat.latestVersion.storeRows() == version.storeRows() &&
                BigFormat.latestVersion.correspondingMessagingVersion() == version.correspondingMessagingVersion();
+    }
+
+    private static final class ClusteringPrefixSerializer implements ISerializer<ClusteringPrefix>
+    {
+        private final int messagingVersion;
+        private final List<AbstractType<?>> clusteringTypes;
+
+        ClusteringPrefixSerializer(int messagingVersion, List<AbstractType<?>> clusteringTypes)
+        {
+            this.messagingVersion = messagingVersion;
+            this.clusteringTypes = clusteringTypes;
+        }
+
+        public void serialize(ClusteringPrefix clustering, DataOutputPlus out) throws IOException
+        {
+            ClusteringPrefix.serializer.serialize(clustering, out, messagingVersion, clusteringTypes);
+        }
+
+        public ClusteringPrefix deserialize(DataInputPlus in) throws IOException
+        {
+            return ClusteringPrefix.serializer.deserialize(in, messagingVersion, clusteringTypes);
+        }
+
+        public long serializedSize(ClusteringPrefix clustering)
+        {
+            return ClusteringPrefix.serializer.serializedSize(clustering, messagingVersion, clusteringTypes);
+        }
     }
 }
