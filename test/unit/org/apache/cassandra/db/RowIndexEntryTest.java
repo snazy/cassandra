@@ -49,7 +49,6 @@ public class RowIndexEntryTest extends CQLTester
         serializer.serialize(simple, buffer);
 
         assertEquals(12, buffer.getLength()); // as of Cassandra 3.0
-        assertEquals(buffer.getLength(), serializer.serializedSize(simple));
 
         // write enough rows to ensure we get a few column index entries
         for (int i = 0; i <= DatabaseDescriptor.getColumnIndexSize() / 4; i++)
@@ -69,6 +68,5 @@ public class RowIndexEntryTest extends CQLTester
 
         serializer.serialize(withIndex, buffer);
         assertEquals(169, buffer.getLength()); // as of Cassandra 3.0
-        assertEquals(buffer.getLength(), serializer.serializedSize(withIndex));
     }
 }

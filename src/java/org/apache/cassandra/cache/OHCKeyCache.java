@@ -21,14 +21,11 @@ package org.apache.cassandra.cache;
 import java.io.File;
 import java.io.IOError;
 import java.io.IOException;
-import java.nio.BufferOverflowException;
 import java.nio.ByteBuffer;
 import java.util.Iterator;
-import java.util.Optional;
 import java.util.UUID;
 
 import org.apache.cassandra.config.CFMetaData;
-import org.apache.cassandra.config.Config;
 import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.config.Schema;
 import org.apache.cassandra.db.ColumnFamilyStore;
@@ -40,12 +37,10 @@ import org.apache.cassandra.index.Index;
 import org.apache.cassandra.index.internal.CassandraIndex;
 import org.apache.cassandra.io.sstable.Descriptor;
 import org.apache.cassandra.io.sstable.format.SSTableFormat;
-import org.apache.cassandra.io.sstable.format.Version;
+import org.apache.cassandra.io.sstable.format.big.BigFormat;
 import org.apache.cassandra.io.util.DataInputBuffer;
 import org.apache.cassandra.io.util.DataOutputBuffer;
-import org.apache.cassandra.io.util.DataOutputBufferFixed;
 import org.apache.cassandra.io.util.UnbufferedDataOutputStreamPlus;
-import org.apache.cassandra.schema.IndexMetadata;
 import org.caffinitas.ohc.CacheSerializer;
 import org.caffinitas.ohc.OHCache;
 import org.caffinitas.ohc.OHCacheBuilder;
@@ -77,8 +72,7 @@ public final class OHCKeyCache
     {
         final KeyCacheKey key;
         final RowIndexEntry value;
-        ByteBuffer buffer;
-        RowIndexEntry.Serializer indexSerializer;
+        String indexName;
 
         KeyCacheValue(KeyCacheKey key, RowIndexEntry value)
         {
@@ -176,113 +170,29 @@ public final class OHCKeyCache
 
         public void serialize(KeyCacheValue rowIndexEntry, ByteBuffer buf)
         {
-            if (rowIndexEntry.buffer != null)
-            {
-                // Fast path, serializedSize() was able to put the while entry into the fixed-size buffer.
-                buf.put(rowIndexEntry.buffer);
-                return;
-            }
-
-            // Conventional path, fixed-size buffer was too small for the key to serialize.
-            serializeInternal(rowIndexEntry, buf);
-        }
-
-        public int serializedSize(KeyCacheValue rowIndexEntry)
-        {
-            // TODO remove KeyCacheValue.buffer when using OHC's chunked implementation (CASSANDRA-9929) and move
-            // code from serializedSize() to serialize(). (OHC chunked implementation provides a mechanism for a
-            // thread-local serialization buffer and won't call serializedSize())
-
-            ByteBuffer buf = SerializationUtil.temporaryByteBuffer();
-            try
-            {
-                if (!serializeInternal(rowIndexEntry, buf))
-                    return 0;
-
-                rowIndexEntry.buffer = buf;
-                buf.flip();
-                return buf.limit();
-            }
-            catch (BufferOverflowException resize)
-            {
-                // bounded serialization buffer is too small - so go the alternative route and calculate the size first
-
-                KeyCacheKey key = rowIndexEntry.key;
-                Descriptor desc = key.desc;
-                String cfName = desc.cfname;
-                int iIndexSep = cfName.indexOf(Directories.SECONDARY_INDEX_NAME_SEPARATOR);
-
-                if (rowIndexEntry.indexSerializer == null)
-                {
-                    // This branch would be never reached as it requires the pathological case,
-                    // that an index name is about 4kB or bigger in serialized size. Sorry - not cached.
-                    return 0;
-                }
-
-                return 16 // cfId
-                       + (iIndexSep == -1 ? 2 : SerializationUtil.stringSerializedSize(cfName.substring(iIndexSep + 1)))
-                       + 2 // formatType
-                       + SerializationUtil.stringSerializedSize(desc.version.getVersion())
-                       + rowIndexEntry.indexSerializer.serializedSize(rowIndexEntry.value);
-            }
-        }
-
-        private static boolean serializeInternal(KeyCacheValue rowIndexEntry, ByteBuffer buf)
-        {
             KeyCacheKey key = rowIndexEntry.key;
 
             UUID cfId = key.cfId;
             buf.putLong(cfId.getMostSignificantBits());
             buf.putLong(cfId.getLeastSignificantBits());
 
-            // following basically what CacheService.KeyCacheSerializer does
+            SerializationUtil.writeUTF(rowIndexEntry.indexName, buf);
 
-            Descriptor desc = key.desc;
-            String ksName = desc.ksname;
-            String cfName = desc.cfname;
-            CFMetaData cfm;
+            rowIndexEntry.value.serialize(buf);
+        }
+
+        public int serializedSize(KeyCacheValue rowIndexEntry)
+        {
+            String cfName = rowIndexEntry.key.desc.cfname;
             int iIndexSep = cfName.indexOf(Directories.SECONDARY_INDEX_NAME_SEPARATOR);
-            if (iIndexSep == -1)
-            {
-                // base table (not a 2i)
-                cfm = Schema.instance.getCFMetaData(ksName, cfName);
-                SerializationUtil.writeUTF("", buf);
-            }
-            else
-            {
-                String baseName = cfName.substring(0, iIndexSep);
-                String indexName = cfName.substring(iIndexSep + 1);
-                cfm = Schema.instance.getCFMetaData(ksName, baseName);
-                Optional<IndexMetadata> indexMeta = cfm.getIndexes().get(indexName);
-                if (!indexMeta.isPresent())
-                    return false;
-                cfm = CassandraIndex.indexCfsMetadata(cfm, indexMeta.get());
 
-                SerializationUtil.writeUTF(indexName, buf);
-            }
+            int sz = 16 + rowIndexEntry.value.nativeSize();
 
-            if (cfm == null)
-                return false;
+            String indexName = iIndexSep != -1 ? cfName.substring(iIndexSep + 1) : "";
+            sz += SerializationUtil.stringSerializedSize(indexName);
+            rowIndexEntry.indexName = indexName;
 
-            buf.putShort((short) desc.formatType.ordinal());
-            SerializationUtil.writeUTF(desc.version.getVersion(), buf);
-
-            DataOutputBufferFixed out = new DataOutputBufferFixed(buf);
-            if (rowIndexEntry.indexSerializer == null) // cheap optimization for "conventional path"
-            {
-                rowIndexEntry.indexSerializer = desc.getFormat().getIndexSerializer(desc.version,
-                                                                                    SerializationHeader.forKeyCache(cfm));
-            }
-            try
-            {
-                rowIndexEntry.indexSerializer.serialize(rowIndexEntry.value, out);
-            }
-            catch (IOException e)
-            {
-                throw new RuntimeException(e);
-            }
-
-            return true;
+            return sz;
         }
 
         public KeyCacheValue deserialize(ByteBuffer buf)
@@ -327,16 +237,11 @@ public final class OHCKeyCache
             if (cfs == null)
                 return null;
 
-            SSTableFormat.Type formatType = SSTableFormat.Type.values()[buf.getShort()];
-            Version version = formatType.info.getVersion(SerializationUtil.readUTF(buf));
-
             DataInputBuffer input = new DataInputBuffer(buf, false);
 
-            // following basically what CacheService.KeyCacheSerializer does
-
             RowIndexEntry.Serializer indexSerializer;
-            indexSerializer = formatType.info.getIndexSerializer(version,
-                                                                 SerializationHeader.forKeyCache(cfs.metadata));
+            indexSerializer = BigFormat.instance.getIndexSerializer(BigFormat.latestVersion,
+                                                                    SerializationHeader.forKeyCache(cfs.metadata));
             try
             {
                 RowIndexEntry entry = indexSerializer.deserialize(input);
@@ -413,31 +318,8 @@ public final class OHCKeyCache
     // in ByteBufferUtil with CASSANDRA-10189
     public static final class SerializationUtil
     {
-
-        private static final int initialBufferSize =
-                Integer.getInteger(Config.PROPERTY_PREFIX + "temporary_serialization_buffer_size", 4096);
-
-        private static final ThreadLocal<ByteBuffer> tempByteBuffer = new ThreadLocal<ByteBuffer>()
-        {
-            protected ByteBuffer initialValue()
-            {
-                return ByteBuffer.allocate(initialBufferSize);
-            }
-        };
-
         private SerializationUtil()
         {
-        }
-
-        /**
-         * Retrieve the per-thread byte buffer temporary buffer.
-         * Be very careful when using a buffer from this method passed to other methods even in this class!
-         */
-        public static ByteBuffer temporaryByteBuffer()
-        {
-            ByteBuffer buf = tempByteBuffer.get();
-            buf.clear();
-            return buf;
         }
 
         /**

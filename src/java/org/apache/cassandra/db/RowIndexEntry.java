@@ -88,9 +88,21 @@ public class RowIndexEntry
         return new ClusteringPrefixSerializer(version.correspondingMessagingVersion(), header.clusteringTypes());
     }
 
-    public int promotedSize(Version version, SerializationHeader header)
+    public void serialize(ByteBuffer out)
     {
-        return 0;
+        out.putLong(position);
+        out.putInt(0);
+    }
+
+    void serialize(Version version, DataOutputPlus out) throws IOException
+    {
+        out.writeLong(position);
+        out.writeInt(0);
+    }
+
+    public int nativeSize()
+    {
+        return 12;
     }
 
     public static RowIndexEntry buildIndex(long position, DeletionTime deletionTime,
@@ -260,20 +272,6 @@ public class RowIndexEntry
 
             FileUtils.skipBytesFully(in, size);
         }
-
-        // TODO this is only used from OHCKeyCache and not really neccessary
-        public int serializedSize(RowIndexEntry rie)
-        {
-            return TypeSizes.sizeof(rie.position)
-                   + TypeSizes.sizeof(0/*promoted size*/)
-                   + rie.promotedSize(version, header);
-        }
-    }
-
-    void serialize(Version version, DataOutputPlus out) throws IOException
-    {
-        out.writeLong(position);
-        out.writeInt(0);
     }
 
     /**
@@ -372,6 +370,13 @@ public class RowIndexEntry
             }
         }
 
+        public void serialize(ByteBuffer out)
+        {
+            out.putLong(position);
+            out.putInt(buffer.limit());
+            out.put(buffer);
+        }
+
         void serialize(Version version, DataOutputPlus out) throws IOException
         {
             out.writeLong(position);
@@ -395,15 +400,19 @@ public class RowIndexEntry
                 idxSerializer.serialize(indexInfo(i), out, header);
         }
 
-        @Override
-        public int promotedSize(Version version, SerializationHeader header)
+        private int promotedSize(Version version, SerializationHeader header)
         {
             if (nativeBinaryCompatible(version))
-                return buffer.limit();
+                return nativeSize();
 
             // version is not BigFormat.latestVersion - need to calculate by deserializing (TODO is this possible/allowed at all?)
 
             return promotedSizeIterative(version, header);
+        }
+
+        public int nativeSize()
+        {
+            return super.nativeSize() + buffer.limit();
         }
 
         private int promotedSizeIterative(Version version, SerializationHeader header)
