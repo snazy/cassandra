@@ -1,0 +1,49 @@
+keyspace: stresscql
+
+keyspace_definition: |
+  CREATE KEYSPACE stresscql WITH replication = {'class': 'SimpleStrategy', 'replication_factor': 2};
+
+table: c9738test
+
+table_definition: |
+  CREATE TABLE c9738test (
+        name text,
+        discr1 text,
+        discr2 text,
+        discr3 text,
+        discr4 text,
+        dt timestamp,
+        address inet,
+        dbl double,
+        lval bigint,
+        ival int,
+        uid timeuuid,
+        value blob,
+        PRIMARY KEY ( (name), discr1, discr2)
+  )
+    WITH compaction = { 'class':'LeveledCompactionStrategy' }
+
+columnspec:
+  - name: name
+    size: uniform(20..30)
+    population: gaussian(1..100k)
+  - name: discr1
+    size: fixed(20)
+    cluster: gaussian(2..5)
+  - name: discr2
+    size: fixed(20)
+    cluster: gaussian(5..10)
+  - name: value
+    size: uniform(200..1k)
+
+insert:
+  partitions: fixed(1)
+  batchtype: UNLOGGED
+  select: uniform(1..10)/10
+
+queries:
+   query:
+      cql: select * from c9738test where name = ? and discr1 = ? LIMIT 100
+      fields: samerow
+
+

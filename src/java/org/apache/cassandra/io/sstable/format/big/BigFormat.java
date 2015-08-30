@@ -37,10 +37,10 @@ import org.apache.cassandra.utils.ChecksumType;
 /**
  * Legacy bigtable format
  */
-public class BigFormat implements SSTableFormat
+public final class BigFormat implements SSTableFormat
 {
     public static final BigFormat instance = new BigFormat();
-    public static final BigVersion latestVersion = new BigVersion(BigVersion.current_version);
+    public static final Version latestVersion = BigVersion.get(BigVersion.current_version);
     private static final SSTableReader.Factory readerFactory = new ReaderFactory();
     private static final SSTableWriter.Factory writerFactory = new WriterFactory();
 
@@ -58,7 +58,7 @@ public class BigFormat implements SSTableFormat
     @Override
     public Version getVersion(String version)
     {
-        return new BigVersion(version);
+        return BigVersion.get(version);
     }
 
     @Override
@@ -74,9 +74,9 @@ public class BigFormat implements SSTableFormat
     }
 
     @Override
-    public RowIndexEntry.IndexSerializer getIndexSerializer(CFMetaData metadata, Version version, SerializationHeader header)
+    public RowIndexEntry.Serializer getIndexSerializer(Version version, SerializationHeader header)
     {
-        return new RowIndexEntry.Serializer(metadata, version, header);
+        return new RowIndexEntry.Serializer(version, header);
     }
 
     static class WriterFactory extends SSTableWriter.Factory
@@ -109,10 +109,35 @@ public class BigFormat implements SSTableFormat
     //
     // Minor versions were introduced with version "hb" for Cassandra 1.0.3; prior to that,
     // we always incremented the major version.
-    static class BigVersion extends Version
+    static final class BigVersion extends Version
     {
         public static final String current_version = "ma";
         public static final String earliest_supported_version = "jb";
+
+        private static final BigVersion version_ma = new BigVersion("ma");
+        private static final BigVersion version_la = new BigVersion("la");
+        private static final BigVersion version_ka = new BigVersion("ka");
+        private static final BigVersion version_jb = new BigVersion("jb");
+
+        /**
+         * Factory-style method to have just a minor amount of instances of BigVersion on the heap.
+         */
+        static BigVersion get(String version)
+        {
+            switch (version)
+            {
+                case "ma":
+                    return version_ma;
+                case "la":
+                    return version_la;
+                case "ka":
+                    return version_ka;
+                case "jb":
+                    return version_jb;
+            }
+            // some old version
+            return new BigVersion(version);
+        }
 
         // jb (2.0.1): switch from crc32 to adler32 for compression checksums
         //             checksum the compressed data
@@ -145,7 +170,7 @@ public class BigFormat implements SSTableFormat
          */
         private final boolean hasCompactionAncestors;
 
-        BigVersion(String version)
+        private BigVersion(String version)
         {
             super(instance, version);
 

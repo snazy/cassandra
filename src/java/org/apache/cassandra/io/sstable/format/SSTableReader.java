@@ -195,7 +195,7 @@ public abstract class SSTableReader extends SSTable implements SelfRefCounted<SS
     protected IndexSummary indexSummary;
     protected IFilter bf;
 
-    protected final RowIndexEntry.IndexSerializer rowIndexEntrySerializer;
+    protected final RowIndexEntry.Serializer rowIndexEntrySerializer;
 
     protected InstrumentingCache<KeyCacheKey, RowIndexEntry> keyCache;
 
@@ -609,7 +609,7 @@ public abstract class SSTableReader extends SSTable implements SelfRefCounted<SS
         this.header = header;
         this.maxDataAge = maxDataAge;
         this.openReason = openReason;
-        this.rowIndexEntrySerializer = descriptor.version.getSSTableFormat().getIndexSerializer(metadata, desc.version, header);
+        this.rowIndexEntrySerializer = descriptor.version.getSSTableFormat().getIndexSerializer(desc.version, header);
     }
 
     public static long getTotalBytes(Iterable<SSTableReader> sstables)
@@ -810,7 +810,7 @@ public abstract class SSTableReader extends SSTable implements SelfRefCounted<SS
             try (IndexSummaryBuilder summaryBuilder = summaryLoaded ? null : new IndexSummaryBuilder(estimatedKeys, metadata.params.minIndexInterval, samplingLevel))
             {
                 long indexPosition;
-                RowIndexEntry.IndexSerializer rowIndexSerializer = descriptor.getFormat().getIndexSerializer(metadata, descriptor.version, header);
+                RowIndexEntry.Serializer rowIndexSerializer = descriptor.getFormat().getIndexSerializer(descriptor.version, header);
 
                 while ((indexPosition = primaryIndex.getFilePointer()) != indexSize)
                 {

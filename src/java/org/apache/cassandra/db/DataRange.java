@@ -400,7 +400,7 @@ public class DataRange
             out.writeBoolean(isPaging);
             if (isPaging)
             {
-                Clustering.serializer.serialize(((Paging)range).lastReturned, out, version, metadata.comparator.subtypes());
+                Clustering.Serializer.serialize(((Paging)range).lastReturned, out, version, metadata.comparator.subtypes());
                 out.writeBoolean(((Paging)range).inclusive);
             }
         }
@@ -412,7 +412,7 @@ public class DataRange
             if (in.readBoolean())
             {
                 ClusteringComparator comparator = metadata.comparator;
-                Clustering lastReturned = Clustering.serializer.deserialize(in, version, comparator.subtypes());
+                Clustering lastReturned = Clustering.Serializer.deserialize(in, version, comparator.subtypes());
                 boolean inclusive = in.readBoolean();
                 return new Paging(range, filter, comparator, lastReturned, inclusive);
             }
@@ -430,7 +430,7 @@ public class DataRange
 
             if (range instanceof Paging)
             {
-                size += Clustering.serializer.serializedSize(((Paging)range).lastReturned, version, metadata.comparator.subtypes());
+                size += Clustering.Serializer.serializedSize(((Paging)range).lastReturned, version, metadata.comparator.subtypes());
                 size += 1; // inclusive boolean
             }
             return size;

@@ -26,6 +26,7 @@ import org.apache.cassandra.cache.IMeasurableMemory;
 import org.apache.cassandra.config.CFMetaData;
 import org.apache.cassandra.db.rows.*;
 import org.apache.cassandra.db.marshal.AbstractType;
+import org.apache.cassandra.io.util.DataInputBuffer;
 import org.apache.cassandra.io.util.DataInputPlus;
 import org.apache.cassandra.io.util.DataOutputPlus;
 import org.apache.cassandra.utils.ByteBufferUtil;
@@ -43,6 +44,7 @@ import org.apache.cassandra.utils.ByteBufferUtil;
  *   3) {@code RangeTombstoneBoundMarker.Bound} represents a range tombstone marker "bound".
  * See those classes for more details.
  */
+// TODO remove IMeasurableMemory ??
 public interface ClusteringPrefix extends IMeasurableMemory, Clusterable
 {
     public static final Serializer serializer = new Serializer();
@@ -255,7 +257,7 @@ public interface ClusteringPrefix extends IMeasurableMemory, Clusterable
             if (clustering.kind() == Kind.CLUSTERING)
             {
                 out.writeByte(clustering.kind().ordinal());
-                Clustering.serializer.serialize((Clustering)clustering, out, version, types);
+                Clustering.Serializer.serialize((Clustering)clustering, out, version, types);
             }
             else
             {
@@ -269,9 +271,20 @@ public interface ClusteringPrefix extends IMeasurableMemory, Clusterable
             // We shouldn't serialize static clusterings
             assert kind != Kind.STATIC_CLUSTERING;
             if (kind == Kind.CLUSTERING)
-                return Clustering.serializer.deserialize(in, version, types);
+                return Clustering.Serializer.deserialize(in, version, types);
             else
                 return Slice.Bound.serializer.deserializeValues(in, kind, version, types);
+        }
+
+        public static void skip(DataInputPlus in, int version, List<AbstractType<?>> types) throws IOException
+        {
+            Kind kind = Kind.values()[in.readByte()];
+            // We shouldn't serialize static clusterings
+            assert kind != Kind.STATIC_CLUSTERING;
+            if (kind == Kind.CLUSTERING)
+                Clustering.Serializer.skip(in, version, types);
+            else
+                Slice.Bound.Serializer.skipValues(in, kind, version, types);
         }
 
         public long serializedSize(ClusteringPrefix clustering, int version, List<AbstractType<?>> types)
@@ -279,7 +292,7 @@ public interface ClusteringPrefix extends IMeasurableMemory, Clusterable
             // We shouldn't serialize static clusterings
             assert clustering.kind() != Kind.STATIC_CLUSTERING;
             if (clustering.kind() == Kind.CLUSTERING)
-                return 1 + Clustering.serializer.serializedSize((Clustering)clustering, version, types);
+                return 1 + Clustering.Serializer.serializedSize((Clustering)clustering, version, types);
             else
                 return Slice.Bound.serializer.serializedSize((Slice.Bound)clustering, version, types);
         }
@@ -342,12 +355,39 @@ public interface ClusteringPrefix extends IMeasurableMemory, Clusterable
                 while (offset < limit)
                 {
                     values[offset] = isNull(header, offset)
-                                ? null
-                                : (isEmpty(header, offset) ? ByteBufferUtil.EMPTY_BYTE_BUFFER : types.get(offset).readValue(in));
+                                     ? null
+                                     : (isEmpty(header, offset) ? ByteBufferUtil.EMPTY_BYTE_BUFFER : types.get(offset).readValue(in));
                     offset++;
                 }
             }
             return values;
+        }
+
+        static ByteBuffer deserializeSharedValueWithoutSize(DataInputBuffer buffer, AbstractType<?> type, int offset, long header) throws IOException
+        {
+            return isNull(header, offset)
+                   ? null
+                   : (isEmpty(header, offset) ? ByteBufferUtil.EMPTY_BYTE_BUFFER : type.readSharedValue(buffer));
+        }
+
+        void skipValuesWithoutSize(DataInputPlus in, int size, int version, List<AbstractType<?>> types) throws IOException
+        {
+            // Callers of this method should handle the case where size = 0 (in all case we want to return a special value anyway).
+            assert size > 0;
+            int offset = 0;
+            while (offset < size)
+            {
+                long header = in.readUnsignedVInt();
+                int limit = Math.min(size, offset + 32);
+                while (offset < limit)
+                {
+                    if (types.size() <= offset)    // TODO remove this assertion
+                        throw new AssertionError();
+                    if (!isNull(header, offset) && !isEmpty(header, offset))
+                        types.get(offset).skipValue(in);
+                    offset++;
+                }
+            }
         }
 
         /**

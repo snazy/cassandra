@@ -60,7 +60,7 @@ public class BigTableScanner implements ISSTableScanner
 
     private final ColumnFilter columns;
     private final DataRange dataRange;
-    private final RowIndexEntry.IndexSerializer rowIndexEntrySerializer;
+    private final RowIndexEntry.Serializer rowIndexEntrySerializer;
     private final boolean isForThrift;
 
     protected Iterator<UnfilteredRowIterator> iterator;
@@ -95,8 +95,7 @@ public class BigTableScanner implements ISSTableScanner
         this.sstable = sstable;
         this.columns = columns;
         this.dataRange = dataRange;
-        this.rowIndexEntrySerializer = sstable.descriptor.version.getSSTableFormat().getIndexSerializer(sstable.metadata,
-                                                                                                        sstable.descriptor.version,
+        this.rowIndexEntrySerializer = sstable.descriptor.version.getSSTableFormat().getIndexSerializer(sstable.descriptor.version,
                                                                                                         sstable.header);
         this.isForThrift = isForThrift;
         this.rangeIterator = rangeIterator;
@@ -324,7 +323,7 @@ public class BigTableScanner implements ISSTableScanner
                         {
                             if (dataRange == null)
                             {
-                                dfile.seek(currentEntry.position + currentEntry.headerOffset());
+                                dfile.seek(currentEntry.position);
                                 ByteBufferUtil.readWithShortLength(dfile); // key
                                 return new SSTableIdentityIterator(sstable, dfile, partitionKey());
                             }

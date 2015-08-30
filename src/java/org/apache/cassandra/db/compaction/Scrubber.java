@@ -55,7 +55,7 @@ public class Scrubber implements Closeable
     private final RandomAccessReader dataFile;
     private final RandomAccessReader indexFile;
     private final ScrubInfo scrubInfo;
-    private final RowIndexEntry.IndexSerializer rowIndexEntrySerializer;
+    private final RowIndexEntry.Serializer rowIndexEntrySerializer;
 
     private final boolean isOffline;
 
@@ -98,8 +98,7 @@ public class Scrubber implements Closeable
         this.outputHandler = outputHandler;
         this.skipCorrupted = skipCorrupted;
         this.isOffline = isOffline;
-        this.rowIndexEntrySerializer = sstable.descriptor.version.getSSTableFormat().getIndexSerializer(sstable.metadata,
-                                                                                                        sstable.descriptor.version,
+        this.rowIndexEntrySerializer = sstable.descriptor.version.getSSTableFormat().getIndexSerializer(sstable.descriptor.version,
                                                                                                         sstable.header);
 
         List<SSTableReader> toScrub = Collections.singletonList(sstable);

@@ -20,18 +20,14 @@ package org.apache.cassandra.db.columniterator;
 import java.io.IOException;
 import java.util.Collections;
 import java.util.Iterator;
-import java.util.List;
-
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import org.apache.cassandra.config.CFMetaData;
 import org.apache.cassandra.db.*;
 import org.apache.cassandra.db.filter.ColumnFilter;
 import org.apache.cassandra.db.rows.*;
+import org.apache.cassandra.io.sstable.IndexInfo;
 import org.apache.cassandra.io.sstable.format.SSTableReader;
 import org.apache.cassandra.io.sstable.CorruptSSTableException;
-import org.apache.cassandra.io.sstable.IndexHelper;
 import org.apache.cassandra.io.util.FileDataInput;
 import org.apache.cassandra.io.util.FileMark;
 import org.apache.cassandra.utils.ByteBufferUtil;
@@ -414,7 +410,6 @@ abstract class AbstractSSTableIterator implements SliceableUnfilteredRowIterator
         private final ClusteringComparator comparator;
 
         private final RowIndexEntry indexEntry;
-        private final List<IndexHelper.IndexInfo> indexes;
         private final boolean reversed;
 
         private int currentIndexIdx;
@@ -427,36 +422,35 @@ abstract class AbstractSSTableIterator implements SliceableUnfilteredRowIterator
             this.reader = reader;
             this.comparator = comparator;
             this.indexEntry = indexEntry;
-            this.indexes = indexEntry.columnsIndex();
             this.reversed = reversed;
-            this.currentIndexIdx = reversed ? indexEntry.columnsIndex().size() : -1;
+            this.currentIndexIdx = reversed ? indexEntry.columnsCount() : -1;
         }
 
         public boolean isDone()
         {
-            return reversed ? currentIndexIdx < 0 : currentIndexIdx >= indexes.size();
+            return reversed ? currentIndexIdx < 0 : currentIndexIdx >= indexEntry.columnsCount();
         }
 
         // Sets the reader to the beginning of blockIdx.
         public void setToBlock(int blockIdx) throws IOException
         {
-            if (blockIdx >= 0 && blockIdx < indexes.size())
-                reader.seekToPosition(indexEntry.position + indexes.get(blockIdx).offset);
+            if (blockIdx >= 0 && blockIdx < indexEntry.columnsCount())
+                reader.seekToPosition(indexEntry.position + indexEntry.indexInfo(blockIdx).getOffset());
 
             currentIndexIdx = blockIdx;
-            reader.openMarker = blockIdx > 0 ? indexes.get(blockIdx - 1).endOpenMarker : null;
+            reader.openMarker = blockIdx > 0 ? indexEntry.indexInfo(blockIdx - 1).getEndOpenMarker() : null;
             mark = reader.file.mark();
         }
 
         public int blocksCount()
         {
-            return indexes.size();
+            return indexEntry.columnsCount();
         }
 
         // Check if we've crossed an index boundary (based on the mark on the beginning of the index block).
         public boolean isPastCurrentBlock()
         {
-            return reader.file.bytesPastMark(mark) >= currentIndex().width;
+            return reader.file.bytesPastMark(mark) >= currentIndex().getWidth();
         }
 
         public int currentBlockIdx()
@@ -464,9 +458,9 @@ abstract class AbstractSSTableIterator implements SliceableUnfilteredRowIterator
             return currentIndexIdx;
         }
 
-        public IndexHelper.IndexInfo currentIndex()
+        public IndexInfo currentIndex()
         {
-            return indexes.get(currentIndexIdx);
+            return indexEntry.indexInfo(currentIndexIdx);
         }
 
         // Finds the index of the first block containing the provided bound, starting at the provided index.
@@ -478,13 +472,13 @@ abstract class AbstractSSTableIterator implements SliceableUnfilteredRowIterator
             if (bound == Slice.Bound.TOP)
                 return blocksCount();
 
-            return IndexHelper.indexFor(bound, indexes, comparator, reversed, fromIdx);
+            return indexEntry.indexOf(bound, comparator, reversed, fromIdx);
         }
 
         @Override
         public String toString()
         {
-            return String.format("IndexState(indexSize=%d, currentBlock=%d, reversed=%b)", indexes.size(), currentIndexIdx, reversed);
+            return String.format("IndexState(indexSize=%d, currentBlock=%d, reversed=%b)", indexEntry.columnsCount(), currentIndexIdx, reversed);
         }
     }
 }

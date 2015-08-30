@@ -54,7 +54,7 @@ public abstract class SSTableWriter extends SSTable implements Transactional
     protected long maxDataAge = -1;
     protected final long keyCount;
     protected final MetadataCollector metadataCollector;
-    protected final RowIndexEntry.IndexSerializer rowIndexEntrySerializer;
+    protected final RowIndexEntry.Serializer rowIndexEntrySerializer;
     protected final SerializationHeader header;
     protected final TransactionalProxy txnProxy = txnProxy();
 
@@ -80,7 +80,7 @@ public abstract class SSTableWriter extends SSTable implements Transactional
         this.repairedAt = repairedAt;
         this.metadataCollector = metadataCollector;
         this.header = header;
-        this.rowIndexEntrySerializer = descriptor.version.getSSTableFormat().getIndexSerializer(metadata, descriptor.version, header);
+        this.rowIndexEntrySerializer = descriptor.version.getSSTableFormat().getIndexSerializer(descriptor.version, header);
     }
 
     public static SSTableWriter create(Descriptor descriptor,

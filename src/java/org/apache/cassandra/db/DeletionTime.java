@@ -18,6 +18,7 @@
 package org.apache.cassandra.db;
 
 import java.io.IOException;
+import java.nio.ByteBuffer;
 import java.security.MessageDigest;
 
 import com.google.common.base.Objects;
@@ -34,6 +35,7 @@ import org.apache.cassandra.utils.ObjectSizes;
 /**
  * Information on deletion of a storage engine object.
  */
+// TODO remove IMeasurableMemory ??
 public class DeletionTime implements Comparable<DeletionTime>, IMeasurableMemory
 {
     private static final long EMPTY_SIZE = ObjectSizes.measure(new DeletionTime(0, 0));
@@ -171,6 +173,15 @@ public class DeletionTime implements Comparable<DeletionTime>, IMeasurableMemory
                  : new DeletionTime(mfda, ldt);
         }
 
+        public DeletionTime deserialize(ByteBuffer buffer, int pos)
+        {
+            int ldt = buffer.getInt(pos);
+            long mfda = buffer.getLong(pos + 4);
+            return mfda == Long.MIN_VALUE && ldt == Integer.MAX_VALUE
+                   ? LIVE
+                   : new DeletionTime(mfda, ldt);
+        }
+
         public void skip(DataInputPlus in) throws IOException
         {
             FileUtils.skipBytesFully(in, 4 + 8);
@@ -178,8 +189,7 @@ public class DeletionTime implements Comparable<DeletionTime>, IMeasurableMemory
 
         public long serializedSize(DeletionTime delTime)
         {
-            return TypeSizes.sizeof(delTime.localDeletionTime())
-                 + TypeSizes.sizeof(delTime.markedForDeleteAt());
+            return 4 + 8;
         }
     }
 }

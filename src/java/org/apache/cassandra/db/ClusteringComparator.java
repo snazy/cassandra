@@ -18,7 +18,6 @@
 package org.apache.cassandra.db;
 
 import java.nio.ByteBuffer;
-import java.util.Arrays;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
@@ -26,13 +25,8 @@ import java.util.Objects;
 import com.google.common.base.Joiner;
 import com.google.common.collect.ImmutableList;
 
-import org.apache.cassandra.db.rows.Row;
 import org.apache.cassandra.db.marshal.AbstractType;
 import org.apache.cassandra.serializers.MarshalException;
-import org.apache.cassandra.utils.ByteBufferUtil;
-import org.apache.cassandra.utils.FastByteOperations;
-
-import static org.apache.cassandra.io.sstable.IndexHelper.IndexInfo;
 
 /**
  * A comparator of clustering prefixes (or more generally of {@link Clusterable}}.
@@ -45,11 +39,7 @@ public class ClusteringComparator implements Comparator<Clusterable>
 {
     private final List<AbstractType<?>> clusteringTypes;
 
-    private final Comparator<IndexInfo> indexComparator;
-    private final Comparator<IndexInfo> indexReverseComparator;
     private final Comparator<Clusterable> reverseComparator;
-
-    private final Comparator<Row> rowComparator = (r1, r2) -> compare(r1.clustering(), r2.clustering());
 
     public ClusteringComparator(AbstractType<?>... clusteringTypes)
     {
@@ -61,8 +51,6 @@ public class ClusteringComparator implements Comparator<Clusterable>
         // copy the list to ensure despatch is monomorphic
         this.clusteringTypes = ImmutableList.copyOf(clusteringTypes);
 
-        this.indexComparator = (o1, o2) -> ClusteringComparator.this.compare(o1.lastName, o2.lastName);
-        this.indexReverseComparator = (o1, o2) -> ClusteringComparator.this.compare(o1.firstName, o2.firstName);
         this.reverseComparator = (c1, c2) -> ClusteringComparator.this.compare(c2, c1);
         for (AbstractType<?> type : clusteringTypes)
             type.checkComparable(); // this should already be enforced by CFMetaData.rebuild, but we check again for other constructors
@@ -209,24 +197,6 @@ public class ClusteringComparator implements Comparator<Clusterable>
             if (value != null)
                 subtype(i).validate(value);
         }
-    }
-
-    /**
-     * A comparator for rows.
-     *
-     * A {@code Row} is a {@code Clusterable} so {@code ClusteringComparator} can be used
-     * to compare rows directly, but when we know we deal with rows (and not {@code Clusterable} in
-     * general), this is a little faster because by knowing we compare {@code Clustering} objects,
-     * we know that 1) they all have the same size and 2) they all have the same kind.
-     */
-    public Comparator<Row> rowComparator()
-    {
-        return rowComparator;
-    }
-
-    public Comparator<IndexInfo> indexComparator(boolean reversed)
-    {
-        return reversed ? indexReverseComparator : indexComparator;
     }
 
     public Comparator<Clusterable> reversed()

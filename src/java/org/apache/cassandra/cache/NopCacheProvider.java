@@ -20,14 +20,14 @@ package org.apache.cassandra.cache;
 import java.util.Collections;
 import java.util.Iterator;
 
-public class NopCacheProvider implements CacheProvider<RowCacheKey, IRowCacheEntry>
+public class NopCacheProvider<K, V> implements CacheProvider<K, V>
 {
-    public ICache<RowCacheKey, IRowCacheEntry> create()
+    public ICache<K, V> create()
     {
-        return new NopCache();
+        return new NopCache<>();
     }
 
-    private static class NopCache implements ICache<RowCacheKey, IRowCacheEntry>
+    public static class NopCache<K, V> implements ICache<K, V>
     {
         public long capacity()
         {
@@ -38,26 +38,26 @@ public class NopCacheProvider implements CacheProvider<RowCacheKey, IRowCacheEnt
         {
         }
 
-        public void put(RowCacheKey key, IRowCacheEntry value)
+        public void put(K key, V value)
         {
         }
 
-        public boolean putIfAbsent(RowCacheKey key, IRowCacheEntry value)
-        {
-            return false;
-        }
-
-        public boolean replace(RowCacheKey key, IRowCacheEntry old, IRowCacheEntry value)
+        public boolean putIfAbsent(K key, V value)
         {
             return false;
         }
 
-        public IRowCacheEntry get(RowCacheKey key)
+        public boolean replace(K key, V old, V value)
+        {
+            return false;
+        }
+
+        public V get(K key)
         {
             return null;
         }
 
-        public void remove(RowCacheKey key)
+        public void remove(K key)
         {
         }
 
@@ -75,17 +75,17 @@ public class NopCacheProvider implements CacheProvider<RowCacheKey, IRowCacheEnt
         {
         }
 
-        public Iterator<RowCacheKey> hotKeyIterator(int n)
+        public Iterator<K> hotKeyIterator(int n)
         {
             return Collections.emptyIterator();
         }
 
-        public Iterator<RowCacheKey> keyIterator()
+        public Iterator<K> keyIterator()
         {
             return Collections.emptyIterator();
         }
 
-        public boolean containsKey(RowCacheKey key)
+        public boolean containsKey(K key)
         {
             return false;
         }

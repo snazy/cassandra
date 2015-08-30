@@ -54,7 +54,7 @@ public class Verifier implements Closeable
     private final RandomAccessReader dataFile;
     private final RandomAccessReader indexFile;
     private final VerifyInfo verifyInfo;
-    private final RowIndexEntry.IndexSerializer rowIndexEntrySerializer;
+    private final RowIndexEntry.Serializer rowIndexEntrySerializer;
 
     private int goodRows;
     private int badRows;
@@ -72,7 +72,7 @@ public class Verifier implements Closeable
         this.cfs = cfs;
         this.sstable = sstable;
         this.outputHandler = outputHandler;
-        this.rowIndexEntrySerializer = sstable.descriptor.version.getSSTableFormat().getIndexSerializer(sstable.metadata, sstable.descriptor.version, sstable.header);
+        this.rowIndexEntrySerializer = sstable.descriptor.version.getSSTableFormat().getIndexSerializer(sstable.descriptor.version, sstable.header);
 
         this.controller = new VerifyController(cfs);
 
