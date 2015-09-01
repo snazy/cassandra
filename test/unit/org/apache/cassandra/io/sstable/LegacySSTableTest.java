@@ -18,18 +18,27 @@
 package org.apache.cassandra.io.sstable;
 
 import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
+import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.Test;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import org.apache.cassandra.SchemaLoader;
 import org.apache.cassandra.Util;
 import org.apache.cassandra.config.CFMetaData;
+import org.apache.cassandra.cql3.QueryProcessor;
+import org.apache.cassandra.cql3.UntypedResultSet;
 import org.apache.cassandra.db.ColumnFamilyStore;
 import org.apache.cassandra.db.DeletionTime;
 import org.apache.cassandra.db.Keyspace;
@@ -57,12 +66,30 @@ import static org.apache.cassandra.utils.ByteBufferUtil.bytes;
  */
 public class LegacySSTableTest
 {
+    private static final Logger logger = LoggerFactory.getLogger(LegacySSTableTest.class);
+
     public static final String LEGACY_SSTABLE_PROP = "legacy-sstable-root";
     public static final String KSNAME = "Keyspace1";
     public static final String CFNAME = "Standard1";
 
     public static Set<String> TEST_DATA;
     public static File LEGACY_SSTABLE_ROOT;
+
+    public static final String[] legacyVersions = {"ma", "la", "ka", "jb"};
+
+    // 1200 chars
+    static final String longString = "0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789" +
+                                     "0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789" +
+                                     "0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789" +
+                                     "0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789" +
+                                     "0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789" +
+                                     "0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789" +
+                                     "0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789" +
+                                     "0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789" +
+                                     "0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789" +
+                                     "0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789" +
+                                     "0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789" +
+                                     "0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789";
 
     @BeforeClass
     public static void defineSchema() throws ConfigurationException
@@ -107,19 +134,19 @@ public class LegacySSTableTest
      * Generates a test SSTable for use in this classes' tests. Uncomment and run against an older build
      * and the output will be copied to a version subdirectory in 'LEGACY_SSTABLE_ROOT'
      *
-    @Test
-    public void buildTestSSTable() throws IOException
-    {
-        // write the output in a version specific directory
-        Descriptor dest = getDescriptor(Descriptor.Version.current_version);
-        assert dest.directory.mkdirs() : "Could not create " + dest.directory + ". Might it already exist?";
+     @Test
+     public void buildTestSSTable() throws IOException
+     {
+     // write the output in a version specific directory
+     Descriptor dest = getDescriptor(Descriptor.Version.current_version);
+     assert dest.directory.mkdirs() : "Could not create " + dest.directory + ". Might it already exist?";
 
-        SSTableReader ssTable = SSTableUtils.prepare().ks(KSNAME).cf(CFNAME).dest(dest).write(TEST_DATA);
-        assert ssTable.descriptor.generation == 0 :
-            "In order to create a generation 0 sstable, please run this test alone.";
-        System.out.println(">>> Wrote " + dest);
-    }
-    */
+     SSTableReader ssTable = SSTableUtils.prepare().ks(KSNAME).cf(CFNAME).dest(dest).write(TEST_DATA);
+     assert ssTable.descriptor.generation == 0 :
+     "In order to create a generation 0 sstable, please run this test alone.";
+     System.out.println(">>> Wrote " + dest);
+     }
+     */
 
     @Test
     public void testStreaming() throws Throwable
@@ -206,6 +233,95 @@ public class LegacySSTableTest
         {
             System.err.println("Failed to read " + version);
             throw e;
+        }
+    }
+
+    @Test
+    public void testLegacyCqlTables() throws Exception
+    {
+        QueryProcessor.executeInternal("CREATE KEYSPACE legacy_tables WITH replication = {'class': 'SimpleStrategy', 'replication_factor': '1'}");
+
+        loadLegacyTables();
+    }
+
+    private void loadLegacyTables() throws IOException
+    {
+        for (String legacyVersion : legacyVersions)
+        {
+            logger.info("Preparing legacy version {}", legacyVersion);
+
+            QueryProcessor.executeInternal(String.format("CREATE TABLE legacy_tables.legacy_%s_simple (pk text PRIMARY KEY, val text)", legacyVersion));
+            QueryProcessor.executeInternal(String.format("CREATE TABLE legacy_tables.legacy_%s_simple_counter (pk text PRIMARY KEY, val counter)", legacyVersion));
+            QueryProcessor.executeInternal(String.format("CREATE TABLE legacy_tables.legacy_%s_clust (pk text, ck text, val text, PRIMARY KEY (pk, ck))", legacyVersion));
+            QueryProcessor.executeInternal(String.format("CREATE TABLE legacy_tables.legacy_%s_clust_counter (pk text, ck text, val counter, PRIMARY KEY (pk, ck))", legacyVersion));
+
+            loadLegacyTable("legacy_%s_simple", legacyVersion);
+            loadLegacyTable("legacy_%s_simple_counter", legacyVersion);
+            loadLegacyTable("legacy_%s_clust", legacyVersion);
+            loadLegacyTable("legacy_%s_clust_counter", legacyVersion);
+
+            for (int ck = 0; ck < 50; ck++)
+            {
+                String ckValue = Integer.toString(ck) + longString;
+                for (int pk = 0; pk < 5; pk++)
+                {
+                    String pkValue = Integer.toString(pk);
+                    UntypedResultSet rs;
+                    if (ck == 0)
+                    {
+                        rs = QueryProcessor.executeInternal(String.format("SELECT val FROM legacy_tables.legacy_%s_simple WHERE pk=?", legacyVersion), pkValue);
+                        Assert.assertNotNull(rs);
+                        Assert.assertEquals(1, rs.size());
+                        Assert.assertEquals("foo bar baz", rs.one().getString("val"));
+                        rs = QueryProcessor.executeInternal(String.format("SELECT val FROM legacy_tables.legacy_%s_simple_counter WHERE pk=?", legacyVersion), pkValue);
+                        Assert.assertNotNull(rs);
+                        Assert.assertEquals(1, rs.size());
+                        Assert.assertEquals(1L, rs.one().getLong("val"));
+                    }
+                    rs = QueryProcessor.executeInternal(String.format("SELECT val FROM legacy_tables.legacy_%s_clust WHERE pk=? AND ck=?", legacyVersion), pkValue, ckValue);
+                    Assert.assertNotNull(rs);
+                    Assert.assertEquals(1, rs.size());
+                    Assert.assertEquals(128, rs.one().getString("val").length());
+                    rs = QueryProcessor.executeInternal(String.format("SELECT val FROM legacy_tables.legacy_%s_clust_counter WHERE pk=? AND ck=?", legacyVersion), pkValue, ckValue);
+                    Assert.assertNotNull(rs);
+                    Assert.assertEquals(1, rs.size());
+                    Assert.assertEquals(1L, rs.one().getLong("val"));
+                }
+            }
+        }
+    }
+
+    private void loadLegacyTable(String tablePattern, String legacyVersion) throws IOException
+    {
+        String table = String.format(tablePattern, legacyVersion);
+
+        logger.info("Loading legacy table {}", table);
+
+        ColumnFamilyStore cfs = Keyspace.open("legacy_tables").getColumnFamilyStore(table);
+
+        for (File cfDir : cfs.getDirectories().getCFDirectories())
+        {
+            copySstables(legacyVersion, table, cfDir);
+        }
+
+        cfs.loadNewSSTables();
+    }
+
+    private static void copySstables(String legacyVersion, String table, File cfDir) throws IOException
+    {
+        byte[] buf = new byte[65536];
+
+        for (File file : new File(LEGACY_SSTABLE_ROOT, String.format("%s/legacy_tables/%s", legacyVersion, table)).listFiles())
+        {
+            if (file.isFile())
+            {
+                File target = new File(cfDir, file.getName());
+                int rd;
+                FileInputStream is = new FileInputStream(file);
+                FileOutputStream os = new FileOutputStream(target);
+                while ((rd = is.read(buf)) >= 0)
+                    os.write(buf, 0, rd);
+            }
         }
     }
 }
