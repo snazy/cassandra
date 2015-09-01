@@ -50,6 +50,7 @@ import org.apache.cassandra.utils.ByteBufferUtil;
  * (long) DeletionTime.markedForDeletionAt
  *  (int) number of IndexInfo objects
  *    (*) serialized IndexInfo objects, see below
+ *    (*) offsets of serialized IndexInfo objects, since version "ma" (3.0)
  * }
  * <p>
  * Each {@link IndexInfo} object is serialized as follows:
@@ -229,32 +230,9 @@ public class RowIndexEntry
             int size = in.readInt();
             if (size > 0)
             {
-                if (nativeBinaryCompatible(version))
-                {
-                    ByteBuffer buffer = ByteBuffer.allocate(size);
-                    in.readFully(buffer.array());
-                    return new IndexedEntry(clusteringPrefixSerializer(version, header), position, buffer, header);
-                }
-
-                // convert from old format - TODO untested code, add upgrade tests (or are there some??)
-
-                DataOutputBuffer output = new DataOutputBuffer(4096);
-
-                DeletionTime deletionTime = DeletionTime.serializer.deserialize(in);
-                int entries = in.readInt();
-
-                DeletionTime.serializer.serialize(deletionTime, output);
-                output.writeInt(entries);
-
-                IndexInfo.Serializer idxDeserializer = IndexInfo.indexSerializer(version);
-                ISerializer<ClusteringPrefix> prefixSer = clusteringPrefixSerializer(BigFormat.latestVersion, header);
-                for (int i = 0; i < entries; i++)
-                {
-                    IndexInfo info = idxDeserializer.deserialize(in, header);
-                    IndexInfo.Serializer.serialize(info, output, header, BigFormat.latestVersion, prefixSer);
-                }
-
-                return new IndexedEntry(clusteringPrefixSerializer(BigFormat.latestVersion, header), position, output.buffer(), header);
+                ByteBuffer buffer = ByteBuffer.allocate(size);
+                in.readFully(buffer.array());
+                return new IndexedEntry(version, position, buffer, header);
             }
             else
             {
@@ -284,20 +262,53 @@ public class RowIndexEntry
     private static class IndexedEntry extends RowIndexEntry
     {
         private final SerializationHeader header;
+
         private final ISerializer<ClusteringPrefix> clusteringSerializer;
+        private final IndexInfo.Serializer indexInfoSerializer;
+
+        // binary representation of serialized RowIndexEntry.IndexedEntry
         private final ByteBuffer buffer;
-        private final int[] indexInfoOffsets;
+        // offset to offsets of IndexInfo objects in this.indexInfoOffsets
+        private final int indexInfoOffsetsOffset;
+        // buffer containing IndexInfo offsets - for pre-3.0 indexes this is a separate buffer, as pre-3.0
+        // indexes do not contain offsets to IndexInfo objects
+        private final ByteBuffer indexInfoOffsets;
 
         private int currentIndex = -1;
         private IndexInfo currentInfo;
 
-        private IndexedEntry(ISerializer<ClusteringPrefix> clusteringSerializer, long position, ByteBuffer buffer, SerializationHeader header)
+        private IndexedEntry(Version version, long position, ByteBuffer buffer,
+                             SerializationHeader header)
         {
             super(position);
             this.header = header;
-            this.clusteringSerializer = clusteringSerializer;
+            this.clusteringSerializer = clusteringPrefixSerializer(version, header);
+            this.indexInfoSerializer = IndexInfo.indexSerializer(version);
             this.buffer = buffer;
-            this.indexInfoOffsets = new int[columnsCount()];
+
+            // Reuse given buffer if it contains the offsets to IndexInfo objects (since 3.0, version "ma"),
+            // use a "virgin" buffer for pre-3.0 indexes.
+            ByteBuffer indexInfoOffsets;
+            int indexInfoOffsetsOffset;
+            if (version.hasIndexInfoOffsets())
+            {
+                indexInfoOffsets = buffer;
+                indexInfoOffsetsOffset = buffer.limit() - columnsCount() * TypeSizes.sizeof(0);
+            }
+            else
+            {
+                indexInfoOffsets = ByteBuffer.allocate(columnsCount() * TypeSizes.sizeof(0));
+                indexInfoOffsets.limit(indexInfoOffsets.capacity());
+                indexInfoOffsetsOffset = 0;
+            }
+            this.indexInfoOffsets = indexInfoOffsets;
+            this.indexInfoOffsetsOffset = indexInfoOffsetsOffset;
+        }
+
+        private boolean hasIndexInfoOffsets()
+        {
+            // this is implicit - see assignment of indexInfoOffsets in constructor
+            return indexInfoOffsets == buffer;
         }
 
         @Override
@@ -312,58 +323,86 @@ public class RowIndexEntry
             return buffer.getInt((int) DeletionTime.serializer.serializedSize(null));
         }
 
+        private int indexInfoOffset(int indexIdx)
+        {
+            return indexInfoOffsets.getInt(indexInfoOffsetsOffset + indexIdx * 4);
+        }
+
+        private void indexInfoOffset(int indexIdx, int offset)
+        {
+            indexInfoOffsets.putInt(indexInfoOffsetsOffset + indexIdx * 4, offset);
+        }
+
         public IndexInfo indexInfo(int indexIdx)
+        {
+            return indexInfo(indexIdx, true);
+        }
+
+        private IndexInfo indexInfo(int indexIdx, boolean deserialize)
         {
             // This method is often called with the same indexIdx argument.
             // (see org.apache.cassandra.db.columniterator.AbstractSSTableIterator.IndexState.currentIndex())
             if (indexIdx == currentIndex && currentInfo != null)
                 return currentInfo;
 
-            ByteBuffer buf = buffer.duplicate();
 
             try
             {
+                ByteBuffer buf = buffer.duplicate();
                 DataInputBuffer input = new DataInputBuffer(buf, false);
 
-                int offset = indexInfoOffsets[indexIdx];
+                int offset = indexInfoOffset(indexIdx);
                 if (offset > 0)
                 {
-                    // we already know the offset of the requested IndexInfo, so just "seek" and deserialize
+                    // We already know the offset of the requested IndexInfo, so just "seek" and deserialize.
+                    // This is the only possible code path for 3.0 sstable format "ma".
                     buf.position(offset);
                 }
                 else
                 {
+                    // We do not know the index of the requested IndexInfo object - i.e. it is necessary
+                    // to scan the serialized index. Discovered IndexInfo offsets will be cached.
+                    // This is the only possible code path for pre-3.0 sstable formats.
+
                     int i = 0;
-                    while (i < indexIdx && indexInfoOffsets[i] != 0)
+                    // skip already discovered offsets
+                    while (i < indexIdx && indexInfoOffset(i) != 0)
                         i++;
 
                     // "seek" to last known IndexInfo
                     if (i == 0)
-                        offset = (int) (TypeSizes.sizeof(0)/*columnsCount*/ + DeletionTime.serializer.serializedSize(null));
+                        offset = firstIndexInfoOffset();
                     else
                     {
                         i--;
-                        offset = indexInfoOffsets[i];
+                        offset = indexInfoOffset(i);
                     }
                     buf.position(offset);
 
                     // need to read through all IndexInfo objects until we reach the requested one
                     for (; ; i++)
                     {
-                        indexInfoOffsets[i] = buf.position();
+                        // save IndexInfo offset
+                        indexInfoOffset(i, buf.position());
 
                         if (i == indexIdx)
                             break;
 
-                        IndexInfo.latestVersionSerializer.skip(input, header, clusteringSerializer);
+                        indexInfoSerializer.skip(input, header, clusteringSerializer);
                     }
                 }
 
-                IndexInfo info = IndexInfo.latestVersionSerializer.deserialize(input, clusteringSerializer);
+                if (!deserialize)
+                    // used by serialize() methods via ensureIndexInfoOffsets() to calculate all IndexInfo offsets
+                    return null;
 
-                if (indexInfoOffsets.length > indexIdx + 1)
-                    // we know the offset of the next IndexInfo - so store it
-                    indexInfoOffsets[indexIdx + 1] = buf.position();
+                IndexInfo info = indexInfoSerializer.deserialize(input, clusteringSerializer);
+
+                if (!hasIndexInfoOffsets() && columnsCount() > indexIdx + 1)
+                {
+                    // We know the offset of the next IndexInfo - so store it. (for pre-3.0 sstables)
+                    indexInfoOffset(indexIdx + 1, buf.position());
+                }
 
                 currentIndex = indexIdx;
                 currentInfo = info;
@@ -375,11 +414,30 @@ public class RowIndexEntry
             }
         }
 
+        private static int firstIndexInfoOffset()
+        {
+            return (int) (TypeSizes.sizeof(0)/*columnsCount*/ + DeletionTime.serializer.serializedSize(null));
+        }
+
+        private void ensureIndexInfoOffsets()
+        {
+            indexInfo(columnsCount() - 1, false);
+        }
+
         public void serialize(ByteBuffer out)
         {
+            // always serialized using latest version
+
             out.putLong(position);
             out.putInt(buffer.limit());
             out.put(buffer);
+
+            if (!hasIndexInfoOffsets())
+            {
+                // compute all IndexInfo offsets and serialize them, if not already in this.buffer
+                ensureIndexInfoOffsets();
+                out.put(indexInfoOffsets);
+            }
         }
 
         void serialize(Version version, DataOutputPlus out) throws IOException
@@ -389,7 +447,31 @@ public class RowIndexEntry
             // note: can only serialize with latest version
 
             out.writeInt(buffer.limit());
-            out.write(buffer.array(), 0, buffer.limit());
+
+            if (version.hasIndexInfoOffsets())
+            {
+                // serialize using a version with IndexInfo offsets (since 3.0)
+
+                out.write(buffer);
+
+                if (!hasIndexInfoOffsets())
+                {
+                    // compute all IndexInfo offsets and serialize them, if not already in this.buffer
+                    ensureIndexInfoOffsets();
+                    out.write(indexInfoOffsets);
+                }
+            }
+            else
+            {
+                // serialize to pre-3.0 index
+
+                if (hasIndexInfoOffsets())
+                    // Is this reachable at all (read from 3.0+ and write to pre-3.0)?
+                    out.write(buffer.array(), 0, buffer.limit() - columnsCount() * 4);
+                else
+                    // No IndexInfo offsets read and target version does not support IndexInfo offsets.
+                    out.write(buffer);
+            }
         }
 
         public int nativeSize()
@@ -424,9 +506,11 @@ public class RowIndexEntry
 
         private final long position;
         private final DeletionTime deletionTime;
-        private DataOutputBuffer bufferOut;
         private int columnsIndexCount;
         private IndexInfo firstIndex;
+
+        private DataOutputBuffer bufferOut;
+        private DataOutputBuffer indexInfoOffsets;
 
         Builder(long position,
                 DeletionTime deletionTime,
@@ -490,18 +574,24 @@ public class RowIndexEntry
                 else
                 {
                     bufferOut = new DataOutputBuffer(4096);
+                    indexInfoOffsets = new DataOutputBuffer(1024);
 
                     DeletionTime.serializer.serialize(deletionTime, bufferOut); // placeholder
                     bufferOut.writeInt(0); // placeholder
 
+                    indexInfoOffsets.writeInt(bufferOut.getLength());
                     IndexInfo.Serializer.serialize(firstIndex, bufferOut, header,
                                                    BigFormat.latestVersion, clusteringSerializer);
+
                     firstIndex = null;
                 }
             }
             if (bufferOut != null)
+            {
+                indexInfoOffsets.writeInt(bufferOut.getLength());
                 IndexInfo.Serializer.serialize(cIndexInfo, bufferOut, header,
                                                BigFormat.latestVersion, clusteringSerializer);
+            }
 
             columnsIndexCount ++;
             firstClustering = null;
@@ -551,20 +641,15 @@ public class RowIndexEntry
             // the beginning of the row anyway, so we might as well read the tombstone there as well.
             if (columnsIndexCount > 1)
             {
+                // add indexInfoOffsets to end of buffer
+                bufferOut.write(indexInfoOffsets.buffer());
                 ByteBuffer buf = bufferOut.buffer();
                 buf.putInt((int) DeletionTime.serializer.serializedSize(null), columnsIndexCount);
-                return new IndexedEntry(clusteringSerializer, position, buf, header);
+                return new IndexedEntry(BigFormat.latestVersion, position, buf, header);
             }
             else
                 return new RowIndexEntry(position);
         }
-    }
-
-    static boolean nativeBinaryCompatible(Version version)
-    {
-        return BigFormat.latestVersion.equals(version) ||
-               (BigFormat.latestVersion.storeRows() == version.storeRows() &&
-                BigFormat.latestVersion.correspondingMessagingVersion() == version.correspondingMessagingVersion());
     }
 
     private static final class ClusteringPrefixSerializer implements ISerializer<ClusteringPrefix>

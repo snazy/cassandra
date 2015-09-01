@@ -24,6 +24,7 @@ import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.cql3.CQLTester;
 import org.apache.cassandra.db.rows.EncodingStats;
 import org.apache.cassandra.db.partitions.*;
+import org.apache.cassandra.io.sstable.format.Version;
 import org.apache.cassandra.io.sstable.format.big.BigFormat;
 import org.apache.cassandra.io.util.DataOutputBuffer;
 import org.apache.cassandra.io.util.SequentialWriter;
@@ -67,6 +68,7 @@ public class RowIndexEntryTest extends CQLTester
         assertTrue(withIndex.columnsCount() >= 3);
 
         serializer.serialize(withIndex, buffer);
-        assertEquals(169, buffer.getLength()); // as of Cassandra 3.0
+        assertEquals(169 + withIndex.columnsCount() * 4, // C* 3.0: raw length is 169 bytes + 4 bytes per IndexInfo offset
+                     buffer.getLength());
     }
 }
