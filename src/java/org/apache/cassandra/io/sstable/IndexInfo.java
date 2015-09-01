@@ -20,6 +20,7 @@ package org.apache.cassandra.io.sstable;
 
 import java.io.IOException;
 import java.util.Arrays;
+import java.util.Objects;
 import java.util.concurrent.atomic.AtomicReference;
 
 import com.google.common.base.MoreObjects;
@@ -62,6 +63,23 @@ public class IndexInfo
         this.offset = offset;
         this.width = width;
         this.endOpenMarker = endOpenMarker;
+    }
+
+    public boolean equals(Object o)
+    {
+        if (this == o) return true;
+        if (o == null || getClass() != o.getClass()) return false;
+        IndexInfo indexInfo = (IndexInfo) o;
+        return width == indexInfo.width &&
+               offset == indexInfo.offset &&
+               Objects.equals(lastName, indexInfo.lastName) &&
+               Objects.equals(firstName, indexInfo.firstName) &&
+               Objects.equals(endOpenMarker, indexInfo.endOpenMarker);
+    }
+
+    public int hashCode()
+    {
+        return Objects.hash(width, lastName, firstName, offset, endOpenMarker);
     }
 
     public static Serializer indexSerializer(Version version)
@@ -135,6 +153,8 @@ public class IndexInfo
 
         public static void serialize(IndexInfo info, DataOutputPlus out, SerializationHeader header, Version version, ISerializer<ClusteringPrefix> clusteringSerializer) throws IOException
         {
+            assert version.storeRows() : "Can only serialize using latest version";
+
             clusteringSerializer.serialize(info.getFirstName(), out);
             clusteringSerializer.serialize(info.getLastName(), out);
             out.writeLong(info.getOffset());

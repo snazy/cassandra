@@ -170,11 +170,6 @@ public final class BigFormat implements SSTableFormat
          */
         private final boolean hasCompactionAncestors;
 
-        /**
-         * CASSANDRA-9738 offsets of {@link org.apache.cassandra.io.sstable.IndexInfo} objects.
-         */
-        private final boolean hasIndexInfoOffsets;
-
         private BigVersion(String version)
         {
             super(instance, version);
@@ -206,7 +201,6 @@ public final class BigFormat implements SSTableFormat
             correspondingMessagingVersion = storeRows
                                           ? MessagingService.VERSION_30
                                           : MessagingService.VERSION_21;
-            hasIndexInfoOffsets = version.compareTo("ma") >= 0;
         }
 
         @Override
@@ -279,11 +273,6 @@ public final class BigFormat implements SSTableFormat
         public int correspondingMessagingVersion()
         {
             return correspondingMessagingVersion;
-        }
-
-        public boolean hasIndexInfoOffsets()
-        {
-            return hasIndexInfoOffsets;
         }
 
         @Override

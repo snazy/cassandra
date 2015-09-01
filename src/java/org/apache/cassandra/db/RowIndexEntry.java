@@ -181,6 +181,11 @@ public class RowIndexEntry
                 startIdx = lastIndex;
             }
         }
+
+        // NOTE: if we would know the kind of distribution of the individual IndexInfo objects
+        // (i.e. how "big" the increment if the individual IndexInfo.firstName is - whether it's
+        // a constant, logarithmic, exponential distribution), we could search faster.
+
         int index = binarySearch(target, comparator.indexComparator(reversed), startIdx, endIdx);
         return index < 0 ? -index - (reversed ? 2 : 1) : index;
     }
@@ -288,19 +293,20 @@ public class RowIndexEntry
 
             // Reuse given buffer if it contains the offsets to IndexInfo objects (since 3.0, version "ma"),
             // use a "virgin" buffer for pre-3.0 indexes.
+// TODO keep following code as we _will_ need the distinction later
             ByteBuffer indexInfoOffsets;
             int indexInfoOffsetsOffset;
-            if (version.hasIndexInfoOffsets())
+//            if (version.hasIndexInfoOffsets())
             {
                 indexInfoOffsets = buffer;
                 indexInfoOffsetsOffset = buffer.limit() - columnsCount() * TypeSizes.sizeof(0);
             }
-            else
-            {
-                indexInfoOffsets = ByteBuffer.allocate(columnsCount() * TypeSizes.sizeof(0));
-                indexInfoOffsets.limit(indexInfoOffsets.capacity());
-                indexInfoOffsetsOffset = 0;
-            }
+//            else
+//            {
+//                indexInfoOffsets = ByteBuffer.allocate(columnsCount() * TypeSizes.sizeof(0));
+//                indexInfoOffsets.limit(indexInfoOffsets.capacity());
+//                indexInfoOffsetsOffset = 0;
+//            }
             this.indexInfoOffsets = indexInfoOffsets;
             this.indexInfoOffsetsOffset = indexInfoOffsetsOffset;
         }
@@ -442,13 +448,16 @@ public class RowIndexEntry
 
         void serialize(Version version, DataOutputPlus out) throws IOException
         {
+            assert version.storeRows() : "Can only serialize using latest version";
+
             out.writeLong(position);
 
-            // note: can only serialize with latest version
+            // serialize using a version with IndexInfo offsets (since 3.0)
 
             out.writeInt(buffer.limit());
 
-            if (version.hasIndexInfoOffsets())
+// TODO keep following, commented code as we _will_ need the distinction later
+//            if (version.hasIndexInfoOffsets())
             {
                 // serialize using a version with IndexInfo offsets (since 3.0)
 
@@ -461,17 +470,17 @@ public class RowIndexEntry
                     out.write(indexInfoOffsets);
                 }
             }
-            else
-            {
-                // serialize to pre-3.0 index
-
-                if (hasIndexInfoOffsets())
-                    // Is this reachable at all (read from 3.0+ and write to pre-3.0)?
-                    out.write(buffer.array(), 0, buffer.limit() - columnsCount() * 4);
-                else
-                    // No IndexInfo offsets read and target version does not support IndexInfo offsets.
-                    out.write(buffer);
-            }
+//            else
+//            {
+//                // serialize to pre-3.0 index
+//
+//                if (hasIndexInfoOffsets())
+//                    // Is this reachable at all (read from 3.0+ and write to pre-3.0)?
+//                    out.write(buffer.array(), 0, buffer.limit() - columnsCount() * 4);
+//                else
+//                    // No IndexInfo offsets read and target version does not support IndexInfo offsets.
+//                    out.write(buffer);
+//            }
         }
 
         public int nativeSize()

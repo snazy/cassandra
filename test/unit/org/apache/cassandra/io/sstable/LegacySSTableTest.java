@@ -155,6 +155,8 @@ public class LegacySSTableTest
 
         for (File version : LEGACY_SSTABLE_ROOT.listFiles())
         {
+            if (!new File(LEGACY_SSTABLE_ROOT + File.separator + version.getName() + File.separator + KSNAME).isDirectory())
+                continue;
             if (Version.validate(version.getName()) && SSTableFormat.Type.LEGACY.info.getVersion(version.getName()).isCompatibleForStreaming())
                 testStreaming(version.getName());
         }
@@ -197,6 +199,8 @@ public class LegacySSTableTest
 
         for (File version : LEGACY_SSTABLE_ROOT.listFiles())
         {
+            if (!new File(LEGACY_SSTABLE_ROOT + File.separator + version.getName() + File.separator + KSNAME).isDirectory())
+                continue;
             if (Version.validate(version.getName()) && SSTableFormat.Type.LEGACY.info.getVersion(version.getName()).isCompatible())
             {
                 notSkipped = true;
