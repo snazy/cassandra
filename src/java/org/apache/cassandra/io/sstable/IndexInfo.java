@@ -24,6 +24,7 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import com.google.common.base.MoreObjects;
 
+import org.apache.cassandra.config.CFMetaData;
 import org.apache.cassandra.db.ClusteringPrefix;
 import org.apache.cassandra.db.DeletionTime;
 import org.apache.cassandra.db.RowIndexEntry;
@@ -197,8 +198,19 @@ public class IndexInfo
     {
         return MoreObjects.toStringHelper(this)
                           .add("width", width)
-                          .add("lastName", lastName)
                           .add("firstName", firstName)
+                          .add("lastName", lastName)
+                          .add("offset", offset)
+                          .add("endOpenMarker", endOpenMarker)
+                          .toString();
+    }
+
+    public String toString(CFMetaData cfMetaData)
+    {
+        return MoreObjects.toStringHelper(this)
+                          .add("width", width)
+                          .add("firstName", firstName!=null ? firstName.toString(cfMetaData) : null)
+                          .add("lastName", lastName!=null ? lastName.toString(cfMetaData) : null)
                           .add("offset", offset)
                           .add("endOpenMarker", endOpenMarker)
                           .toString();
