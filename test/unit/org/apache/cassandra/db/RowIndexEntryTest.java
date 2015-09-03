@@ -19,9 +19,12 @@ package org.apache.cassandra.db;
 
 import java.io.File;
 import java.io.IOException;
+import java.nio.ByteBuffer;
 import java.util.Collections;
 import java.util.Iterator;
+import java.util.List;
 
+import org.junit.Assert;
 import org.junit.Test;
 
 import org.apache.cassandra.Util;
@@ -32,6 +35,7 @@ import org.apache.cassandra.cql3.CQLTester;
 import org.apache.cassandra.db.filter.ColumnFilter;
 import org.apache.cassandra.db.marshal.AbstractType;
 import org.apache.cassandra.db.marshal.Int32Type;
+import org.apache.cassandra.db.marshal.LongType;
 import org.apache.cassandra.db.marshal.UTF8Type;
 import org.apache.cassandra.db.partitions.ImmutableBTreePartition;
 import org.apache.cassandra.db.partitions.PartitionUpdate;
@@ -48,6 +52,7 @@ import org.apache.cassandra.io.sstable.format.big.BigFormat;
 import org.apache.cassandra.io.util.DataInputBuffer;
 import org.apache.cassandra.io.util.DataOutputBuffer;
 import org.apache.cassandra.io.util.SequentialWriter;
+import org.apache.cassandra.utils.FBUtilities;
 
 import static junit.framework.Assert.assertEquals;
 import static junit.framework.Assert.assertFalse;
@@ -63,6 +68,61 @@ public class RowIndexEntryTest extends CQLTester
     private static final Version[] VERSIONS_STORE_ROWS = {
                                               BigFormat.instance.getVersion("ma")
     };
+
+
+    private static final List<AbstractType<?>> clusterTypes = Collections.<AbstractType<?>>singletonList(LongType.instance);
+    private static final ClusteringComparator comp = new ClusteringComparator(clusterTypes);
+    private static ClusteringPrefix cn(long l)
+    {
+        return Util.clustering(comp, l);
+    }
+
+    @Test
+    public void testArtificialIndexOf() throws IOException
+    {
+        DeletionTime deletionInfo = new DeletionTime(FBUtilities.timestampMicros(), FBUtilities.nowInSeconds());
+
+        DataOutputBuffer dob = new DataOutputBuffer();
+        dob.writeLong(42L);
+        dob.writeInt(0);
+        DeletionTime.serializer.serialize(DeletionTime.LIVE, dob);
+        SerializationHeader header = new SerializationHeader(null, clusterTypes, null, null, null);
+        dob.writeInt(3);
+        int off0 = dob.getLength() - 12;
+        IndexInfo.latestVersionSerializer.serialize(new IndexInfo(cn(0L), cn(5L), 0, 0, deletionInfo), dob, header);
+        int off1 = dob.getLength() - 12;
+        IndexInfo.latestVersionSerializer.serialize(new IndexInfo(cn(10L), cn(15L), 0, 0, deletionInfo), dob, header);
+        int off2 = dob.getLength() - 12;
+        IndexInfo.latestVersionSerializer.serialize(new IndexInfo(cn(20L), cn(25L), 0, 0, deletionInfo), dob, header);
+        dob.writeInt(off0);
+        dob.writeInt(off1);
+        dob.writeInt(off2);
+        ByteBuffer buf = dob.buffer();
+        buf.putInt(8, buf.limit() - 12);
+
+        RowIndexEntry rie = new RowIndexEntry.Serializer(BigFormat.latestVersion, header).deserialize(new DataInputBuffer(buf, false));
+
+        Assert.assertEquals(0, rie.indexOf(cn(-1L), comp, false, -1));
+        Assert.assertEquals(0, rie.indexOf(cn(5L), comp, false, -1));
+        Assert.assertEquals(1, rie.indexOf(cn(12L), comp, false, -1));
+        Assert.assertEquals(2, rie.indexOf(cn(17L), comp, false, -1));
+        Assert.assertEquals(3, rie.indexOf(cn(100L), comp, false, -1));
+        Assert.assertEquals(3, rie.indexOf(cn(100L), comp, false, 0));
+        Assert.assertEquals(3, rie.indexOf(cn(100L), comp, false, 1));
+        Assert.assertEquals(3, rie.indexOf(cn(100L), comp, false, 2));
+        Assert.assertEquals(3, rie.indexOf(cn(100L), comp, false, 3));
+
+        Assert.assertEquals(-1, rie.indexOf(cn(-1L), comp, true, -1));
+        Assert.assertEquals(0, rie.indexOf(cn(5L), comp, true, 3));
+        Assert.assertEquals(0, rie.indexOf(cn(5L), comp, true, 2));
+        Assert.assertEquals(1, rie.indexOf(cn(17L), comp, true, 3));
+        Assert.assertEquals(2, rie.indexOf(cn(100L), comp, true, 3));
+        Assert.assertEquals(2, rie.indexOf(cn(100L), comp, true, 4));
+        Assert.assertEquals(1, rie.indexOf(cn(12L), comp, true, 3));
+        Assert.assertEquals(1, rie.indexOf(cn(12L), comp, true, 2));
+        Assert.assertEquals(1, rie.indexOf(cn(100L), comp, true, 1));
+        Assert.assertEquals(2, rie.indexOf(cn(100L), comp, true, 2));
+    }
 
     @Test
     public void testIndexOf() throws Throwable
