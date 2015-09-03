@@ -34,6 +34,7 @@ import org.apache.cassandra.cql3.CQL3Type;
 import org.apache.cassandra.cql3.Term;
 import org.apache.cassandra.db.TypeSizes;
 import org.apache.cassandra.exceptions.SyntaxException;
+import org.apache.cassandra.io.util.DataInputBuffer;
 import org.apache.cassandra.serializers.TypeSerializer;
 import org.apache.cassandra.serializers.MarshalException;
 
@@ -384,6 +385,21 @@ public abstract class AbstractType<T> implements Comparator<ByteBuffer>
             return ByteBufferUtil.read(in, length);
         else
             return ByteBufferUtil.readWithVIntLength(in);
+    }
+
+    /**
+     * Returns a {@link ByteBuffer} instance that shares the backing array/off-heap area used
+     * by {@code in}. The returned buffed has the same position as the {@code ByteBuffer} used
+     * in the input and limit set to be able to read the value. The input's position is set
+     * after this type's value.
+     */
+    public ByteBuffer readSharedValue(DataInputBuffer in) throws IOException
+    {
+        int length = valueLengthIfFixed();
+        if (length >= 0)
+            return ByteBufferUtil.readShared(in, length);
+        else
+            return ByteBufferUtil.readSharedWithVIntLength(in);
     }
 
     public void skipValue(DataInputPlus in) throws IOException

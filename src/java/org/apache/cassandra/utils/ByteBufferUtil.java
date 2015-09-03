@@ -34,6 +34,7 @@ import java.util.UUID;
 
 import net.nicoulaj.compilecommand.annotations.Inline;
 import org.apache.cassandra.db.TypeSizes;
+import org.apache.cassandra.io.util.DataInputBuffer;
 import org.apache.cassandra.io.util.DataInputPlus;
 import org.apache.cassandra.io.util.DataOutputPlus;
 import org.apache.cassandra.io.util.FileDataInput;
@@ -77,7 +78,7 @@ import org.apache.cassandra.io.util.FileUtils;
  * }
  *
  */
-public class ByteBufferUtil
+public final class ByteBufferUtil
 {
     public static final ByteBuffer EMPTY_BYTE_BUFFER = ByteBuffer.wrap(new byte[0]);
     /** Represents an unset value in bound variables */
@@ -339,6 +340,18 @@ public class ByteBufferUtil
         return ByteBufferUtil.read(in, length);
     }
 
+    /**
+     * Calls {@link #readShared(DataInputBuffer, int)} with {@code length} read as a vint.
+     */
+    public static ByteBuffer readSharedWithVIntLength(DataInputBuffer in) throws IOException
+    {
+        int length = (int)in.readVInt();
+        if (length < 0)
+            throw new IOException("Corrupt (negative) value length encountered");
+
+        return readShared(in, length);
+    }
+
     public static int serializedSizeWithLength(ByteBuffer buffer)
     {
         int size = buffer.remaining();
@@ -404,6 +417,24 @@ public class ByteBufferUtil
         byte[] buff = new byte[length];
         in.readFully(buff);
         return ByteBuffer.wrap(buff);
+    }
+
+    /**
+     * Returns a {@link ByteBuffer} instance that shares the backing array/off-heap area used
+     * by {@code in}. The returned buffed has the same position as the {@code ByteBuffer} used
+     * in the input and limit set position+length. The input's position is incremented by {@code length}.
+     */
+    public static ByteBuffer readShared(DataInputBuffer in, int length)
+    {
+        if (length == 0)
+            return EMPTY_BYTE_BUFFER;
+
+        ByteBuffer src = in.buffer();
+        int end = src.position() + length;
+        ByteBuffer buf = src.duplicate();
+        src.position(end);
+        buf.limit(end);
+        return buf;
     }
 
     public static byte[] readBytes(DataInput in, int length) throws IOException

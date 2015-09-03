@@ -525,7 +525,7 @@ public class RowIndexEntry
                     while (i < limit)
                     {
                         AbstractType<?> type = types.get(i);
-                        ByteBuffer value = ClusteringPrefix.Serializer.deserializeValuePartWithoutSize(input, type, i, header);
+                        ByteBuffer value = ClusteringPrefix.Serializer.deserializeSharedValueWithoutSize(input, type, i, header);
                         int cmp = compareComponent(i, c1.get(i), value, type);
                         if (cmp != 0)
                             return cmp;

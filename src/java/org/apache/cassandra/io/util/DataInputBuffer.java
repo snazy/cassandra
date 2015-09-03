@@ -60,6 +60,11 @@ public class DataInputBuffer extends NIODataInputStream
         super(ByteBuffer.wrap(buffer));
     }
 
+    public ByteBuffer buffer()
+    {
+        return super.buffer();
+    }
+
     @Override
     protected int readNext() throws IOException
     {

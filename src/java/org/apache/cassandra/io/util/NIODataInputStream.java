@@ -104,6 +104,11 @@ public class NIODataInputStream extends InputStream implements DataInputPlus, Cl
         this(buf, false);
     }
 
+    protected ByteBuffer buffer()
+    {
+        return buf;
+    }
+
     @Override
     public void readFully(byte[] b) throws IOException
     {

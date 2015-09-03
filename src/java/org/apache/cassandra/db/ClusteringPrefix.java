@@ -26,6 +26,7 @@ import org.apache.cassandra.cache.IMeasurableMemory;
 import org.apache.cassandra.config.CFMetaData;
 import org.apache.cassandra.db.rows.*;
 import org.apache.cassandra.db.marshal.AbstractType;
+import org.apache.cassandra.io.util.DataInputBuffer;
 import org.apache.cassandra.io.util.DataInputPlus;
 import org.apache.cassandra.io.util.DataOutputPlus;
 import org.apache.cassandra.utils.ByteBufferUtil;
@@ -353,18 +354,20 @@ public interface ClusteringPrefix extends IMeasurableMemory, Clusterable
                 int limit = Math.min(size, offset + 32);
                 while (offset < limit)
                 {
-                    values[offset] = deserializeValuePartWithoutSize(in, types.get(offset), offset, header);
+                    values[offset] = isNull(header, offset)
+                                     ? null
+                                     : (isEmpty(header, offset) ? ByteBufferUtil.EMPTY_BYTE_BUFFER : types.get(offset).readValue(in));
                     offset++;
                 }
             }
             return values;
         }
 
-        static ByteBuffer deserializeValuePartWithoutSize(DataInputPlus in, AbstractType<?> type, int offset, long header) throws IOException
+        static ByteBuffer deserializeSharedValueWithoutSize(DataInputBuffer buffer, AbstractType<?> type, int offset, long header) throws IOException
         {
             return isNull(header, offset)
-                             ? null
-                             : (isEmpty(header, offset) ? ByteBufferUtil.EMPTY_BYTE_BUFFER : type.readValue(in));
+                   ? null
+                   : (isEmpty(header, offset) ? ByteBufferUtil.EMPTY_BYTE_BUFFER : type.readSharedValue(buffer));
         }
 
         void skipValuesWithoutSize(DataInputPlus in, int size, int version, List<AbstractType<?>> types) throws IOException
