@@ -492,7 +492,7 @@ public class RowIndexEntry
         private static int compare(ClusteringPrefix c1, DataInputBuffer input, List<AbstractType<?>> clusteringTypes) throws IOException
         {
             // TODO also remove this deserialization
-            ClusteringPrefix c2 = deserialize(input, MessagingService.current_version, clusteringTypes);
+            ClusteringPrefix c2 = deserialize(input, clusteringTypes);
 
 
             int s1 = c1.size();
@@ -512,15 +512,25 @@ public class RowIndexEntry
             return s1 < s2 ? c1.kind().comparedToClustering : -c2.kind().comparedToClustering;
         }
 
-        private static ClusteringPrefix deserialize(DataInputPlus in, int version, List<AbstractType<?>> types) throws IOException
+        private static ClusteringPrefix deserialize(DataInputPlus in, List<AbstractType<?>> types) throws IOException
         {
             ClusteringPrefix.Kind kind = ClusteringPrefix.Kind.values()[in.readByte()];
             // We shouldn't serialize static clusterings
             assert kind != ClusteringPrefix.Kind.STATIC_CLUSTERING;
-            if (kind == ClusteringPrefix.Kind.CLUSTERING)
-                return Clustering.Serializer.deserialize(in, version, types);
-            else
-                return Slice.Bound.serializer.deserializeValues(in, kind, version, types);
+
+            int size = (kind == ClusteringPrefix.Kind.CLUSTERING)
+                       ? types.size()
+                       : in.readUnsignedShort();
+            if (size == 0)
+                return (kind == ClusteringPrefix.Kind.CLUSTERING)
+                       ? Clustering.EMPTY
+                       : kind.isStart() ? Slice.Bound.BOTTOM : Slice.Bound.TOP;
+
+            ByteBuffer[] values = ClusteringPrefix.serializer.deserializeValuesWithoutSize(in, size, MessagingService.current_version, types);
+
+            return (kind == ClusteringPrefix.Kind.CLUSTERING)
+                   ? new Clustering(values)
+                   : Slice.Bound.create(kind, values);
         }
 
         private static int compareComponent(int i, ByteBuffer v1, ByteBuffer v2, List<AbstractType<?>> clusteringTypes)
