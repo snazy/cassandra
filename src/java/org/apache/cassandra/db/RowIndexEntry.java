@@ -150,7 +150,6 @@ public class RowIndexEntry
      */
     public int indexOf(ClusteringPrefix name, ClusteringComparator comparator, boolean reversed, int lastIndex)
     {
-        IndexInfo target = new IndexInfo(name, name, 0, 0, null);
         /*
         Take the example from the unit test, and say your index looks like this:
         [0..5][10..15][20..25]
@@ -186,28 +185,13 @@ public class RowIndexEntry
         // (i.e. how "big" the increment if the individual IndexInfo.firstName is - whether it's
         // a constant, logarithmic, exponential distribution), we could search faster.
 
-        int index = binarySearch(target, comparator.indexComparator(reversed), startIdx, endIdx);
+        int index = binarySearch(name, comparator.indexComparator(reversed), startIdx, endIdx);
         return index < 0 ? -index - (reversed ? 2 : 1) : index;
     }
 
-    private int binarySearch(IndexInfo key, Comparator<IndexInfo> c,
-                             int fromIndex, int toIndex) {
-        int low = fromIndex;
-        int high = toIndex - 1;
-
-        while (low <= high) {
-            int mid = (low + high) >>> 1;
-            IndexInfo midVal = indexInfo(mid);
-            int cmp = c.compare(midVal, key);
-
-            if (cmp < 0)
-                low = mid + 1;
-            else if (cmp > 0)
-                high = mid - 1;
-            else
-                return mid; // key found
-        }
-        return -(low + 1);  // key not found
+    int binarySearch(ClusteringPrefix name, Comparator<IndexInfo> c,
+                     int fromIndex, int toIndex) {
+        return -1;
     }
 
     public static class Serializer
@@ -351,73 +335,75 @@ public class RowIndexEntry
             if (indexIdx == currentIndex && currentInfo != null)
                 return currentInfo;
 
-
-            try
+            ByteBuffer buf = buffer.duplicate();
+            try (DataInputBuffer input = new DataInputBuffer(buf, false))
             {
-                ByteBuffer buf = buffer.duplicate();
-                DataInputBuffer input = new DataInputBuffer(buf, false);
-
-                int offset = indexInfoOffset(indexIdx);
-                if (offset > 0)
-                {
-                    // We already know the offset of the requested IndexInfo, so just "seek" and deserialize.
-                    // This is the only possible code path for 3.0 sstable format "ma".
-                    buf.position(offset);
-                }
-                else
-                {
-                    // We do not know the index of the requested IndexInfo object - i.e. it is necessary
-                    // to scan the serialized index. Discovered IndexInfo offsets will be cached.
-                    // This is the only possible code path for pre-3.0 sstable formats.
-
-                    int i = 0;
-                    // skip already discovered offsets
-                    while (i < indexIdx && indexInfoOffset(i) != 0)
-                        i++;
-
-                    // "seek" to last known IndexInfo
-                    if (i == 0)
-                        offset = firstIndexInfoOffset();
-                    else
-                    {
-                        i--;
-                        offset = indexInfoOffset(i);
-                    }
-                    buf.position(offset);
-
-                    // need to read through all IndexInfo objects until we reach the requested one
-                    for (; ; i++)
-                    {
-                        // save IndexInfo offset
-                        indexInfoOffset(i, buf.position());
-
-                        if (i == indexIdx)
-                            break;
-
-                        indexInfoSerializer.skip(input, header, clusteringSerializer);
-                    }
-                }
-
-                if (!deserialize)
-                    // used by serialize() methods via ensureIndexInfoOffsets() to calculate all IndexInfo offsets
-                    return null;
-
-                IndexInfo info = indexInfoSerializer.deserialize(input, clusteringSerializer);
-
-                if (!hasIndexInfoOffsets() && columnsCount() > indexIdx + 1)
-                {
-                    // We know the offset of the next IndexInfo - so store it. (for pre-3.0 sstables)
-                    indexInfoOffset(indexIdx + 1, buf.position());
-                }
-
-                currentIndex = indexIdx;
-                currentInfo = info;
-                return info;
+                return indexInfo(indexIdx, deserialize, buf, input);
             }
             catch (IOException e)
             {
                 throw new RuntimeException(e);
             }
+        }
+
+        private IndexInfo indexInfo(int indexIdx, boolean deserialize, ByteBuffer buf, DataInputBuffer input) throws IOException
+        {
+            int offset = indexInfoOffset(indexIdx);
+            if (offset > 0)
+            {
+                // We already know the offset of the requested IndexInfo, so just "seek" and deserialize.
+                // This is the only possible code path for 3.0 sstable format "ma".
+                buf.position(offset);
+            }
+            else
+            {
+                // We do not know the index of the requested IndexInfo object - i.e. it is necessary
+                // to scan the serialized index. Discovered IndexInfo offsets will be cached.
+                // This is the only possible code path for pre-3.0 sstable formats.
+
+                int i = 0;
+                // skip already discovered offsets
+                while (i < indexIdx && indexInfoOffset(i) != 0)
+                    i++;
+
+                // "seek" to last known IndexInfo
+                if (i == 0)
+                    offset = firstIndexInfoOffset();
+                else
+                {
+                    i--;
+                    offset = indexInfoOffset(i);
+                }
+                buf.position(offset);
+
+                // need to read through all IndexInfo objects until we reach the requested one
+                for (; ; i++)
+                {
+                    // save IndexInfo offset
+                    indexInfoOffset(i, buf.position());
+
+                    if (i == indexIdx)
+                        break;
+
+                    indexInfoSerializer.skip(input, header, clusteringSerializer);
+                }
+            }
+
+            if (!deserialize)
+                // used by serialize() methods via ensureIndexInfoOffsets() to calculate all IndexInfo offsets
+                return null;
+
+            IndexInfo info = indexInfoSerializer.deserialize(input, clusteringSerializer);
+
+            if (!hasIndexInfoOffsets() && columnsCount() > indexIdx + 1)
+            {
+                // We know the offset of the next IndexInfo - so store it. (for pre-3.0 sstables)
+                indexInfoOffset(indexIdx + 1, buf.position());
+            }
+
+            currentIndex = indexIdx;
+            currentInfo = info;
+            return info;
         }
 
         private static int firstIndexInfoOffset()
@@ -428,6 +414,63 @@ public class RowIndexEntry
         private void ensureIndexInfoOffsets()
         {
             indexInfo(columnsCount() - 1, false);
+        }
+
+    /*
+    ClusteringComparator.indexComparator(reversed) -->
+        !reversed   --> ClusteringComparator.this.compare(o1.getLastName(), o2.getLastName())
+        reversed    --> ClusteringComparator.this.compare(o1.getFirstName(), o2.getFirstName());
+
+    public int ClusteringComparator.compare(ClusteringPrefix c1, ClusteringPrefix c2)
+    {
+        int s1 = c1.size();
+        int s2 = c2.size();
+        int minSize = Math.min(s1, s2);
+
+        for (int i = 0; i < minSize; i++)
+        {
+            int cmp = compareComponent(i, c1.get(i), c2.get(i));
+            if (cmp != 0)
+                return cmp;
+        }
+
+        if (s1 == s2)
+            return ClusteringPrefix.Kind.compare(c1.kind(), c2.kind());
+
+        return s1 < s2 ? c1.kind().comparedToClustering : -c2.kind().comparedToClustering;
+    }
+
+    public int compareComponent(int i, ByteBuffer v1, ByteBuffer v2)
+    {
+        if (v1 == null)
+            return v2 == null ? 0 : -1;
+        if (v2 == null)
+            return 1;
+
+        return clusteringTypes.get(i).compare(v1, v2);
+    }
+     */
+
+        int binarySearch(ClusteringPrefix name, Comparator<IndexInfo> c,
+                         int fromIndex, int toIndex) {
+            IndexInfo key = new IndexInfo(name, name, 0, 0, null);
+
+            int low = fromIndex;
+            int high = toIndex - 1;
+
+            while (low <= high) {
+                int mid = (low + high) >>> 1;
+                IndexInfo midVal = indexInfo(mid);
+                int cmp = c.compare(midVal, key);
+
+                if (cmp < 0)
+                    low = mid + 1;
+                else if (cmp > 0)
+                    high = mid - 1;
+                else
+                    return mid; // key found
+            }
+            return -(low + 1);  // key not found
         }
 
         public void serialize(ByteBuffer out)

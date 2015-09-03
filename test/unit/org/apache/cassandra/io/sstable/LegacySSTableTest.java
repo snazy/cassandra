@@ -248,7 +248,7 @@ public class LegacySSTableTest
         loadLegacyTables();
     }
 
-    private void loadLegacyTables() throws IOException
+    private static void loadLegacyTables() throws IOException
     {
         for (String legacyVersion : legacyVersions)
         {
@@ -269,6 +269,8 @@ public class LegacySSTableTest
                 String ckValue = Integer.toString(ck) + longString;
                 for (int pk = 0; pk < 5; pk++)
                 {
+                    logger.info("for pk={} ck={}", pk, ck);
+
                     String pkValue = Integer.toString(pk);
                     UntypedResultSet rs;
                     if (ck == 0)
@@ -282,10 +284,15 @@ public class LegacySSTableTest
                         Assert.assertEquals(1, rs.size());
                         Assert.assertEquals(1L, rs.one().getLong("val"));
                     }
+
                     rs = QueryProcessor.executeInternal(String.format("SELECT val FROM legacy_tables.legacy_%s_clust WHERE pk=? AND ck=?", legacyVersion), pkValue, ckValue);
-                    Assert.assertNotNull(rs);
-                    Assert.assertEquals(1, rs.size());
-                    Assert.assertEquals(128, rs.one().getString("val").length());
+                    assertLegacyClustRows(1, rs);
+
+                    String ckValue2 = Integer.toString(ck < 10 ? 40 : ck - 1) + longString;
+                    String ckValue3 = Integer.toString(ck > 39 ? 10 : ck + 1) + longString;
+                    rs = QueryProcessor.executeInternal(String.format("SELECT val FROM legacy_tables.legacy_%s_clust WHERE pk=? AND ck IN (?, ?, ?)", legacyVersion), pkValue, ckValue, ckValue2, ckValue3);
+                    assertLegacyClustRows(3, rs);
+
                     rs = QueryProcessor.executeInternal(String.format("SELECT val FROM legacy_tables.legacy_%s_clust_counter WHERE pk=? AND ck=?", legacyVersion), pkValue, ckValue);
                     Assert.assertNotNull(rs);
                     Assert.assertEquals(1, rs.size());
@@ -295,7 +302,20 @@ public class LegacySSTableTest
         }
     }
 
-    private void loadLegacyTable(String tablePattern, String legacyVersion) throws IOException
+    private static void assertLegacyClustRows(int count, UntypedResultSet rs)
+    {
+        Assert.assertNotNull(rs);
+        Assert.assertEquals(count, rs.size());
+        for (int i = 0; i < count; i++)
+        {
+            for (UntypedResultSet.Row r : rs)
+            {
+                Assert.assertEquals(128, r.getString("val").length());
+            }
+        }
+    }
+
+    private static void loadLegacyTable(String tablePattern, String legacyVersion) throws IOException
     {
         String table = String.format(tablePattern, legacyVersion);
 

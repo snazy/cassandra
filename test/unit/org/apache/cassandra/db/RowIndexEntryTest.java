@@ -118,8 +118,8 @@ public class RowIndexEntryTest extends CQLTester
                                         0);
                     assert i != -1;
                     IndexInfo ii = rie.indexInfo(i);
-                    assertTrue(cfMeta.comparator.compare(ii.getFirstName(), value) <= 0);
-                    assertTrue(cfMeta.comparator.compare(ii.getLastName(), value) >= 0);
+                    assertTrue("keyToFind:" + keyToFind, cfMeta.comparator.compare(ii.getFirstName(), value) <= 0);
+                    assertTrue("keyToFind:" + keyToFind, cfMeta.comparator.compare(ii.getLastName(), value) >= 0);
                 }
                 // non-existing clustering keys
                 for (int keyToFind : new int[]{ -1, 50000, 100000 })
@@ -132,8 +132,8 @@ public class RowIndexEntryTest extends CQLTester
                     if (i < 0 || i >= rie.columnsCount())
                         continue;
                     IndexInfo ii = rie.indexInfo(i);
-                    assertTrue(cfMeta.comparator.compare(ii.getFirstName(), value) > 0 ||
-                               cfMeta.comparator.compare(ii.getLastName(), value) < 0);
+                    assertTrue("keyToFind:" + keyToFind, cfMeta.comparator.compare(ii.getFirstName(), value) > 0 ||
+                                                         cfMeta.comparator.compare(ii.getLastName(), value) < 0);
                 }
 
 //                for (Version otherVersion : VERSIONS_NOT_LATEST)

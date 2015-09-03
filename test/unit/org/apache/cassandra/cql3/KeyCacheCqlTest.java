@@ -20,6 +20,7 @@ package org.apache.cassandra.cql3;
 
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Iterator;
 import java.util.List;
 
 import org.junit.Assert;
@@ -32,6 +33,8 @@ import org.apache.cassandra.service.CacheService;
 import org.apache.cassandra.service.StorageService;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertTrue;
 
 public class KeyCacheCqlTest extends CQLTester
 {
@@ -55,6 +58,109 @@ public class KeyCacheCqlTest extends CQLTester
     "col_text," +
     "col_int," +
     "col_long";
+
+    // 1200 chars
+    static final String longString = "0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789" +
+                                     "0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789" +
+                                     "0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789" +
+                                     "0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789" +
+                                     "0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789" +
+                                     "0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789" +
+                                     "0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789" +
+                                     "0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789" +
+                                     "0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789" +
+                                     "0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789" +
+                                     "0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789" +
+                                     "0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789";
+
+    @Test
+    public void testSliceQueries() throws Throwable
+    {
+        createTable("CREATE TABLE %s (pk text, ck1 int, ck2 int, val text, vpk text, vck1 int, vck2 int, PRIMARY KEY (pk, ck1, ck2))");
+
+        for (int pkInt = 0; pkInt < 20; pkInt++)
+        {
+            String pk = Integer.toString(pkInt);
+            for (int ck1 = 0; ck1 < 10; ck1++)
+            {
+                for (int ck2 = 0; ck2 < 10; ck2++)
+                {
+                    execute("INSERT INTO %s (pk, ck1, ck2, val, vpk, vck1, vck2) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                            pk, ck1, ck2, makeStringValue(pk, ck1, ck2), pk, ck1, ck2);
+                }
+            }
+        }
+
+        StorageService.instance.forceKeyspaceFlush(KEYSPACE);
+
+        for (int pkInt = 0; pkInt < 20; pkInt++)
+        {
+            String pk = Integer.toString(pkInt);
+            assertClusterRows(execute("SELECT val, vpk, vck1, vck2 FROM %s WHERE pk=?", pk),
+                              pk, 0, 10, 0, 10);
+
+            for (int ck1 = 0; ck1 < 10; ck1++)
+            {
+                assertClusterRows(execute("SELECT val, vpk, vck1, vck2 FROM %s WHERE pk=? AND ck1=?", pk, ck1),
+                                  pk, ck1, ck1+1, 0, 10);
+
+                assertClusterRows(execute("SELECT val, vpk, vck1, vck2 FROM %s WHERE pk=? AND ck1<?", pk, ck1),
+                                  pk, 0, ck1, 0, 10);
+                assertClusterRows(execute("SELECT val, vpk, vck1, vck2 FROM %s WHERE pk=? AND ck1>?", pk, ck1),
+                                  pk, ck1+1, 10, 0, 10);
+                assertClusterRows(execute("SELECT val, vpk, vck1, vck2 FROM %s WHERE pk=? AND ck1<=?", pk, ck1),
+                                  pk, 0, ck1+1, 0, 10);
+                assertClusterRows(execute("SELECT val, vpk, vck1, vck2 FROM %s WHERE pk=? AND ck1>=?", pk, ck1),
+                                  pk, ck1, 10, 0, 10);
+
+                for (int ck2 = 0; ck2 < 10; ck2++)
+                {
+                    assertRows(execute("SELECT val, vpk, vck1, vck2 FROM %s WHERE pk=? AND ck1=? AND ck2=?", pk, ck1, ck2),
+                               new Object[]{ makeStringValue(pk, ck1, ck2), pk, ck1, ck2 });
+
+                    assertClusterRows(execute("SELECT val, vpk, vck1, vck2 FROM %s WHERE pk=? AND ck1=? AND ck2<?", pk, ck1, ck2),
+                                      pk, ck1, ck1+1, 0, ck2);
+                    assertClusterRows(execute("SELECT val, vpk, vck1, vck2 FROM %s WHERE pk=? AND ck1=? AND ck2>?", pk, ck1, ck2),
+                                      pk, ck1, ck1+1, ck2+1, 10);
+                    assertClusterRows(execute("SELECT val, vpk, vck1, vck2 FROM %s WHERE pk=? AND ck1=? AND ck2<=?", pk, ck1, ck2),
+                                      pk, ck1, ck1+1, 0, ck2+1);
+                    assertClusterRows(execute("SELECT val, vpk, vck1, vck2 FROM %s WHERE pk=? AND ck1=? AND ck2>=?", pk, ck1, ck2),
+                                      pk, ck1, ck1+1, ck2, 10);
+                }
+            }
+        }
+    }
+
+    private static void assertClusterRows(UntypedResultSet rows, String pk, int ck1from, int ck1to, int ck2from, int ck2to)
+    {
+        String info = "pk=" + pk + ", ck1from=" + ck1from + ", ck1to=" + ck1to + ", ck2from=" + ck2from + ", ck2to=" + ck2to;
+        Iterator<UntypedResultSet.Row> iter = rows.iterator();
+        int cnt = 0;
+        int expect = (ck1to - ck1from) * (ck2to - ck2from);
+        for (int ck1 = ck1from; ck1 < ck1to; ck1++)
+        {
+            for (int ck2 = ck2from; ck2 < ck2to; ck2++)
+            {
+                assertTrue("expected " + expect + " (already got " + cnt + ") rows, but more rows are available for " + info, iter.hasNext());
+                UntypedResultSet.Row row = iter.next();
+                assertEquals(makeStringValue(pk, ck1, ck2), row.getString("val"));
+                assertEquals(pk, row.getString("vpk"));
+                assertEquals(ck1, row.getInt("vck1"));
+                assertEquals(ck2, row.getInt("vck2"));
+            }
+        }
+        assertFalse("expected " + expect + " (already got " + cnt + ") rows, but more rows are available for " + info, iter.hasNext());
+    }
+
+    private static Object[] makeRowValues(String pk, int ck1, int ck2)
+    {
+        return new Object[]{ makeStringValue(pk, ck1, ck2), pk, ck1, ck2 };
+    }
+
+    private static String makeStringValue(String pk, int ck1, int ck2)
+    {
+        return longString + ',' + pk + ',' + ck1 + ',' + ck2;
+    }
 
     @Test
     public void test2iKeyCachePaths() throws Throwable
@@ -170,7 +276,7 @@ public class KeyCacheCqlTest extends CQLTester
             for (int c = 0; c < 10; c++)
             {
                 assertRows(execute("SELECT col_text, col_long FROM %s WHERE part_key_a = ? AND part_key_b = ? and clust_key_a = ?", i, Integer.toOctalString(i), c),
-                           new Object[]{ String.valueOf(i) + '-' + String.valueOf(c), (long)c });
+                           new Object[]{ String.valueOf(i) + '-' + String.valueOf(c), (long) c });
             }
         }
 
@@ -186,7 +292,7 @@ public class KeyCacheCqlTest extends CQLTester
             for (int c = 0; c < 50; c++)
             {
                 assertRows(execute("SELECT col_text, col_long FROM %s WHERE part_key_a = ? AND part_key_b = ? and clust_key_a = ?", i, Integer.toOctalString(i), c),
-                           new Object[]{ String.valueOf(i) + '-' + String.valueOf(c), (long)c });
+                           new Object[]{ String.valueOf(i) + '-' + String.valueOf(c), (long) c });
             }
         }
 
