@@ -152,11 +152,6 @@ public class KeyCacheCqlTest extends CQLTester
         assertFalse("expected " + expect + " (already got " + cnt + ") rows, but more rows are available for " + info, iter.hasNext());
     }
 
-    private static Object[] makeRowValues(String pk, int ck1, int ck2)
-    {
-        return new Object[]{ makeStringValue(pk, ck1, ck2), pk, ck1, ck2 };
-    }
-
     private static String makeStringValue(String pk, int ck1, int ck2)
     {
         return longString + ',' + pk + ',' + ck1 + ',' + ck2;

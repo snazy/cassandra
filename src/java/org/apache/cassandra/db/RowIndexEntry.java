@@ -20,7 +20,6 @@ package org.apache.cassandra.db;
 import java.io.DataInput;
 import java.io.IOException;
 import java.nio.ByteBuffer;
-import java.util.Comparator;
 import java.util.List;
 
 import org.apache.cassandra.config.DatabaseDescriptor;
@@ -39,6 +38,7 @@ import org.apache.cassandra.io.util.DataOutputBuffer;
 import org.apache.cassandra.io.util.DataOutputPlus;
 import org.apache.cassandra.io.util.FileUtils;
 import org.apache.cassandra.io.util.SequentialWriter;
+import org.apache.cassandra.net.MessagingService;
 import org.apache.cassandra.utils.ByteBufferUtil;
 
 /**
@@ -185,12 +185,13 @@ public class RowIndexEntry
         // (i.e. how "big" the increment if the individual IndexInfo.firstName is - whether it's
         // a constant, logarithmic, exponential distribution), we could search faster.
 
-        int index = binarySearch(name, comparator.indexComparator(reversed), startIdx, endIdx);
+// reversed was: comparator.indexComparator(reversed)
+        int index = binarySearch(name, reversed, startIdx, endIdx);
         return index < 0 ? -index - (reversed ? 2 : 1) : index;
     }
 
-    int binarySearch(ClusteringPrefix name, Comparator<IndexInfo> c,
-                     int fromIndex, int toIndex) {
+    int binarySearch(ClusteringPrefix name, boolean reversed, int fromIndex, int toIndex)
+    {
         return -1;
     }
 
@@ -451,26 +452,85 @@ public class RowIndexEntry
     }
      */
 
-        int binarySearch(ClusteringPrefix name, Comparator<IndexInfo> c,
-                         int fromIndex, int toIndex) {
-            IndexInfo key = new IndexInfo(name, name, 0, 0, null);
+        int binarySearch(ClusteringPrefix name, boolean reversed, int fromIndex, int toIndex)
+        {
+// IndexInfo key = new IndexInfo(name, name, 0, 0, null);
 
             int low = fromIndex;
             int high = toIndex - 1;
 
-            while (low <= high) {
-                int mid = (low + high) >>> 1;
-                IndexInfo midVal = indexInfo(mid);
-                int cmp = c.compare(midVal, key);
+            ByteBuffer buf = buffer.duplicate();
+            try (DataInputBuffer input = new DataInputBuffer(buf, false))
+            {
+                while (low <= high) {
+                    int mid = (low + high) >>> 1;
 
-                if (cmp < 0)
-                    low = mid + 1;
-                else if (cmp > 0)
-                    high = mid - 1;
-                else
-                    return mid; // key found
+// IndexInfo midVal = indexInfo(mid);
+                    // "seek" to start of serialized IndexInfo
+                    indexInfo(mid, false, buf, input);
+                    if (!reversed)
+                        // skip IndexInfo.firstName
+                        ClusteringPrefix.Serializer.skip(input, MessagingService.current_version, header.clusteringTypes());
+// int cmp = c.compare(midVal, key);
+                    int cmp = -compare(name, input, header.clusteringTypes());
+
+                    if (cmp < 0)
+                        low = mid + 1;
+                    else if (cmp > 0)
+                        high = mid - 1;
+                    else
+                        return mid; // key found
+                }
+                return -(low + 1);  // key not found
             }
-            return -(low + 1);  // key not found
+            catch (IOException e)
+            {
+                throw new RuntimeException(e);
+            }
+        }
+
+        private static int compare(ClusteringPrefix c1, DataInputBuffer input, List<AbstractType<?>> clusteringTypes) throws IOException
+        {
+            // TODO also remove this deserialization
+            ClusteringPrefix c2 = deserialize(input, MessagingService.current_version, clusteringTypes);
+
+
+            int s1 = c1.size();
+            int s2 = c2.size();
+            int minSize = Math.min(s1, s2);
+
+            for (int i = 0; i < minSize; i++)
+            {
+                int cmp = compareComponent(i, c1.get(i), c2.get(i), clusteringTypes);
+                if (cmp != 0)
+                    return cmp;
+            }
+
+            if (s1 == s2)
+                return ClusteringPrefix.Kind.compare(c1.kind(), c2.kind());
+
+            return s1 < s2 ? c1.kind().comparedToClustering : -c2.kind().comparedToClustering;
+        }
+
+        private static ClusteringPrefix deserialize(DataInputPlus in, int version, List<AbstractType<?>> types) throws IOException
+        {
+            ClusteringPrefix.Kind kind = ClusteringPrefix.Kind.values()[in.readByte()];
+            // We shouldn't serialize static clusterings
+            assert kind != ClusteringPrefix.Kind.STATIC_CLUSTERING;
+            if (kind == ClusteringPrefix.Kind.CLUSTERING)
+                return Clustering.Serializer.deserialize(in, version, types);
+            else
+                return Slice.Bound.serializer.deserializeValues(in, kind, version, types);
+        }
+
+        private static int compareComponent(int i, ByteBuffer v1, ByteBuffer v2, List<AbstractType<?>> clusteringTypes)
+        {
+            if (v1 == null)
+                return v2 == null ? 0 : -1;
+            if (v2 == null)
+                return 1;
+
+            return clusteringTypes.get(i).compare(v1, v2);
         }
 
         public void serialize(ByteBuffer out)

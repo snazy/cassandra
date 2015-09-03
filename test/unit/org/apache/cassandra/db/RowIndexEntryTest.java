@@ -22,6 +22,8 @@ import java.io.IOException;
 import java.util.Collections;
 import java.util.Iterator;
 
+import org.junit.Test;
+
 import org.apache.cassandra.Util;
 import org.apache.cassandra.config.CFMetaData;
 import org.apache.cassandra.config.ColumnDefinition;
@@ -31,10 +33,11 @@ import org.apache.cassandra.db.filter.ColumnFilter;
 import org.apache.cassandra.db.marshal.AbstractType;
 import org.apache.cassandra.db.marshal.Int32Type;
 import org.apache.cassandra.db.marshal.UTF8Type;
+import org.apache.cassandra.db.partitions.ImmutableBTreePartition;
+import org.apache.cassandra.db.partitions.PartitionUpdate;
 import org.apache.cassandra.db.rows.BTreeRow;
 import org.apache.cassandra.db.rows.BufferCell;
 import org.apache.cassandra.db.rows.EncodingStats;
-import org.apache.cassandra.db.partitions.*;
 import org.apache.cassandra.db.rows.Row;
 import org.apache.cassandra.db.rows.RowAndDeletionMergeIterator;
 import org.apache.cassandra.db.rows.Rows;
@@ -45,7 +48,6 @@ import org.apache.cassandra.io.sstable.format.big.BigFormat;
 import org.apache.cassandra.io.util.DataInputBuffer;
 import org.apache.cassandra.io.util.DataOutputBuffer;
 import org.apache.cassandra.io.util.SequentialWriter;
-import org.junit.Test;
 
 import static junit.framework.Assert.assertEquals;
 import static junit.framework.Assert.assertFalse;
@@ -117,6 +119,7 @@ public class RowIndexEntryTest extends CQLTester
                                         false,
                                         0);
                     assert i != -1;
+                    assertTrue("indexOf()=" + i + " out of range [0.." + rie.columnsCount() + "[ for keyToFind=" + keyToFind, i >= 0 && i < rie.columnsCount());
                     IndexInfo ii = rie.indexInfo(i);
                     assertTrue("keyToFind:" + keyToFind, cfMeta.comparator.compare(ii.getFirstName(), value) <= 0);
                     assertTrue("keyToFind:" + keyToFind, cfMeta.comparator.compare(ii.getLastName(), value) >= 0);
