@@ -353,13 +353,18 @@ public interface ClusteringPrefix extends IMeasurableMemory, Clusterable
                 int limit = Math.min(size, offset + 32);
                 while (offset < limit)
                 {
-                    values[offset] = isNull(header, offset)
-                                     ? null
-                                     : (isEmpty(header, offset) ? ByteBufferUtil.EMPTY_BYTE_BUFFER : types.get(offset).readValue(in));
+                    values[offset] = deserializeValuePartWithoutSize(in, types.get(offset), offset, header);
                     offset++;
                 }
             }
             return values;
+        }
+
+        static ByteBuffer deserializeValuePartWithoutSize(DataInputPlus in, AbstractType<?> type, int offset, long header) throws IOException
+        {
+            return isNull(header, offset)
+                             ? null
+                             : (isEmpty(header, offset) ? ByteBufferUtil.EMPTY_BYTE_BUFFER : type.readValue(in));
         }
 
         void skipValuesWithoutSize(DataInputPlus in, int size, int version, List<AbstractType<?>> types) throws IOException

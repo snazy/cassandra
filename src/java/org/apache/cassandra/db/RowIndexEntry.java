@@ -418,6 +418,9 @@ public class RowIndexEntry
         }
 
     /*
+    Original code sequence to perform RowIndexEntry.indexOf()
+    =========================================================
+
     ClusteringComparator.indexComparator(reversed) -->
         !reversed   --> ClusteringComparator.this.compare(o1.getLastName(), o2.getLastName())
         reversed    --> ClusteringComparator.this.compare(o1.getFirstName(), o2.getFirstName());
@@ -454,7 +457,6 @@ public class RowIndexEntry
 
         int binarySearch(ClusteringPrefix name, boolean reversed, int fromIndex, int toIndex)
         {
-// IndexInfo key = new IndexInfo(name, name, 0, 0, null);
 
             int low = fromIndex;
             int high = toIndex - 1;
@@ -465,13 +467,15 @@ public class RowIndexEntry
                 while (low <= high) {
                     int mid = (low + high) >>> 1;
 
-// IndexInfo midVal = indexInfo(mid);
+                    // Do the comparation previously done via:
+                    //      IndexInfo midVal = indexInfo(mid);
+                    //      nt cmp = c.compare(midVal, key);
+                    //
                     // "seek" to start of serialized IndexInfo
                     indexInfo(mid, false, buf, input);
                     if (!reversed)
                         // skip IndexInfo.firstName
                         ClusteringPrefix.Serializer.skip(input, MessagingService.current_version, header.clusteringTypes());
-// int cmp = c.compare(midVal, key);
                     int cmp = -compare(name, input, header.clusteringTypes());
 
                     if (cmp < 0)
@@ -497,9 +501,6 @@ public class RowIndexEntry
 
             boolean isClustering = c2Kind == ClusteringPrefix.Kind.CLUSTERING;
 
-            // TODO also remove this deserialization
-//            ClusteringPrefix c2 = deserialize(input, clusteringTypes, kind);
-
             int s1 = c1.size();
             int s2 = isClustering
                        ? types.size()
@@ -516,14 +517,20 @@ public class RowIndexEntry
             }
             else
             {
-                ByteBuffer[] values = ClusteringPrefix.serializer.deserializeValuesWithoutSize(input, s2, MessagingService.current_version, types);
-
                 int minSize = Math.min(s1, s2);
-                for (int i = 0; i < minSize; i++)
+                for (int i = 0; i < minSize; )
                 {
-                    int cmp = compareComponent(i, c1.get(i), values[i], types);
-                    if (cmp != 0)
-                        return cmp;
+                    long header = input.readUnsignedVInt();
+                    int limit = Math.min(minSize, i + 32);
+                    while (i < limit)
+                    {
+                        AbstractType<?> type = types.get(i);
+                        ByteBuffer value = ClusteringPrefix.Serializer.deserializeValuePartWithoutSize(input, type, i, header);
+                        int cmp = compareComponent(i, c1.get(i), value, type);
+                        if (cmp != 0)
+                            return cmp;
+                        i++;
+                    }
                 }
             }
 
@@ -533,14 +540,14 @@ public class RowIndexEntry
             return s1 < s2 ? c1.kind().comparedToClustering : -c2Kind.comparedToClustering;
         }
 
-        private static int compareComponent(int i, ByteBuffer v1, ByteBuffer v2, List<AbstractType<?>> clusteringTypes)
+        private static int compareComponent(int i, ByteBuffer v1, ByteBuffer v2, AbstractType<?> type)
         {
             if (v1 == null)
                 return v2 == null ? 0 : -1;
             if (v2 == null)
                 return 1;
 
-            return clusteringTypes.get(i).compare(v1, v2);
+            return type.compare(v1, v2);
         }
 
         public void serialize(ByteBuffer out)
