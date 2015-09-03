@@ -489,48 +489,48 @@ public class RowIndexEntry
             }
         }
 
-        private static int compare(ClusteringPrefix c1, DataInputBuffer input, List<AbstractType<?>> clusteringTypes) throws IOException
+        private static int compare(ClusteringPrefix c1, DataInputBuffer input, List<AbstractType<?>> types) throws IOException
         {
-            // TODO also remove this deserialization
-            ClusteringPrefix c2 = deserialize(input, clusteringTypes);
+            ClusteringPrefix.Kind c2Kind = ClusteringPrefix.Kind.values()[input.readByte()];
+            // We shouldn't serialize static clusterings
+            assert c2Kind != ClusteringPrefix.Kind.STATIC_CLUSTERING;
 
+            boolean isClustering = c2Kind == ClusteringPrefix.Kind.CLUSTERING;
+
+            // TODO also remove this deserialization
+//            ClusteringPrefix c2 = deserialize(input, clusteringTypes, kind);
 
             int s1 = c1.size();
-            int s2 = c2.size();
-            int minSize = Math.min(s1, s2);
+            int s2 = isClustering
+                       ? types.size()
+                       : input.readUnsignedShort();
 
-            for (int i = 0; i < minSize; i++)
+            if (s2 == 0)
             {
-                int cmp = compareComponent(i, c1.get(i), c2.get(i), clusteringTypes);
-                if (cmp != 0)
-                    return cmp;
+                if (isClustering)
+                {
+                    c2Kind = c2Kind.isStart()
+                             ? ClusteringPrefix.Kind.INCL_START_BOUND
+                             : ClusteringPrefix.Kind.INCL_END_BOUND;
+                }
+            }
+            else
+            {
+                ByteBuffer[] values = ClusteringPrefix.serializer.deserializeValuesWithoutSize(input, s2, MessagingService.current_version, types);
+
+                int minSize = Math.min(s1, s2);
+                for (int i = 0; i < minSize; i++)
+                {
+                    int cmp = compareComponent(i, c1.get(i), values[i], types);
+                    if (cmp != 0)
+                        return cmp;
+                }
             }
 
             if (s1 == s2)
-                return ClusteringPrefix.Kind.compare(c1.kind(), c2.kind());
+                return ClusteringPrefix.Kind.compare(c1.kind(), c2Kind);
 
-            return s1 < s2 ? c1.kind().comparedToClustering : -c2.kind().comparedToClustering;
-        }
-
-        private static ClusteringPrefix deserialize(DataInputPlus in, List<AbstractType<?>> types) throws IOException
-        {
-            ClusteringPrefix.Kind kind = ClusteringPrefix.Kind.values()[in.readByte()];
-            // We shouldn't serialize static clusterings
-            assert kind != ClusteringPrefix.Kind.STATIC_CLUSTERING;
-
-            int size = (kind == ClusteringPrefix.Kind.CLUSTERING)
-                       ? types.size()
-                       : in.readUnsignedShort();
-            if (size == 0)
-                return (kind == ClusteringPrefix.Kind.CLUSTERING)
-                       ? Clustering.EMPTY
-                       : kind.isStart() ? Slice.Bound.BOTTOM : Slice.Bound.TOP;
-
-            ByteBuffer[] values = ClusteringPrefix.serializer.deserializeValuesWithoutSize(in, size, MessagingService.current_version, types);
-
-            return (kind == ClusteringPrefix.Kind.CLUSTERING)
-                   ? new Clustering(values)
-                   : Slice.Bound.create(kind, values);
+            return s1 < s2 ? c1.kind().comparedToClustering : -c2Kind.comparedToClustering;
         }
 
         private static int compareComponent(int i, ByteBuffer v1, ByteBuffer v2, List<AbstractType<?>> clusteringTypes)
