@@ -23,6 +23,7 @@ import java.util.concurrent.Future;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 
+import com.google.common.annotations.VisibleForTesting;
 import org.cliffc.high_scale_lib.NonBlockingHashSet;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -58,7 +59,8 @@ public class AutoSavingCache<K extends CacheKey, V> extends InstrumentingCache<K
     /** True if a cache flush is currently executing: only one may execute at a time. */
     public static final Set<CacheService.CacheType> flushInProgress = new NonBlockingHashSet<CacheService.CacheType>();
 
-    protected volatile ScheduledFuture<?> saveTask;
+    @VisibleForTesting
+    public volatile ScheduledFuture<?> saveTask;
     protected final CacheService.CacheType cacheType;
 
     private final CacheSerializer<K, V> cacheLoader;

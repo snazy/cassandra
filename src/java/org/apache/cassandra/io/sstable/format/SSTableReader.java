@@ -608,7 +608,7 @@ public abstract class SSTableReader extends SSTable implements SelfRefCounted<SS
         this.header = header;
         this.maxDataAge = maxDataAge;
         this.openReason = openReason;
-        this.rowIndexEntrySerializer = descriptor.version.getSSTableFormat().getIndexSerializer(metadata, desc.version, header);
+        this.rowIndexEntrySerializer = metadata.serializers().getRowIndexSerializer(desc.version);
     }
 
     public static long getTotalBytes(Iterable<SSTableReader> sstables)
@@ -809,7 +809,7 @@ public abstract class SSTableReader extends SSTable implements SelfRefCounted<SS
             try (IndexSummaryBuilder summaryBuilder = summaryLoaded ? null : new IndexSummaryBuilder(estimatedKeys, metadata.params.minIndexInterval, samplingLevel))
             {
                 long indexPosition;
-                RowIndexEntry.IndexSerializer rowIndexSerializer = descriptor.getFormat().getIndexSerializer(metadata, descriptor.version, header);
+                RowIndexEntry.IndexSerializer rowIndexSerializer = metadata.serializers().getRowIndexSerializer(descriptor.version);
 
                 while ((indexPosition = primaryIndex.getFilePointer()) != indexSize)
                 {
@@ -921,7 +921,7 @@ public abstract class SSTableReader extends SSTable implements SelfRefCounted<SS
                     if (summaryEntriesChecked == Downsampling.BASE_SAMPLING_LEVEL)
                         return true;
                 }
-                RowIndexEntry.Serializer.skip(in, descriptor.version);
+                RowIndexEntry.Serializer.skip(in);
                 i++;
             }
         }
@@ -1090,7 +1090,7 @@ public abstract class SSTableReader extends SSTable implements SelfRefCounted<SS
             // TODO: merge with caller's firstKeyBeyond() work,to save time
             if (newStart.compareTo(first) > 0)
             {
-                final long dataStart = getPosition(newStart, Operator.EQ).position;
+                final long dataStart = getPosition(newStart, Operator.EQ).getPosition();
                 final long indexStart = getIndexScanPosition(newStart);
                 this.tidy.runOnClose = new DropPageCache(dfile, dataStart, ifile, indexStart, runOnClose);
             }
@@ -1198,7 +1198,7 @@ public abstract class SSTableReader extends SSTable implements SelfRefCounted<SS
                 while ((indexPosition = primaryIndex.getFilePointer()) != indexSize)
                 {
                     summaryBuilder.maybeAddEntry(decorateKey(ByteBufferUtil.readWithShortLength(primaryIndex)), indexPosition);
-                    RowIndexEntry.Serializer.skip(primaryIndex, descriptor.version);
+                    RowIndexEntry.Serializer.skip(primaryIndex);
                 }
 
                 return summaryBuilder.build(getPartitioner());
@@ -1496,10 +1496,10 @@ public abstract class SSTableReader extends SSTable implements SelfRefCounted<SS
             if (leftBound.compareTo(last) > 0 || rightBound.compareTo(first) < 0)
                 continue;
 
-            long left = getPosition(leftBound, Operator.GT).position;
+            long left = getPosition(leftBound, Operator.GT).getPosition();
             long right = (rightBound.compareTo(last) > 0)
                          ? uncompressedLength()
-                         : getPosition(rightBound, Operator.GT).position;
+                         : getPosition(rightBound, Operator.GT).getPosition();
 
             if (left == right)
                 // empty range
@@ -1604,7 +1604,7 @@ public abstract class SSTableReader extends SSTable implements SelfRefCounted<SS
                 if (indexDecoratedKey.compareTo(token) > 0)
                     return indexDecoratedKey;
 
-                RowIndexEntry.Serializer.skip(in, descriptor.version);
+                RowIndexEntry.Serializer.skip(in);
             }
         }
         catch (IOException e)

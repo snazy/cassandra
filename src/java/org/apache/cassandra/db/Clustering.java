@@ -73,6 +73,12 @@ public class Clustering extends AbstractClusteringPrefix
     public static final Clustering EMPTY = new Clustering(EMPTY_VALUES_ARRAY)
     {
         @Override
+        public String toString()
+        {
+            return "EMPTY";
+        }
+
+        @Override
         public String toString(CFMetaData metadata)
         {
             return "EMPTY";
@@ -150,6 +156,14 @@ public class Clustering extends AbstractClusteringPrefix
 
             ByteBuffer[] values = ClusteringPrefix.serializer.deserializeValuesWithoutSize(in, types.size(), version, types);
             return new Clustering(values);
+        }
+
+        public void skip(DataInputPlus in, int version, List<AbstractType<?>> types) throws IOException
+        {
+            if (types.isEmpty())
+                return;
+
+            ClusteringPrefix.serializer.skipValuesWithoutSize(in, types.size(), version, types);
         }
     }
 }

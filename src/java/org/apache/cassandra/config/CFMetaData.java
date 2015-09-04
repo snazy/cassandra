@@ -25,6 +25,7 @@ import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 import com.google.common.annotations.VisibleForTesting;
@@ -60,6 +61,8 @@ import org.github.jamm.Unmetered;
 @Unmetered
 public final class CFMetaData
 {
+    private static final Pattern VALID_NAME = Pattern.compile("\\w+");
+
     public enum Flag
     {
         SUPER, COUNTER, DENSE, COMPOUND, VIEW
@@ -86,7 +89,7 @@ public final class CFMetaData
     public volatile ClusteringComparator comparator;  // bytes, long, timeuuid, utf8, etc. This is built directly from clusteringColumns
     public final IPartitioner partitioner;            // partitioner the table uses
 
-    private final Serializers serializers;
+    private volatile Serializers serializers;
 
     // non-final, for now
     public volatile TableParams params = TableParams.DEFAULT;
@@ -107,6 +110,7 @@ public final class CFMetaData
     private final Map<ByteBuffer, ColumnDefinition> columnMetadata = new ConcurrentHashMap<>(); // not on any hot path
     private volatile List<ColumnDefinition> partitionKeyColumns;  // Always of size keyValidator.componentsCount, null padded if necessary
     private volatile List<ColumnDefinition> clusteringColumns;    // Of size comparator.componentsCount or comparator.componentsCount -1, null padded if necessary
+    private volatile List<AbstractType<?>> clusteringTypes;
     private volatile PartitionColumns partitionColumns;           // Always non-PK, non-clustering columns
 
     // For dense tables, this alias the single non-PK column the table contains (since it can only have one). We keep
@@ -279,7 +283,6 @@ public final class CFMetaData
         this.clusteringColumns = clusteringColumns;
         this.partitionColumns = partitionColumns;
 
-        this.serializers = new Serializers(this);
         rebuild();
     }
 
@@ -287,7 +290,8 @@ public final class CFMetaData
     // are kept because they are often useful in a different format.
     private void rebuild()
     {
-        this.comparator = new ClusteringComparator(extractTypes(clusteringColumns));
+        this.clusteringTypes = extractTypes(clusteringColumns);
+        this.comparator = new ClusteringComparator(clusteringTypes);
 
         this.columnMetadata.clear();
         for (ColumnDefinition def : partitionKeyColumns)
@@ -305,6 +309,8 @@ public final class CFMetaData
 
         if (isCompactTable())
             this.compactValueColumn = CompactTables.getCompactValueColumn(partitionColumns, isSuper());
+
+        this.serializers = new Serializers(this);
     }
 
     public MaterializedViews getMaterializedViews()
@@ -390,7 +396,7 @@ public final class CFMetaData
      */
     public static CFMetaData createFake(String keyspace, String name)
     {
-        return CFMetaData.Builder.create(keyspace, name).addPartitionKey("key", BytesType.instance).build();
+        return Builder.create(keyspace, name).addPartitionKey("key", BytesType.instance).build();
     }
 
     public Triggers getTriggers()
@@ -625,6 +631,11 @@ public final class CFMetaData
         return clusteringColumns;
     }
 
+    public List<AbstractType<?>> clusteringTypes()
+    {
+        return clusteringTypes;
+    }
+
     public PartitionColumns partitionColumns()
     {
         return partitionColumns;
@@ -839,7 +850,7 @@ public final class CFMetaData
 
     public static boolean isNameValid(String name)
     {
-        return name != null && !name.isEmpty() && name.length() <= Schema.NAME_LENGTH && name.matches("\\w+");
+        return name != null && !name.isEmpty() && name.length() <= Schema.NAME_LENGTH && VALID_NAME.matcher(name).matches();
     }
 
     public CFMetaData validate() throws ConfigurationException

@@ -149,9 +149,8 @@ public class BigTableWriter extends SSTableWriter
 
         try (StatsCollector withStats = new StatsCollector(iterator, metadataCollector))
         {
-            ColumnIndex index = ColumnIndex.writeAndBuildIndex(withStats, dataFile, header, descriptor.version);
-
-            RowIndexEntry entry = RowIndexEntry.create(startPosition, iterator.partitionLevelDeletion(), index);
+            RowIndexEntry entry = RowIndexEntry.buildIndex(withStats, dataFile, header, descriptor.version, metadata,
+                                                           startPosition, iterator.partitionLevelDeletion());
 
             long endPosition = dataFile.getFilePointer();
             long rowSize = endPosition - startPosition;

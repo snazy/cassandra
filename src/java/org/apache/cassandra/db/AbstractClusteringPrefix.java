@@ -21,7 +21,10 @@ import java.nio.ByteBuffer;
 import java.security.MessageDigest;
 import java.util.Objects;
 
+import com.google.common.base.MoreObjects;
+
 import org.apache.cassandra.utils.FBUtilities;
+import org.apache.cassandra.utils.Hex;
 import org.apache.cassandra.utils.ObjectSizes;
 
 public abstract class AbstractClusteringPrefix implements ClusteringPrefix
@@ -120,5 +123,22 @@ public abstract class AbstractClusteringPrefix implements ClusteringPrefix
                 return false;
 
         return true;
+    }
+
+    public String toString()
+    {
+        MoreObjects.ToStringHelper sh = MoreObjects.toStringHelper(this)
+                                                   .add("kind", kind);
+        if (values != null)
+        {
+            sh.add("values.length", values.length);
+            for (int i = 0; i < values.length; i++)
+            {
+                ByteBuffer bb = ByteBuffer.allocate(values[i].remaining());
+                bb.put(values[i].duplicate());
+                sh.add("values[" + i + ']', Hex.bytesToHex(bb.array()));
+            }
+        }
+        return sh.toString();
     }
 }
