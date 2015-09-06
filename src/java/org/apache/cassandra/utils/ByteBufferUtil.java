@@ -302,6 +302,13 @@ public class ByteBufferUtil
         out.write(bytes);
     }
 
+    public static void writeWithLength(byte[] buffer, ByteBuffer out)
+    {
+        int length = buffer.length;
+        out.putInt(length);
+        out.put(buffer);
+    }
+
     public static void writeWithShortLength(ByteBuffer buffer, DataOutputPlus out) throws IOException
     {
         int length = buffer.remaining();
@@ -327,6 +334,11 @@ public class ByteBufferUtil
         }
 
         return ByteBufferUtil.read(in, length);
+    }
+
+    public static ByteBuffer readWithLength(ByteBuffer in)
+    {
+        return ByteBufferUtil.read(in, in.getInt());
     }
 
     public static ByteBuffer readWithVIntLength(DataInputPlus in) throws IOException
@@ -398,6 +410,16 @@ public class ByteBufferUtil
 
         byte[] buff = new byte[length];
         in.readFully(buff);
+        return ByteBuffer.wrap(buff);
+    }
+
+    public static ByteBuffer read(ByteBuffer in, int length)
+    {
+        if (length == 0)
+            return EMPTY_BYTE_BUFFER;
+
+        byte[] buff = new byte[length];
+        in.get(buff);
         return ByteBuffer.wrap(buff);
     }
 

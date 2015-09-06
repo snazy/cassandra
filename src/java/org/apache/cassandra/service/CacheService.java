@@ -163,10 +163,9 @@ public class CacheService implements CacheServiceMBean
     {
         logger.info("Initializing counter cache with capacity of {} MBs", DatabaseDescriptor.getCounterCacheSizeInMB());
 
-        long capacity = DatabaseDescriptor.getCounterCacheSizeInMB() * 1024 * 1024;
-
+        ICache<CounterCacheKey, ClockAndCount> cc = OHCCounterCache.create();
         AutoSavingCache<CounterCacheKey, ClockAndCount> cache =
-            new AutoSavingCache<>(ConcurrentLinkedHashCache.<CounterCacheKey, ClockAndCount>create(capacity),
+            new AutoSavingCache<>(cc,
                                   CacheType.COUNTER_CACHE,
                                   new CounterCacheSerializer());
 
