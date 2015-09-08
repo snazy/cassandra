@@ -40,8 +40,6 @@ public class ClusteringComparator implements Comparator<Clusterable>
 {
     private final List<AbstractType<?>> clusteringTypes;
 
-    private final Comparator<IndexInfo> indexComparator;
-    private final Comparator<IndexInfo> indexReverseComparator;
     private final Comparator<Clusterable> reverseComparator;
 
     private final Comparator<Row> rowComparator = (r1, r2) -> compare(r1.clustering(), r2.clustering());
@@ -56,8 +54,6 @@ public class ClusteringComparator implements Comparator<Clusterable>
         // copy the list to ensure despatch is monomorphic
         this.clusteringTypes = ImmutableList.copyOf(clusteringTypes);
 
-        this.indexComparator = (o1, o2) -> ClusteringComparator.this.compare(o1.getLastName(), o2.getLastName());
-        this.indexReverseComparator = (o1, o2) -> ClusteringComparator.this.compare(o1.getFirstName(), o2.getFirstName());
         this.reverseComparator = (c1, c2) -> ClusteringComparator.this.compare(c2, c1);
         for (AbstractType<?> type : clusteringTypes)
             type.checkComparable(); // this should already be enforced by CFMetaData.rebuild, but we check again for other constructors
@@ -217,11 +213,6 @@ public class ClusteringComparator implements Comparator<Clusterable>
     public Comparator<Row> rowComparator()
     {
         return rowComparator;
-    }
-
-    public Comparator<IndexInfo> indexComparator(boolean reversed)
-    {
-        return reversed ? indexReverseComparator : indexComparator;
     }
 
     public Comparator<Clusterable> reversed()

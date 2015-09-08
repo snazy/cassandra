@@ -253,7 +253,7 @@ public class SSTableIterator extends AbstractSSTableIterator
             // and we need to return it (we also don't skip the slice for the old format because we didn't have the openMarker
             // info in that case and can't rely on this optimization).
             if (indexState.currentBlockIdx() == lastBlockIdx
-                && metadata().comparator.compare(slice.end(), indexState.currentIndex().getFirstName()) < 0
+                && metadata().comparator.compare(slice.end(), indexState.getFirstName(indexState.currentBlockIdx())) < 0
                 && openMarker == null
                 && sstable.descriptor.version.storeRows())
             {

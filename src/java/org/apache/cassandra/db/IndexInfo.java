@@ -31,6 +31,19 @@ import org.apache.cassandra.io.util.DataInputPlus;
 import org.apache.cassandra.io.util.DataOutputPlus;
 import org.apache.cassandra.utils.ObjectSizes;
 
+/**
+ * Each {@link IndexInfo} object is serialized as follows:
+ * {@code
+ *    (*) IndexInfo.firstName (ClusteringPrefix serializer, either Clustering.serializer.serialize or Slice.Bound.serializer.serialize)
+ *    (*) IndexInfo.lastName (ClusteringPrefix serializer)
+ * (long) IndexInfo.offset
+ * (long) IndexInfo.width
+ * (bool) IndexInfo.endOpenMarker != null              (if version.storeRows)
+ *  (int) IndexInfo.endOpenMarker.localDeletionTime    (if version.storeRows && IndexInfo.endOpenMarker != null)
+ * (long) IndexInfo.endOpenMarker.markedForDeletionAt  (if version.storeRows && IndexInfo.endOpenMarker != null)
+ * }
+ * </p>
+ */
 public final class IndexInfo
 {
     private static final long EMPTY_SIZE = ObjectSizes.measure(new IndexInfo(null, null, 0, 0, null));
@@ -93,9 +106,8 @@ public final class IndexInfo
             this.version = version;
         }
 
-        public void serialize(IndexInfo info, DataOutputPlus out, List<AbstractType<?>> clusteringTypes) throws IOException
+        public void serialize(IndexInfo info, DataOutputPlus out, ISerializer<ClusteringPrefix> clusteringSerializer) throws IOException
         {
-            ISerializer<ClusteringPrefix> clusteringSerializer = metadata.serializers().clusteringPrefixSerializer(version, clusteringTypes);
             clusteringSerializer.serialize(info.firstName, out);
             clusteringSerializer.serialize(info.lastName, out);
             out.writeLong(info.offset);
@@ -109,29 +121,23 @@ public final class IndexInfo
             }
         }
 
-        public long readOffset(DataInputBuffer in, List<AbstractType<?>> clusteringTypes) throws IOException
+        public long readOffset(DataInputBuffer in, ISerializer<ClusteringPrefix> clusteringSerializer) throws IOException
         {
-            ISerializer<ClusteringPrefix> clusteringSerializer = metadata.serializers().clusteringPrefixSerializer(version, clusteringTypes);
-
             clusteringSerializer.skip(in);
             clusteringSerializer.skip(in);
             return in.readLong();
         }
 
-        public long readWidth(DataInputBuffer in, List<AbstractType<?>> clusteringTypes) throws IOException
+        public long readWidth(DataInputBuffer in, ISerializer<ClusteringPrefix> clusteringSerializer) throws IOException
         {
-            ISerializer<ClusteringPrefix> clusteringSerializer = metadata.serializers().clusteringPrefixSerializer(version, clusteringTypes);
-
             clusteringSerializer.skip(in);
             clusteringSerializer.skip(in);
             in.skipBytes(8);
             return in.readLong();
         }
 
-        public DeletionTime readEndOpenMarker(DataInputBuffer in, List<AbstractType<?>> clusteringTypes) throws IOException
+        public DeletionTime readEndOpenMarker(DataInputBuffer in, ISerializer<ClusteringPrefix> clusteringSerializer) throws IOException
         {
-            ISerializer<ClusteringPrefix> clusteringSerializer = metadata.serializers().clusteringPrefixSerializer(version, clusteringTypes);
-
             clusteringSerializer.skip(in);
             clusteringSerializer.skip(in);
             in.skipBytes(8 + 8);
@@ -141,10 +147,8 @@ public final class IndexInfo
                    : null;
         }
 
-        public IndexInfo deserialize(DataInputPlus in, List<AbstractType<?>> clusteringTypes) throws IOException
+        public IndexInfo deserialize(DataInputPlus in, ISerializer<ClusteringPrefix> clusteringSerializer) throws IOException
         {
-            ISerializer<ClusteringPrefix> clusteringSerializer = metadata.serializers().clusteringPrefixSerializer(version, clusteringTypes);
-
             ClusteringPrefix firstName = clusteringSerializer.deserialize(in);
             ClusteringPrefix lastName = clusteringSerializer.deserialize(in);
             long offset = in.readLong();
@@ -156,10 +160,8 @@ public final class IndexInfo
             return new IndexInfo(firstName, lastName, offset, width, endOpenMarker);
         }
 
-        public void skip(DataInputBuffer in, List<AbstractType<?>> clusteringTypes) throws IOException
+        public void skip(DataInputBuffer in, ISerializer<ClusteringPrefix> clusteringSerializer) throws IOException
         {
-            ISerializer<ClusteringPrefix> clusteringSerializer = metadata.serializers().clusteringPrefixSerializer(version, clusteringTypes);
-
             clusteringSerializer.skip(in);
             clusteringSerializer.skip(in);
             in.skipBytes(8 + 8);
@@ -167,9 +169,8 @@ public final class IndexInfo
                 DeletionTime.serializer.skip(in);
         }
 
-        public long serializedSize(IndexInfo info, List<AbstractType<?>> clusteringTypes)
+        public long serializedSize(IndexInfo info, ISerializer<ClusteringPrefix> clusteringSerializer)
         {
-            ISerializer<ClusteringPrefix> clusteringSerializer = metadata.serializers().clusteringPrefixSerializer(version, clusteringTypes);
             long size = clusteringSerializer.serializedSize(info.firstName)
                         + clusteringSerializer.serializedSize(info.lastName)
                         + TypeSizes.sizeof(info.offset)
@@ -182,6 +183,17 @@ public final class IndexInfo
                     size += DeletionTime.serializer.serializedSize(info.endOpenMarker);
             }
             return size;
+        }
+
+        public ClusteringPrefix readLastName(DataInputBuffer input, ISerializer<ClusteringPrefix> clusteringSerializer) throws IOException
+        {
+            clusteringSerializer.skip(input);
+            return clusteringSerializer.deserialize(input);
+        }
+
+        public ClusteringPrefix readFirstName(DataInputBuffer input, ISerializer<ClusteringPrefix> clusteringSerializer) throws IOException
+        {
+            return clusteringSerializer.deserialize(input);
         }
     }
 

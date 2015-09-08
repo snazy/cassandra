@@ -19,7 +19,6 @@ package org.apache.cassandra.db;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
-import java.util.Comparator;
 import java.util.Objects;
 
 import com.google.common.primitives.Ints;
@@ -30,6 +29,7 @@ import org.apache.cassandra.db.rows.RangeTombstoneMarker;
 import org.apache.cassandra.db.rows.Unfiltered;
 import org.apache.cassandra.db.rows.UnfilteredRowIterator;
 import org.apache.cassandra.db.rows.UnfilteredSerializer;
+import org.apache.cassandra.io.ISerializer;
 import org.apache.cassandra.io.sstable.format.Version;
 import org.apache.cassandra.io.util.DataInputBuffer;
 import org.apache.cassandra.io.util.DataInputPlus;
@@ -42,8 +42,8 @@ import org.apache.cassandra.utils.ByteBufferUtil;
 /**
  * Binary format of {@code RowIndexEntry} is defined as follows:
  * {@code
- * (long) position
- *  (int) serialized size of data that follows
+ * (long) position (64 bit long for pre-3.0, vint since 3.0)
+ *  (int) serialized size of data that follows (32 bit int for pre-3.0, vint since 3.0)
  *  (int) DeletionTime.localDeletionTime
  * (long) DeletionTime.markedForDeletionAt
  *  (int) number of IndexInfo objects
@@ -51,17 +51,7 @@ import org.apache.cassandra.utils.ByteBufferUtil;
  *    (*) offsets of serialized IndexInfo objects, since version "ma" (3.0)
  * }
  * <p>
- * Each {@link IndexInfo} object is serialized as follows:
- * {@code
- *    (*) IndexInfo.firstName (ClusteringPrefix serializer, either Clustering.serializer.serialize or Slice.Bound.serializer.serialize)
- *    (*) IndexInfo.lastName (ClusteringPrefix serializer)
- * (long) IndexInfo.offset
- * (long) IndexInfo.width
- * (bool) IndexInfo.endOpenMarker != null              (if version.storeRows)
- *  (int) IndexInfo.endOpenMarker.localDeletionTime    (if version.storeRows && IndexInfo.endOpenMarker != null)
- * (long) IndexInfo.endOpenMarker.markedForDeletionAt  (if version.storeRows && IndexInfo.endOpenMarker != null)
- * }
- * </p>
+ * See {@link IndexInfo} for a description of the serialized format.
  */
 public class RowIndexEntry
 {
@@ -121,6 +111,16 @@ public class RowIndexEntry
         throw new UnsupportedOperationException();
     }
 
+    public ClusteringPrefix firstName(int blockIdx)
+    {
+        throw new UnsupportedOperationException();
+    }
+
+    public ClusteringPrefix lastName(int blockIdx)
+    {
+        throw new UnsupportedOperationException();
+    }
+
     /**
      * The index of the IndexInfo in which a scan starting with @name should begin.
      *
@@ -163,12 +163,11 @@ public class RowIndexEntry
                 startIdx = lastIndex;
             }
         }
-        int index = binarySearch(name, comparator.indexComparator(reversed), reversed, startIdx, endIdx);
+        int index = binarySearch(name, reversed, startIdx, endIdx);
         return index < 0 ? -index - (reversed ? 2 : 1) : index;
     }
 
-    int binarySearch(ClusteringPrefix name, Comparator<IndexInfo> c,
-                     boolean reversed, int fromIndex, int toIndex) {
+    int binarySearch(ClusteringPrefix name, boolean reversed, int fromIndex, int toIndex) {
         return -1;
     }
 
@@ -249,12 +248,13 @@ public class RowIndexEntry
                     int[] offsets = new int[indexCount];
 
                     IndexInfo.Serializer idxSerializer = metadata.serializers().indexSerializer(version);
+                    ISerializer<ClusteringPrefix> clusteringSerializer = metadata.serializers().clusteringPrefixSerializer(version, metadata.clusteringTypes());
                     for (int i = 0; i < indexCount; i++)
                     {
                         IndexInfo ii = rie.indexInfo(i);
                         offsets[i] = offset;
-                        idxSerializer.serialize(ii, out, metadata.clusteringTypes());
-                        offset += idxSerializer.serializedSize(ii, metadata.clusteringTypes());
+                        idxSerializer.serialize(ii, out, clusteringSerializer);
+                        offset += idxSerializer.serializedSize(ii, clusteringSerializer);
                     }
 
                     for (int off : offsets)
@@ -340,6 +340,7 @@ public class RowIndexEntry
         private final int offsetsOffset;
         private final CFMetaData metadata;
         private final IndexInfo.Serializer serializer;
+        private final ISerializer<ClusteringPrefix> clusteringSerializer;
         private final Version version;
         private IndexInfo lastIndexInfo;
         private int lastIndexInfoIndex = -1;
@@ -363,6 +364,7 @@ public class RowIndexEntry
             this.metadata = metadata;
             this.version = version;
             this.serializer = metadata.serializers().indexSerializer(version);
+            this.clusteringSerializer = metadata.serializers().clusteringPrefixSerializer(version, metadata.clusteringTypes());
 
         }
 
@@ -394,7 +396,7 @@ public class RowIndexEntry
             try (DataInputBuffer input = new DataInputBuffer(buf, false))
             {
                 indexInfo(blockIdx, false, buf, input);
-                return getPosition() + serializer.readOffset(input, metadata.clusteringTypes());
+                return getPosition() + serializer.readOffset(input, clusteringSerializer);
             }
             catch (IOException e)
             {
@@ -411,7 +413,7 @@ public class RowIndexEntry
             try (DataInputBuffer input = new DataInputBuffer(buf, false))
             {
                 indexInfo(blockIdx, false, buf, input);
-                return serializer.readWidth(input, metadata.clusteringTypes());
+                return serializer.readWidth(input, clusteringSerializer);
             }
             catch (IOException e)
             {
@@ -428,7 +430,41 @@ public class RowIndexEntry
             try (DataInputBuffer input = new DataInputBuffer(buf, false))
             {
                 indexInfo(blockIdx, false, buf, input);
-                return serializer.readEndOpenMarker(input, metadata.clusteringTypes());
+                return serializer.readEndOpenMarker(input, clusteringSerializer);
+            }
+            catch (IOException e)
+            {
+                throw new RuntimeException(e);
+            }
+        }
+
+        public ClusteringPrefix firstName(int blockIdx)
+        {
+            if (lastIndexInfoIndex == blockIdx)
+                return lastIndexInfo.getFirstName();
+
+            ByteBuffer buf = buffer.duplicate();
+            try (DataInputBuffer input = new DataInputBuffer(buf, false))
+            {
+                indexInfo(blockIdx, false, buf, input);
+                return serializer.readFirstName(input, clusteringSerializer);
+            }
+            catch (IOException e)
+            {
+                throw new RuntimeException(e);
+            }
+        }
+
+        public ClusteringPrefix lastName(int blockIdx)
+        {
+            if (lastIndexInfoIndex == blockIdx)
+                return lastIndexInfo.getFirstName();
+
+            ByteBuffer buf = buffer.duplicate();
+            try (DataInputBuffer input = new DataInputBuffer(buf, false))
+            {
+                indexInfo(blockIdx, false, buf, input);
+                return serializer.readLastName(input, clusteringSerializer);
             }
             catch (IOException e)
             {
@@ -499,7 +535,7 @@ public class RowIndexEntry
                     if (i == index)
                         break;
 
-                    serializer.skip(input, metadata.clusteringTypes());
+                    serializer.skip(input, clusteringSerializer);
                 }
             }
 
@@ -507,7 +543,7 @@ public class RowIndexEntry
                 // used by serialize() methods via ensureIndexInfoOffsets() to calculate all IndexInfo offsets
                 return null;
 
-            IndexInfo info = serializer.deserialize(input, metadata.clusteringTypes());
+            IndexInfo info = serializer.deserialize(input, clusteringSerializer);
 
             if (!hasIndexInfoOffsets() && indexCount() > index + 1)
             {
@@ -555,7 +591,7 @@ public class RowIndexEntry
             for (int i = 0; i < indexCount; i++)
             {
                 IndexInfo ii = indexInfo(i);
-                size += idxSerializer.serializedSize(ii, metadata.clusteringTypes());
+                size += idxSerializer.serializedSize(ii, clusteringSerializer);
             }
 
             size += 4 * indexCount;
@@ -563,8 +599,7 @@ public class RowIndexEntry
             return size;
         }
 
-        int binarySearch(ClusteringPrefix name, Comparator<IndexInfo> c,
-                         boolean reversed, int fromIndex, int toIndex) {
+        int binarySearch(ClusteringPrefix name, boolean reversed, int fromIndex, int toIndex) {
             int low = fromIndex;
             int high = toIndex - 1;
 
@@ -580,10 +615,10 @@ public class RowIndexEntry
                     //
                     // "seek" to start of serialized IndexInfo
                     indexInfo(mid, false, buf, input);
-                    if (!reversed)
-                        // skip IndexInfo.firstName
-                        ClusteringPrefix.serializer.skip(input, version.correspondingMessagingVersion(), metadata.clusteringTypes());
-                    ClusteringPrefix c2 = ClusteringPrefix.serializer.deserialize(input, version.correspondingMessagingVersion(), metadata.clusteringTypes());
+
+                    ClusteringPrefix c2 = reversed
+                                          ? serializer.readFirstName(input, clusteringSerializer)
+                                          : serializer.readLastName(input, clusteringSerializer);
                     int cmp = -metadata.comparator.compare(name, c2);
 
                     if (cmp < 0)
@@ -643,6 +678,7 @@ public class RowIndexEntry
         private DataOutputBuffer offsetsBuffer;
         private final DeletionTime deletionTime;
         private int indexCount;
+        private ISerializer<ClusteringPrefix> clusteringSerializer;
 
         Builder(UnfilteredRowIterator iterator,
                 SequentialWriter writer,
@@ -721,6 +757,7 @@ public class RowIndexEntry
                     DeletionTime.serializer.serialize(deletionTime, buffer);
                     buffer.writeInt(0); // placeholder for number of IndexInfo objects
 
+                    clusteringSerializer = metadata.serializers().clusteringPrefixSerializer(version, metadata.clusteringTypes());
                     addIndexInfo(firstIndexInfo);
 
                     firstIndexInfo = null;
@@ -739,7 +776,7 @@ public class RowIndexEntry
         private void addIndexInfo(IndexInfo cIndexInfo) throws IOException
         {
             offsetsBuffer.writeInt(buffer.getLength());
-            metadata.serializers().latestVersionIndexSerializer.serialize(cIndexInfo, buffer, metadata.clusteringTypes());
+            metadata.serializers().latestVersionIndexSerializer.serialize(cIndexInfo, buffer, clusteringSerializer);
             indexCount++;
         }
 

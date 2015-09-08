@@ -483,14 +483,14 @@ abstract class AbstractSSTableIterator implements SliceableUnfilteredRowIterator
             return currentIndexIdx;
         }
 
-        public IndexInfo currentIndex()
+        public ClusteringPrefix getFirstName(int blockIdx)
         {
-            return index(currentIndexIdx);
+            return indexEntry.firstName(blockIdx);
         }
 
-        public IndexInfo index(int i)
+        public ClusteringPrefix getLastName(int blockIdx)
         {
-            return indexEntry.indexInfo(i);
+            return indexEntry.lastName(blockIdx);
         }
 
         // Finds the index of the first block containing the provided bound, starting at the provided index.
