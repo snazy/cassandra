@@ -208,7 +208,7 @@ public class RowIndexEntry
         int serializedSize(RowIndexEntry rie);
     }
 
-    public static class Serializer implements IndexSerializer
+    public static final class Serializer implements IndexSerializer
     {
         private final CFMetaData metadata;
         private final Version version;
@@ -329,7 +329,7 @@ public class RowIndexEntry
     /**
      * An entry in the row index for a row whose columns are indexed.
      */
-    private static class IndexedEntry extends RowIndexEntry
+    private static final class IndexedEntry extends RowIndexEntry
     {
         // binary representation of serialized RowIndexEntry.IndexedEntry
         private final ByteBuffer buffer;
@@ -342,8 +342,6 @@ public class RowIndexEntry
         private final IndexInfo.Serializer serializer;
         private final ISerializer<ClusteringPrefix> clusteringSerializer;
         private final Version version;
-        private IndexInfo lastIndexInfo;
-        private int lastIndexInfoIndex = -1;
 
         IndexedEntry(long position, ByteBuffer buffer, CFMetaData metadata, Version version)
         {
@@ -389,9 +387,6 @@ public class RowIndexEntry
 
         public long blockOffset(int blockIdx)
         {
-            if (lastIndexInfoIndex == blockIdx)
-                return getPosition() + lastIndexInfo.getOffset();
-
             ByteBuffer buf = buffer.duplicate();
             try (DataInputBuffer input = new DataInputBuffer(buf, false))
             {
@@ -406,9 +401,6 @@ public class RowIndexEntry
 
         public long blockWidth(int blockIdx)
         {
-            if (lastIndexInfoIndex == blockIdx)
-                return lastIndexInfo.getWidth();
-
             ByteBuffer buf = buffer.duplicate();
             try (DataInputBuffer input = new DataInputBuffer(buf, false))
             {
@@ -423,9 +415,6 @@ public class RowIndexEntry
 
         public DeletionTime endOpenMarker(int blockIdx)
         {
-            if (lastIndexInfoIndex == blockIdx)
-                return lastIndexInfo.getEndOpenMarker();
-
             ByteBuffer buf = buffer.duplicate();
             try (DataInputBuffer input = new DataInputBuffer(buf, false))
             {
@@ -440,9 +429,6 @@ public class RowIndexEntry
 
         public ClusteringPrefix firstName(int blockIdx)
         {
-            if (lastIndexInfoIndex == blockIdx)
-                return lastIndexInfo.getFirstName();
-
             ByteBuffer buf = buffer.duplicate();
             try (DataInputBuffer input = new DataInputBuffer(buf, false))
             {
@@ -457,9 +443,6 @@ public class RowIndexEntry
 
         public ClusteringPrefix lastName(int blockIdx)
         {
-            if (lastIndexInfoIndex == blockIdx)
-                return lastIndexInfo.getFirstName();
-
             ByteBuffer buf = buffer.duplicate();
             try (DataInputBuffer input = new DataInputBuffer(buf, false))
             {
@@ -475,20 +458,13 @@ public class RowIndexEntry
         @Override
         public IndexInfo indexInfo(int index)
         {
-            return indexInfo(index, true);
-        }
-
-        private IndexInfo indexInfo(int index, boolean deserialize)
-        {
-            // This method is called often with the same index argument.
-            // (see org.apache.cassandra.db.columniterator.AbstractSSTableIterator.IndexState.currentIndex())
-            if (lastIndexInfoIndex == index)
-                return lastIndexInfo;
+            // This method is not (and should not) be in any hot code path as it always performs a full
+            // deserialization of IndexInfo object.
 
             ByteBuffer buf = buffer.duplicate();
             try (DataInputBuffer input = new DataInputBuffer(buf, false))
             {
-                return indexInfo(index, deserialize, buf, input);
+                return indexInfo(index, true, buf, input);
             }
             catch (IOException e)
             {
@@ -551,8 +527,6 @@ public class RowIndexEntry
                 indexInfoOffset(index + 1, buf.position());
             }
 
-            lastIndexInfoIndex = index;
-            lastIndexInfo = info;
             return info;
         }
 
@@ -635,27 +609,13 @@ public class RowIndexEntry
                 throw new RuntimeException(e);
             }
         }
-
-        public boolean equals(Object o)
-        {
-            if (this == o) return true;
-            if (o == null || getClass() != o.getClass()) return false;
-            if (!super.equals(o)) return false;
-            IndexedEntry that = (IndexedEntry) o;
-            return buffer.equals(that.buffer);
-        }
-
-        public int hashCode()
-        {
-            return Objects.hash(super.hashCode(), buffer);
-        }
     }
 
     /**
      * Help to create an index for a column family based on size of columns,
      * and write said columns to disk.
      */
-    private static class Builder
+    private static final class Builder
     {
         private final UnfilteredRowIterator iterator;
         private final SequentialWriter writer;
