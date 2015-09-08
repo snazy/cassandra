@@ -80,12 +80,14 @@ public class KeyIterator extends AbstractIterator<DecoratedKey> implements Close
         }
     }
 
+    private final Descriptor desc;
     private final In in;
     private final IPartitioner partitioner;
 
 
     public KeyIterator(Descriptor desc, CFMetaData metadata)
     {
+        this.desc = desc;
         in = new In(new File(desc.filenameFor(Component.PRIMARY_INDEX)));
         partitioner = metadata.partitioner;
     }
@@ -98,7 +100,7 @@ public class KeyIterator extends AbstractIterator<DecoratedKey> implements Close
                 return endOfData();
 
             DecoratedKey key = partitioner.decorateKey(ByteBufferUtil.readWithShortLength(in.get()));
-            RowIndexEntry.Serializer.skip(in.get()); // skip remainder of the entry
+            RowIndexEntry.Serializer.skip(in.get(), desc.version); // skip remainder of the entry
             return key;
         }
         catch (IOException e)

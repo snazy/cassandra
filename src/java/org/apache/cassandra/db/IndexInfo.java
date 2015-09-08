@@ -109,6 +109,38 @@ public final class IndexInfo
             }
         }
 
+        public long readOffset(DataInputBuffer in, List<AbstractType<?>> clusteringTypes) throws IOException
+        {
+            ISerializer<ClusteringPrefix> clusteringSerializer = metadata.serializers().clusteringPrefixSerializer(version, clusteringTypes);
+
+            clusteringSerializer.skip(in);
+            clusteringSerializer.skip(in);
+            return in.readLong();
+        }
+
+        public long readWidth(DataInputBuffer in, List<AbstractType<?>> clusteringTypes) throws IOException
+        {
+            ISerializer<ClusteringPrefix> clusteringSerializer = metadata.serializers().clusteringPrefixSerializer(version, clusteringTypes);
+
+            clusteringSerializer.skip(in);
+            clusteringSerializer.skip(in);
+            in.skipBytes(8);
+            return in.readLong();
+        }
+
+        public DeletionTime readEndOpenMarker(DataInputBuffer in, List<AbstractType<?>> clusteringTypes) throws IOException
+        {
+            ISerializer<ClusteringPrefix> clusteringSerializer = metadata.serializers().clusteringPrefixSerializer(version, clusteringTypes);
+
+            clusteringSerializer.skip(in);
+            clusteringSerializer.skip(in);
+            in.skipBytes(8 + 8);
+
+            return version.storeRows() && in.readBoolean()
+                   ? DeletionTime.serializer.deserialize(in)
+                   : null;
+        }
+
         public IndexInfo deserialize(DataInputPlus in, List<AbstractType<?>> clusteringTypes) throws IOException
         {
             ISerializer<ClusteringPrefix> clusteringSerializer = metadata.serializers().clusteringPrefixSerializer(version, clusteringTypes);
@@ -130,7 +162,7 @@ public final class IndexInfo
 
             clusteringSerializer.skip(in);
             clusteringSerializer.skip(in);
-            in.skip(8 + 8);
+            in.skipBytes(8 + 8);
             if (version.storeRows() && in.readBoolean())
                 DeletionTime.serializer.skip(in);
         }

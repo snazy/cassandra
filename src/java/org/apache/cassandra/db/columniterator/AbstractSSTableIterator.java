@@ -434,10 +434,10 @@ abstract class AbstractSSTableIterator implements SliceableUnfilteredRowIterator
         public void setToBlock(int blockIdx) throws IOException
         {
             if (blockIdx >= 0 && blockIdx < indexEntry.indexCount())
-                reader.seekToPosition(indexEntry.getPosition() + indexEntry.indexInfo(blockIdx).getOffset());
+                reader.seekToPosition(indexEntry.blockOffset(blockIdx));
 
             currentIndexIdx = blockIdx;
-            reader.openMarker = blockIdx > 0 ? indexEntry.indexInfo(blockIdx - 1).getEndOpenMarker() : null;
+            reader.openMarker = blockIdx > 0 ? indexEntry.endOpenMarker(blockIdx - 1) : null;
             mark = reader.file.mark();
         }
 
@@ -452,12 +452,12 @@ abstract class AbstractSSTableIterator implements SliceableUnfilteredRowIterator
             assert currentIndexIdx >= 0;
             while (currentIndexIdx + 1 < indexEntry.indexCount() && isPastCurrentBlock())
             {
-                reader.openMarker = currentIndex().getEndOpenMarker();
+                reader.openMarker = indexEntry.endOpenMarker(currentIndexIdx);
                 ++currentIndexIdx;
 
                 // We have to set the mark, and we have to set it at the beginning of the block. So if we're not at the beginning of the block, this forces us to a weird seek dance.
                 // This can only happen when reading old file however.
-                long startOfBlock = indexEntry.getPosition() + indexEntry.indexInfo(currentIndexIdx).getOffset();
+                long startOfBlock = indexEntry.blockOffset(currentBlockIdx());
                 long currentFilePointer = reader.file.getFilePointer();
                 if (startOfBlock == currentFilePointer)
                 {
@@ -475,7 +475,7 @@ abstract class AbstractSSTableIterator implements SliceableUnfilteredRowIterator
         // Check if we've crossed an index boundary (based on the mark on the beginning of the index block).
         public boolean isPastCurrentBlock()
         {
-            return reader.file.bytesPastMark(mark) >= currentIndex().getWidth();
+            return reader.file.bytesPastMark(mark) >= indexEntry.blockWidth(currentBlockIdx());
         }
 
         public int currentBlockIdx()

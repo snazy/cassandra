@@ -17,7 +17,6 @@
  */
 package org.apache.cassandra.db;
 
-import java.io.DataInput;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.Comparator;
@@ -103,6 +102,21 @@ public class RowIndexEntry
     }
 
     public DeletionTime deletionTime()
+    {
+        throw new UnsupportedOperationException();
+    }
+
+    public long blockOffset(int blockIdx)
+    {
+        throw new UnsupportedOperationException();
+    }
+
+    public long blockWidth(int blockIdx)
+    {
+        throw new UnsupportedOperationException();
+    }
+
+    public DeletionTime endOpenMarker(int blockIdx)
     {
         throw new UnsupportedOperationException();
     }
@@ -208,14 +222,16 @@ public class RowIndexEntry
 
         public void serialize(RowIndexEntry rie, DataOutputPlus out) throws IOException
         {
-            out.writeLong(rie.getPosition());
+            assert version.storeRows() : "We read old index files but we should never write them";
+
+            out.writeUnsignedVInt(rie.getPosition());
 
             if (rie.isIndexed())
             {
                 IndexedEntry indexed = (IndexedEntry) rie;
                 if (indexed.version.equals(version))
                 {
-                    out.writeInt(indexed.buffer.limit());
+                    out.writeUnsignedVInt(indexed.buffer.limit());
                     indexed.buffer.position(0);
                     out.write(indexed.buffer);
                 }
@@ -223,7 +239,7 @@ public class RowIndexEntry
                 {
                     // manual serialization of older version to latest version
 
-                    out.writeInt(rie.promotedSize(metadata, version));
+                    out.writeUnsignedVInt(rie.promotedSize(metadata, version));
 
                     int indexCount = rie.indexCount();
                     DeletionTime.serializer.serialize(rie.deletionTime(), out);
@@ -246,20 +262,34 @@ public class RowIndexEntry
                 }
             }
             else
-                out.writeInt(0);
+                out.writeUnsignedVInt(0);
         }
 
         public int serializedSize(RowIndexEntry rie)
         {
             int promotedSize = rie.promotedSize(metadata, version);
-            return TypeSizes.sizeof(rie.getPosition()) + TypeSizes.sizeof(promotedSize) + promotedSize;
+
+            return version.storeRows()
+                   ? TypeSizes.sizeofUnsignedVInt(rie.getPosition()) + TypeSizes.sizeofUnsignedVInt(promotedSize) + promotedSize
+                   : TypeSizes.sizeof(rie.getPosition()) + TypeSizes.sizeof(promotedSize) + promotedSize;
         }
 
         public RowIndexEntry deserialize(DataInputPlus in) throws IOException
         {
-            long position = in.readLong();
+            long position;
+            int size;
 
-            int size = in.readInt();
+            if (version.storeRows())
+            {
+                position = in.readUnsignedVInt();
+                size = (int) in.readUnsignedVInt();
+            }
+            else
+            {
+                position = in.readLong();
+                size = in.readInt();
+            }
+
             if (size > 0)
             {
                 ByteBuffer buffer = ByteBufferUtil.read(in, size);
@@ -271,20 +301,24 @@ public class RowIndexEntry
             }
         }
 
-        public static long readPosition(DataInput in) throws IOException
+        public static long readPosition(DataInputPlus in, Version version) throws IOException
         {
-            return in.readLong();
+            return version.storeRows()
+                   ? in.readUnsignedVInt()
+                   : in.readLong();
         }
 
-        public static void skip(DataInput in) throws IOException
+        public static void skip(DataInputPlus in, Version version) throws IOException
         {
-            in.readLong();
-            skipPromotedIndex(in);
+            readPosition(in, version);
+            skipPromotedIndex(in, version);
         }
 
-        public static void skipPromotedIndex(DataInput in) throws IOException
+        public static void skipPromotedIndex(DataInputPlus in, Version version) throws IOException
         {
-            int size = in.readInt();
+            int size = version.storeRows()
+                       ? (int)in.readUnsignedVInt()
+                       : in.readInt();
             if (size <= 0)
                 return;
 
@@ -347,7 +381,59 @@ public class RowIndexEntry
         @Override
         public int indexCount()
         {
-            return buffer.getInt((int) DeletionTime.serializer.serializedSize(null));
+            int offset = (int) DeletionTime.serializer.serializedSize(null);
+            return buffer.getInt(offset);
+        }
+
+        public long blockOffset(int blockIdx)
+        {
+            if (lastIndexInfoIndex == blockIdx)
+                return getPosition() + lastIndexInfo.getOffset();
+
+            ByteBuffer buf = buffer.duplicate();
+            try (DataInputBuffer input = new DataInputBuffer(buf, false))
+            {
+                indexInfo(blockIdx, false, buf, input);
+                return getPosition() + serializer.readOffset(input, metadata.clusteringTypes());
+            }
+            catch (IOException e)
+            {
+                throw new RuntimeException(e);
+            }
+        }
+
+        public long blockWidth(int blockIdx)
+        {
+            if (lastIndexInfoIndex == blockIdx)
+                return lastIndexInfo.getWidth();
+
+            ByteBuffer buf = buffer.duplicate();
+            try (DataInputBuffer input = new DataInputBuffer(buf, false))
+            {
+                indexInfo(blockIdx, false, buf, input);
+                return serializer.readWidth(input, metadata.clusteringTypes());
+            }
+            catch (IOException e)
+            {
+                throw new RuntimeException(e);
+            }
+        }
+
+        public DeletionTime endOpenMarker(int blockIdx)
+        {
+            if (lastIndexInfoIndex == blockIdx)
+                return lastIndexInfo.getEndOpenMarker();
+
+            ByteBuffer buf = buffer.duplicate();
+            try (DataInputBuffer input = new DataInputBuffer(buf, false))
+            {
+                indexInfo(blockIdx, false, buf, input);
+                return serializer.readEndOpenMarker(input, metadata.clusteringTypes());
+            }
+            catch (IOException e)
+            {
+                throw new RuntimeException(e);
+            }
         }
 
         @Override
@@ -476,34 +562,6 @@ public class RowIndexEntry
 
             return size;
         }
-
-        /*
-
-        this.indexComparator = (o1, o2) -> ClusteringComparator.this.compare(o1.getLastName(), o2.getLastName());
-        this.indexReverseComparator = (o1, o2) -> ClusteringComparator.this.compare(o1.getFirstName(), o2.getFirstName());
-
-        public int compare(ClusteringPrefix c1, ClusteringPrefix c2)
-        {
-            int s1 = c1.size();
-            int s2 = c2.size();
-            int minSize = Math.min(s1, s2);
-
-            for (int i = 0; i < minSize; i++)
-            {
-                int cmp = compareComponent(i, c1.get(i), c2.get(i));
-                if (cmp != 0)
-                    return cmp;
-            }
-
-            if (s1 == s2)
-                return ClusteringPrefix.Kind.compare(c1.kind(), c2.kind());
-
-            return s1 < s2 ? c1.kind().comparedToClustering : -c2.kind().comparedToClustering;
-        }
-
-
-
-        */
 
         int binarySearch(ClusteringPrefix name, Comparator<IndexInfo> c,
                          boolean reversed, int fromIndex, int toIndex) {

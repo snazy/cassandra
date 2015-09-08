@@ -313,8 +313,9 @@ public class SSTableReversedIterator extends AbstractSSTableIterator
             boolean includeFirst = true;
             if (!sstable.descriptor.version.storeRows() && currentBlock > 0)
             {
+                IndexInfo current = indexState.index(currentBlock); // fetch "current" before previous, as current should be already there in its deserialized representation
                 ClusteringPrefix lastOfPrevious = indexState.index(currentBlock - 1).getLastName();
-                ClusteringPrefix firstOfCurrent = indexState.index(currentBlock).getFirstName();
+                ClusteringPrefix firstOfCurrent = current.getFirstName();
                 includeFirst = metadata().comparator.compare(lastOfPrevious, firstOfCurrent) != 0;
             }
             loadFromDisk(canIncludeSliceStart ? slice.start() : null, canIncludeSliceEnd ? slice.end() : null, includeFirst);
