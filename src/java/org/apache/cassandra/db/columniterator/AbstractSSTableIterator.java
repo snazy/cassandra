@@ -434,10 +434,10 @@ abstract class AbstractSSTableIterator implements SliceableUnfilteredRowIterator
         public void setToBlock(int blockIdx) throws IOException
         {
             if (blockIdx >= 0 && blockIdx < indexEntry.indexCount())
-                reader.seekToPosition(indexEntry.blockOffset(blockIdx));
+                reader.seekToPosition(indexEntry.getPosition() + indexEntry.indexInfo(blockIdx).getOffset());
 
             currentIndexIdx = blockIdx;
-            reader.openMarker = blockIdx > 0 ? indexEntry.endOpenMarker(blockIdx - 1) : null;
+            reader.openMarker = blockIdx > 0 ? indexEntry.indexInfo(blockIdx - 1).getEndOpenMarker() : null;
             mark = reader.file.mark();
         }
 
@@ -452,12 +452,12 @@ abstract class AbstractSSTableIterator implements SliceableUnfilteredRowIterator
             assert currentIndexIdx >= 0;
             while (currentIndexIdx + 1 < indexEntry.indexCount() && isPastCurrentBlock())
             {
-                reader.openMarker = indexEntry.endOpenMarker(currentIndexIdx);
+                reader.openMarker = currentIndex().getEndOpenMarker();
                 ++currentIndexIdx;
 
                 // We have to set the mark, and we have to set it at the beginning of the block. So if we're not at the beginning of the block, this forces us to a weird seek dance.
                 // This can only happen when reading old file however.
-                long startOfBlock = indexEntry.blockOffset(currentBlockIdx());
+                long startOfBlock = indexEntry.getPosition() + indexEntry.indexInfo(currentIndexIdx).getOffset();
                 long currentFilePointer = reader.file.getFilePointer();
                 if (startOfBlock == currentFilePointer)
                 {
@@ -475,7 +475,7 @@ abstract class AbstractSSTableIterator implements SliceableUnfilteredRowIterator
         // Check if we've crossed an index boundary (based on the mark on the beginning of the index block).
         public boolean isPastCurrentBlock()
         {
-            return reader.file.bytesPastMark(mark) >= indexEntry.blockWidth(currentBlockIdx());
+            return reader.file.bytesPastMark(mark) >= currentIndex().getWidth();
         }
 
         public int currentBlockIdx()
@@ -483,14 +483,14 @@ abstract class AbstractSSTableIterator implements SliceableUnfilteredRowIterator
             return currentIndexIdx;
         }
 
-        public ClusteringPrefix getFirstName(int blockIdx)
+        public IndexInfo currentIndex()
         {
-            return indexEntry.firstName(blockIdx);
+            return index(currentIndexIdx);
         }
 
-        public ClusteringPrefix getLastName(int blockIdx)
+        public IndexInfo index(int i)
         {
-            return indexEntry.lastName(blockIdx);
+            return indexEntry.indexInfo(i);
         }
 
         // Finds the index of the first block containing the provided bound, starting at the provided index.

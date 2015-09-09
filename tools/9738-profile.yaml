@@ -27,7 +27,7 @@ columnspec:
     population: gaussian(1..50)
   - name: discr1
     size: uniform(30..250)
-    population: gaussian(1..100)
+    population: gaussian(1..500)
   - name: discr2
     size: uniform(30..250)
     population: gaussian(1..1000)

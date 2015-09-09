@@ -86,7 +86,7 @@ public class RowIndexEntryTest extends CQLTester
         DataOutputBuffer dob = new DataOutputBuffer();
         DeletionTime.serializer.serialize(DeletionTime.LIVE, dob);
         IndexInfo.Serializer indexSerializer = cfMeta.serializers().indexSerializer(BigFormat.latestVersion);
-        ISerializer<ClusteringPrefix> clusteringSerializer = cfMeta.serializers().clusteringPrefixSerializer(BigFormat.latestVersion, cfMeta.clusteringTypes());
+        ISerializer<ClusteringPrefix> clusteringSerializer = cfMeta.serializers().clusteringPrefixSerializer(BigFormat.latestVersion);
         dob.writeInt(3);
         int off0 = dob.getLength();
         indexSerializer.serialize(new IndexInfo(cn(0L), cn(5L), 0, 0, deletionInfo), dob, clusteringSerializer);
@@ -205,6 +205,7 @@ public class RowIndexEntryTest extends CQLTester
                                                          cfMeta.comparator.compare(ii.getLastName(), value) < 0);
                 }
 
+// TODO re-add after CASSANDRA-10237
 //                for (Version otherVersion : VERSIONS_NOT_LATEST)
 //                {
 //                    try

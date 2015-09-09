@@ -18,6 +18,13 @@ using the provided 'sstableupgrade' tool.
 
 New features
 ------------
+   - Key cache is now fully off-heap.
+     This means that more memory will be required by Cassandra as the memory for
+     the key cache will be now allocated outside the Java heap. So be sure to
+     reserve as much memory as specified by key_cache_size_in_mb or implicitly
+     calculated using the default value calculation for key_cache_size_in_mb.
+     If you changed the default values for either Java heap or key_cache_size_in_mb,
+     you should re-evaluate these settings.
    - Support for IN restrictions on any partition key component or clustering key
      as well as support for EQ and IN multicolumn restrictions has been added to
      UPDATE and DELETE statement.

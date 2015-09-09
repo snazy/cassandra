@@ -47,7 +47,7 @@ public final class Serializers
         this.metadata = metadata;
         this.keyCacheHeader = SerializationHeader.forKeyCache(metadata);
         this.latestVersionIndexSerializer = createIndexSerializer(BigFormat.latestVersion);
-        this.latestVersionClusteringPrefixSerializer = clusteringPrefixSerializer(BigFormat.latestVersion, metadata.clusteringTypes());
+        this.latestVersionClusteringPrefixSerializer = createClusteringPrefixSerializer(BigFormat.latestVersion);
         this.latestVersionRowIndexSerializer = createRowIndexSerializer(BigFormat.latestVersion);
     }
 
@@ -78,12 +78,20 @@ public final class Serializers
     // TODO: Once we drop support for old (pre-3.0) sstables, we can drop this method and inline the calls to
     // ClusteringPrefix.serializer in IndexHelper directly. At which point this whole class probably becomes
     // unecessary (since IndexInfo.Serializer won't depend on the metadata either).
-    public ISerializer<ClusteringPrefix> clusteringPrefixSerializer(Version version, List<AbstractType<?>> clusteringTypes)
+    public ISerializer<ClusteringPrefix> clusteringPrefixSerializer(Version version)
+    {
+        if (version == BigFormat.latestVersion)
+            return latestVersionClusteringPrefixSerializer;
+
+        return createClusteringPrefixSerializer(version);
+    }
+
+    private ISerializer<ClusteringPrefix> createClusteringPrefixSerializer(Version version)
     {
         if (!version.storeRows())
             return new LegacyClusteringPrefixSerializer(metadata);
 
-        return new ClusteringPrefixSerializer(version.correspondingMessagingVersion(), clusteringTypes);
+        return new ClusteringPrefixSerializer(version.correspondingMessagingVersion(), metadata.clusteringTypes());
     }
 
     private static final class ClusteringPrefixSerializer implements ISerializer<ClusteringPrefix>
