@@ -293,11 +293,14 @@ public class RowIndexEntry
         private final Version version;
         private IndexInfo lastIndexInfo;
         private int lastIndexInfoIndex = -1;
+        private final int indexCount;
 
         IndexedEntry(long position, ByteBuffer buffer, CFMetaData metadata, Version version)
         {
             super(position);
             this.buffer = buffer;
+
+            this.indexCount = buffer.getInt(DELETION_TIME_SIZE);
 
             if (version.storeRows())
             {
@@ -332,7 +335,7 @@ public class RowIndexEntry
         @Override
         public int indexCount()
         {
-            return buffer.getInt(DELETION_TIME_SIZE);
+            return indexCount;
         }
 
         @Override
@@ -572,6 +575,16 @@ public class RowIndexEntry
 
                 buf = buffer.buffer();
                 buf.putInt(DELETION_TIME_SIZE, indexCount);
+
+                if (buf.capacity() - buf.limit() > 65536)
+                {
+                    // re-allocate, if buf wastes more than 64kB
+                    ByteBuffer re = ByteBuffer.allocate(buf.limit());
+                    re.put(buf);
+                    re.flip();
+                    buf = re;
+                }
+
                 return new IndexedEntry(position, buf, metadata, version);
             }
             else
@@ -594,8 +607,8 @@ public class RowIndexEntry
             {
                 if (firstIndexInfo != null)
                 {
-                    this.buffer = new DataOutputBuffer(4096);
-                    this.offsetsBuffer = new DataOutputBuffer(1024);
+                    this.buffer = new DataOutputBuffer(65536);
+                    this.offsetsBuffer = new DataOutputBuffer(16384);
 
                     DeletionTime.serializer.serialize(deletionTime, buffer);
                     buffer.writeInt(0); // placeholder for number of IndexInfo objects
