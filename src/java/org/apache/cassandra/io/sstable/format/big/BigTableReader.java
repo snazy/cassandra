@@ -238,7 +238,7 @@ public class BigTableReader extends SSTableReader
                     return indexEntry;
                 }
 
-                RowIndexEntry.Serializer.skip(in, descriptor.version);
+                RowIndexEntry.Serializer.skip(in);
             }
         }
         catch (IOException e)

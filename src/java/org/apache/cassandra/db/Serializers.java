@@ -38,7 +38,8 @@ public final class Serializers
 {
     private final CFMetaData metadata;
     public final SerializationHeader keyCacheHeader;
-    public final IndexInfo.Serializer latestVersionIndexSerializer;
+    public static final IndexInfo.Serializer latestVersionIndexSerializer = new IndexInfo.Serializer(false);
+    public static final IndexInfo.Serializer legacyVersionIndexSerializer = new IndexInfo.Serializer(true);
     public final ISerializer<ClusteringPrefix> latestVersionClusteringPrefixSerializer;
     public final RowIndexEntry.IndexSerializer latestVersionRowIndexSerializer;
 
@@ -46,7 +47,6 @@ public final class Serializers
     {
         this.metadata = metadata;
         this.keyCacheHeader = SerializationHeader.forKeyCache(metadata);
-        this.latestVersionIndexSerializer = createIndexSerializer(BigFormat.latestVersion);
         this.latestVersionClusteringPrefixSerializer = createClusteringPrefixSerializer(BigFormat.latestVersion);
         this.latestVersionRowIndexSerializer = createRowIndexSerializer(BigFormat.latestVersion);
     }
@@ -63,16 +63,11 @@ public final class Serializers
         return new RowIndexEntry.Serializer(metadata, version);
     }
 
-    public IndexInfo.Serializer indexSerializer(Version version)
+    public static IndexInfo.Serializer indexSerializer(Version version)
     {
-        if (BigFormat.latestVersion.equals(version))
+        if (version.storeRows())
             return latestVersionIndexSerializer;
-        return createIndexSerializer(version);
-    }
-
-    private IndexInfo.Serializer createIndexSerializer(Version version)
-    {
-        return new IndexInfo.Serializer(metadata, version);
+        return legacyVersionIndexSerializer;
     }
 
     // TODO: Once we drop support for old (pre-3.0) sstables, we can drop this method and inline the calls to

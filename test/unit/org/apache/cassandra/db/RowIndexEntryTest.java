@@ -85,7 +85,7 @@ public class RowIndexEntryTest extends CQLTester
 
         DataOutputBuffer dob = new DataOutputBuffer();
         DeletionTime.serializer.serialize(DeletionTime.LIVE, dob);
-        IndexInfo.Serializer indexSerializer = cfMeta.serializers().indexSerializer(BigFormat.latestVersion);
+        IndexInfo.Serializer indexSerializer = Serializers.indexSerializer(BigFormat.latestVersion);
         ISerializer<ClusteringPrefix> clusteringSerializer = cfMeta.serializers().clusteringPrefixSerializer(BigFormat.latestVersion);
         dob.writeInt(3);
         int off0 = dob.getLength();
@@ -99,13 +99,15 @@ public class RowIndexEntryTest extends CQLTester
         dob.writeInt(off2);
 
         DataOutputBuffer dobRie = new DataOutputBuffer();
-        dobRie.writeUnsignedVInt(42L);
-        dobRie.writeUnsignedVInt(dob.getLength());
+        dobRie.writeLong(42L);
+        dobRie.writeInt(dob.getLength());
         dobRie.write(dob.buffer());
 
         ByteBuffer buf = dobRie.buffer();
 
         RowIndexEntry rie = cfMeta.serializers().getRowIndexSerializer(BigFormat.latestVersion).deserialize(new DataInputBuffer(buf, false));
+
+        Assert.assertEquals(42L, rie.getPosition());
 
         Assert.assertEquals(0, rie.indexOf(cn(-1L), comp, false, -1));
         Assert.assertEquals(0, rie.indexOf(cn(5L), comp, false, -1));
@@ -239,11 +241,11 @@ public class RowIndexEntryTest extends CQLTester
 
         serializer.serialize(simple, buffer);
 
-        assertEquals(2, buffer.getLength()); // as of Cassandra 3.0
+        assertEquals(12, buffer.getLength()); // as of Cassandra 3.0
 
         RowIndexEntry reserialized = reserialize(cfs.metadata, simple, header);
         assertFalse(reserialized.isIndexed());
-        assertEquals(2, serializedSize(cfs.metadata, reserialized));
+        assertEquals(12, serializedSize(cfs.metadata, reserialized));
         assertEquals(simple.getPosition(), reserialized.getPosition());
 
         //
@@ -271,7 +273,7 @@ public class RowIndexEntryTest extends CQLTester
         RowIndexEntry withoutIndex = RowIndexEntry.buildIndex(iterator, writer, header, BigFormat.latestVersion,
                                                               cfs.metadata, 0xbeefdead, DeletionTime.LIVE);
         assertFalse(withoutIndex.isIndexed());
-        assertEquals(10, serializedSize(cfs.metadata, withoutIndex));
+        assertEquals(12, serializedSize(cfs.metadata, withoutIndex));
 
         //
 
@@ -292,7 +294,7 @@ public class RowIndexEntryTest extends CQLTester
         assertTrue(withIndex.indexCount() >= 3);
 
         serializer.serialize(withIndex, buffer);
-        assertEquals(168 + withIndex.indexCount() * 4, // C* 3.0: raw length is 168 bytes + 4 bytes per IndexInfo offset
+        assertEquals(169 + withIndex.indexCount() * 4, // C* 3.0: raw length is 168 bytes + 4 bytes per IndexInfo offset
                      buffer.getLength());
 
         reserialized = reserialize(cfs.metadata, withIndex, header);

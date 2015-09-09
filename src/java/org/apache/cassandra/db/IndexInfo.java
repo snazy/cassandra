@@ -19,28 +19,46 @@
 package org.apache.cassandra.db;
 
 import java.io.IOException;
-import java.util.List;
 import java.util.Objects;
 
-import org.apache.cassandra.config.CFMetaData;
-import org.apache.cassandra.db.marshal.AbstractType;
 import org.apache.cassandra.io.ISerializer;
-import org.apache.cassandra.io.sstable.format.Version;
 import org.apache.cassandra.io.util.DataInputBuffer;
 import org.apache.cassandra.io.util.DataInputPlus;
 import org.apache.cassandra.io.util.DataOutputPlus;
 import org.apache.cassandra.utils.ObjectSizes;
 
 /**
- * Each {@link IndexInfo} object is serialized as follows:
+ * {@code IndexInfo} is embedded in the indexed version of {@link RowIndexEntry}.
+ * Each instance roughly covers a range of {@link org.apache.cassandra.config.Config#column_index_size_in_kb column_index_size_in_kb} kB
+ * and contains the first and last clustering value (or slice bound), its offset in the data file and width in the data file.
+ * <p>
+ * Each {@code IndexInfo} object is serialized as follows.
+ * </p>
+ * <p>
+ * Serialization format changed in 3.0. First, the {@code endOpenMarker} has been introduced.
+ * Second, the <i>order</i> of the fields in serialized representation changed to allow future
+ * optimizations to access {@code offset} and {@code width} fields directly without skipping
+ * {@code firstName}/{@code lastName}.
+ * </p>
+ * <p>
+ * 3.0 and newer:<br/>
  * {@code
- *    (*) IndexInfo.firstName (ClusteringPrefix serializer, either Clustering.serializer.serialize or Slice.Bound.serializer.serialize)
- *    (*) IndexInfo.lastName (ClusteringPrefix serializer)
  * (long) IndexInfo.offset
  * (long) IndexInfo.width
- * (bool) IndexInfo.endOpenMarker != null              (if version.storeRows)
- *  (int) IndexInfo.endOpenMarker.localDeletionTime    (if version.storeRows && IndexInfo.endOpenMarker != null)
- * (long) IndexInfo.endOpenMarker.markedForDeletionAt  (if version.storeRows && IndexInfo.endOpenMarker != null)
+ * (bool) IndexInfo.endOpenMarker != null
+ *  (int) IndexInfo.endOpenMarker.localDeletionTime    (if IndexInfo.endOpenMarker != null)
+ * (long) IndexInfo.endOpenMarker.markedForDeletionAt  (if IndexInfo.endOpenMarker != null)
+ *    (*) IndexInfo.lastName (ClusteringPrefix serializer, either Clustering.serializer.serialize or Slice.Bound.serializer.serialize)
+ *    (*) IndexInfo.firstName (ClusteringPrefix serializer, either Clustering.serializer.serialize or Slice.Bound.serializer.serialize)
+ * }
+ * </p>
+ * <p>
+ * Pre 3.0:<br/>
+ * {@code
+ *    (*) IndexInfo.firstName (ClusteringPrefix serializer, either Clustering.serializer.serialize or Slice.Bound.serializer.serialize)
+ *    (*) IndexInfo.lastName (ClusteringPrefix serializer, either Clustering.serializer.serialize or Slice.Bound.serializer.serialize)
+ * (long) IndexInfo.offset
+ * (long) IndexInfo.width
  * }
  * </p>
  */
@@ -97,76 +115,106 @@ public final class IndexInfo
 
     public static final class Serializer
     {
-        private final CFMetaData metadata;
-        private final Version version;
+        private final boolean legacy;
 
-        public Serializer(CFMetaData metadata, Version version)
+        public Serializer(boolean legacy)
         {
-            this.metadata = metadata;
-            this.version = version;
+            this.legacy = legacy;
         }
 
         public void serialize(IndexInfo info, DataOutputPlus out, ISerializer<ClusteringPrefix> clusteringSerializer) throws IOException
         {
-            clusteringSerializer.serialize(info.firstName, out);
-            clusteringSerializer.serialize(info.lastName, out);
-            out.writeLong(info.offset);
-            out.writeLong(info.width);
-
-            if (version.storeRows())
+            if (!legacy)
             {
-                out.writeBoolean(info.endOpenMarker != null);
-                if (info.endOpenMarker != null)
-                    DeletionTime.serializer.serialize(info.endOpenMarker, out);
+                out.writeLong(info.offset);
+                out.writeLong(info.width);
+
+                DeletionTime eom = info.endOpenMarker;
+                out.writeBoolean(eom != null);
+                if (eom != null)
+                    DeletionTime.serializer.serialize(eom, out);
+
+                clusteringSerializer.serialize(info.lastName, out);
+                clusteringSerializer.serialize(info.firstName, out);
+            }
+            else
+            {
+                clusteringSerializer.serialize(info.firstName, out);
+                clusteringSerializer.serialize(info.lastName, out);
+                out.writeLong(info.offset);
+                out.writeLong(info.width);
             }
         }
 
         public long readOffset(DataInputBuffer in, ISerializer<ClusteringPrefix> clusteringSerializer) throws IOException
         {
-            clusteringSerializer.skip(in);
-            clusteringSerializer.skip(in);
+            if (legacy)
+            {
+                skipNames(in, clusteringSerializer);
+            }
             return in.readLong();
         }
 
         public long readWidth(DataInputBuffer in, ISerializer<ClusteringPrefix> clusteringSerializer) throws IOException
         {
-            clusteringSerializer.skip(in);
-            clusteringSerializer.skip(in);
+            if (legacy)
+            {
+                skipNames(in, clusteringSerializer);
+            }
             in.skipBytes(8);
             return in.readLong();
         }
 
         public DeletionTime readEndOpenMarker(DataInputBuffer in, ISerializer<ClusteringPrefix> clusteringSerializer) throws IOException
         {
-            clusteringSerializer.skip(in);
-            clusteringSerializer.skip(in);
-            in.skipBytes(8 + 8);
+            if (!legacy)
+            {
+                in.skipBytes(8 + 8);
 
-            return version.storeRows() && in.readBoolean()
-                   ? DeletionTime.serializer.deserialize(in)
-                   : null;
+                return in.readBoolean()
+                       ? DeletionTime.serializer.deserialize(in)
+                       : null;
+            }
+            return null;
         }
 
         public IndexInfo deserialize(DataInputPlus in, ISerializer<ClusteringPrefix> clusteringSerializer) throws IOException
         {
-            ClusteringPrefix firstName = clusteringSerializer.deserialize(in);
-            ClusteringPrefix lastName = clusteringSerializer.deserialize(in);
-            long offset = in.readLong();
-            long width = in.readLong();
-            DeletionTime endOpenMarker = version.storeRows() && in.readBoolean()
-                                         ? DeletionTime.serializer.deserialize(in)
-                                         : null;
+            long offset;
+            long width;
+            ClusteringPrefix firstName;
+            ClusteringPrefix lastName;
+            DeletionTime endOpenMarker;
+            if (!legacy)
+            {
+                offset = in.readLong();
+                width = in.readLong();
+                endOpenMarker = in.readBoolean()
+                                ? DeletionTime.serializer.deserialize(in)
+                                : null;
+                lastName = clusteringSerializer.deserialize(in);
+                firstName = clusteringSerializer.deserialize(in);
+            }
+            else
+            {
+                firstName = clusteringSerializer.deserialize(in);
+                lastName = clusteringSerializer.deserialize(in);
+                offset = in.readLong();
+                width = in.readLong();
+                endOpenMarker = null;
+            }
 
             return new IndexInfo(firstName, lastName, offset, width, endOpenMarker);
         }
 
         public void skip(DataInputBuffer in, ISerializer<ClusteringPrefix> clusteringSerializer) throws IOException
         {
-            clusteringSerializer.skip(in);
-            clusteringSerializer.skip(in);
-            in.skipBytes(8 + 8);
-            if (version.storeRows() && in.readBoolean())
-                DeletionTime.serializer.skip(in);
+            skipPreNames(in);
+
+            skipNames(in, clusteringSerializer);
+
+            if (legacy)
+                in.skipBytes(8 + 8);
         }
 
         public long serializedSize(IndexInfo info, ISerializer<ClusteringPrefix> clusteringSerializer)
@@ -176,7 +224,7 @@ public final class IndexInfo
                         + TypeSizes.sizeof(info.offset)
                         + TypeSizes.sizeof(info.width);
 
-            if (version.storeRows())
+            if (!legacy)
             {
                 size += TypeSizes.sizeof(info.endOpenMarker != null);
                 if (info.endOpenMarker != null)
@@ -187,13 +235,32 @@ public final class IndexInfo
 
         public ClusteringPrefix readLastName(DataInputBuffer input, ISerializer<ClusteringPrefix> clusteringSerializer) throws IOException
         {
-            clusteringSerializer.skip(input);
+            skipPreNames(input);
             return clusteringSerializer.deserialize(input);
         }
 
         public ClusteringPrefix readFirstName(DataInputBuffer input, ISerializer<ClusteringPrefix> clusteringSerializer) throws IOException
         {
+            skipPreNames(input);
+            clusteringSerializer.skip(input);
             return clusteringSerializer.deserialize(input);
+        }
+
+        private static void skipNames(DataInputBuffer in, ISerializer<ClusteringPrefix> clusteringSerializer) throws IOException
+        {
+            clusteringSerializer.skip(in);
+            clusteringSerializer.skip(in);
+        }
+
+        private void skipPreNames(DataInputBuffer in) throws IOException
+        {
+            if (!legacy)
+            {
+                in.skipBytes(8 + 8);
+
+                if (in.readBoolean())
+                    DeletionTime.serializer.skip(in);
+            }
         }
     }
 

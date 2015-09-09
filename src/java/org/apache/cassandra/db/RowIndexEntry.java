@@ -41,8 +41,8 @@ import org.apache.cassandra.utils.ByteBufferUtil;
 /**
  * Binary format of {@code RowIndexEntry} is defined as follows:
  * {@code
- * (long) position (64 bit long for pre-3.0, vint since 3.0)
- *  (int) serialized size of data that follows (32 bit int for pre-3.0, vint since 3.0)
+ * (long) position (64 bit long)
+ *  (int) serialized size of data that follows (32 bit int)
  *  (int) DeletionTime.localDeletionTime
  * (long) DeletionTime.markedForDeletionAt
  *  (int) number of IndexInfo objects
@@ -51,9 +51,13 @@ import org.apache.cassandra.utils.ByteBufferUtil;
  * }
  * <p>
  * See {@link IndexInfo} for a description of the serialized format.
+ * </p>
  */
 public class RowIndexEntry
 {
+    // size of a serialized RowIndexEntry object (without indexes)
+    static final int SERIALIZED_SIZE = TypeSizes.sizeof(0L) + TypeSizes.sizeof(0);
+
     static final int DELETION_TIME_SIZE = (int) DeletionTime.serializer.serializedSize(null);
     static final int FIRST_INDEX_INFO_OFFSET = (int) (TypeSizes.sizeof(0)/*columnsCount*/ + DELETION_TIME_SIZE);
 
@@ -187,14 +191,14 @@ public class RowIndexEntry
         {
             assert version.storeRows() : "We read old index files but we should never write them";
 
-            out.writeUnsignedVInt(rie.getPosition());
+            out.writeLong(rie.getPosition());
 
             if (rie.isIndexed())
             {
                 IndexedEntry indexed = (IndexedEntry) rie;
                 if (indexed.version.equals(version))
                 {
-                    out.writeUnsignedVInt(indexed.buffer.limit());
+                    out.writeInt(indexed.buffer.limit());
                     indexed.buffer.position(0);
                     out.write(indexed.buffer);
                 }
@@ -202,7 +206,7 @@ public class RowIndexEntry
                 {
                     // manual serialization of older version to latest version
 
-                    out.writeUnsignedVInt(rie.promotedSize(metadata, version));
+                    out.writeInt(rie.promotedSize(metadata, version));
 
                     int indexCount = rie.indexCount();
                     DeletionTime.serializer.serialize(rie.deletionTime(), out);
@@ -211,7 +215,7 @@ public class RowIndexEntry
 
                     int[] offsets = new int[indexCount];
 
-                    IndexInfo.Serializer idxSerializer = metadata.serializers().indexSerializer(version);
+                    IndexInfo.Serializer idxSerializer = Serializers.indexSerializer(version);
                     ISerializer<ClusteringPrefix> clusteringSerializer = metadata.serializers().clusteringPrefixSerializer(version);
                     for (int i = 0; i < indexCount; i++)
                     {
@@ -226,33 +230,18 @@ public class RowIndexEntry
                 }
             }
             else
-                out.writeUnsignedVInt(0);
+                out.writeInt(0);
         }
 
         public int serializedSize(RowIndexEntry rie)
         {
-            int promotedSize = rie.promotedSize(metadata, version);
-
-            return version.storeRows()
-                   ? TypeSizes.sizeofUnsignedVInt(rie.getPosition()) + TypeSizes.sizeofUnsignedVInt(promotedSize) + promotedSize
-                   : TypeSizes.sizeof(rie.getPosition()) + TypeSizes.sizeof(promotedSize) + promotedSize;
+            return SERIALIZED_SIZE + rie.promotedSize(metadata, version);
         }
 
         public RowIndexEntry deserialize(DataInputPlus in) throws IOException
         {
-            long position;
-            int size;
-
-            if (version.storeRows())
-            {
-                position = in.readUnsignedVInt();
-                size = (int) in.readUnsignedVInt();
-            }
-            else
-            {
-                position = in.readLong();
-                size = in.readInt();
-            }
+            long position = in.readLong();
+            int size = in.readInt();
 
             if (size > 0)
             {
@@ -265,24 +254,20 @@ public class RowIndexEntry
             }
         }
 
-        public static long readPosition(DataInputPlus in, Version version) throws IOException
+        public static long readPosition(DataInputPlus in) throws IOException
         {
-            return version.storeRows()
-                   ? in.readUnsignedVInt()
-                   : in.readLong();
+            return in.readLong();
         }
 
-        public static void skip(DataInputPlus in, Version version) throws IOException
+        public static void skip(DataInputPlus in) throws IOException
         {
-            readPosition(in, version);
-            skipPromotedIndex(in, version);
+            readPosition(in);
+            skipPromotedIndex(in);
         }
 
-        public static void skipPromotedIndex(DataInputPlus in, Version version) throws IOException
+        public static void skipPromotedIndex(DataInputPlus in) throws IOException
         {
-            int size = version.storeRows()
-                       ? (int)in.readUnsignedVInt()
-                       : in.readInt();
+            int size = in.readInt();
             if (size <= 0)
                 return;
 
@@ -327,7 +312,7 @@ public class RowIndexEntry
 
             this.clusteringComparator = metadata.comparator;
             this.version = version;
-            this.serializer = metadata.serializers().indexSerializer(version);
+            this.serializer = Serializers.indexSerializer(version);
             this.clusteringSerializer = metadata.serializers().clusteringPrefixSerializer(version);
 
         }
@@ -456,12 +441,10 @@ public class RowIndexEntry
             if (version.equals(this.version))
                 return Ints.checkedCast(buffer.limit());
 
-            int size = 4;
-            size += DELETION_TIME_SIZE;
-            size += 4;
+            int size = FIRST_INDEX_INFO_OFFSET + 4;
 
             int indexCount = indexCount();
-            IndexInfo.Serializer idxSerializer = metadata.serializers().indexSerializer(version);
+            IndexInfo.Serializer idxSerializer = Serializers.indexSerializer(version);
             for (int i = 0; i < indexCount; i++)
             {
                 IndexInfo ii = indexInfo(i);
@@ -636,7 +619,7 @@ public class RowIndexEntry
         private void addIndexInfo(IndexInfo cIndexInfo) throws IOException
         {
             offsetsBuffer.writeInt(buffer.getLength());
-            metadata.serializers().latestVersionIndexSerializer.serialize(cIndexInfo, buffer, clusteringSerializer);
+            Serializers.latestVersionIndexSerializer.serialize(cIndexInfo, buffer, clusteringSerializer);
             indexCount++;
         }
 
