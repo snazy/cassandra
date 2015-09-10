@@ -470,7 +470,7 @@ public class CacheService implements CacheServiceMBean
                 // wrong is during upgrade, in which case we fail at deserialization. This is not a huge deal however since 1) this is unlikely enough that
                 // this won't affect many users (if any) and only once, 2) this doesn't prevent the node from starting and 3) CASSANDRA-10219 shows that this
                 // part of the code has been broken for a while without anyone noticing (it is, btw, still broken until CASSANDRA-10219 is fixed).
-                RowIndexEntry.Serializer.skipPromotedIndex(input);
+                RowIndexEntry.Serializer.skipPromotedIndex(input, reader.descriptor.version);
                 return null;
             }
             RowIndexEntry.IndexSerializer indexSerializer = reader.metadata.serializers().getRowIndexSerializer(reader.descriptor.version);

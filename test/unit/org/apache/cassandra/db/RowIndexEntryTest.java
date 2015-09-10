@@ -99,8 +99,8 @@ public class RowIndexEntryTest extends CQLTester
         dob.writeInt(off2);
 
         DataOutputBuffer dobRie = new DataOutputBuffer();
-        dobRie.writeLong(42L);
-        dobRie.writeInt(dob.getLength());
+        dobRie.writeUnsignedVInt(42L);
+        dobRie.writeVInt(dob.getLength() - RowIndexEntry.Serializer.WIDTH_BASE);
         dobRie.write(dob.buffer());
 
         ByteBuffer buf = dobRie.buffer();
@@ -241,11 +241,11 @@ public class RowIndexEntryTest extends CQLTester
 
         serializer.serialize(simple, buffer);
 
-        assertEquals(12, buffer.getLength()); // as of Cassandra 3.0
+        assertEquals(4, buffer.getLength()); // as of Cassandra 3.0
 
         RowIndexEntry reserialized = reserialize(cfs.metadata, simple, header);
         assertFalse(reserialized.isIndexed());
-        assertEquals(12, serializedSize(cfs.metadata, reserialized));
+        assertEquals(4, serializedSize(cfs.metadata, reserialized));
         assertEquals(simple.getPosition(), reserialized.getPosition());
 
         //
@@ -294,7 +294,7 @@ public class RowIndexEntryTest extends CQLTester
         assertTrue(withIndex.indexCount() >= 3);
 
         serializer.serialize(withIndex, buffer);
-        assertEquals(169 + withIndex.indexCount() * 4, // C* 3.0: raw length is 168 bytes + 4 bytes per IndexInfo offset
+        assertEquals(109 + withIndex.indexCount() * 4, // C* 3.0: raw length is 168 bytes + 4 bytes per IndexInfo offset
                      buffer.getLength());
 
         reserialized = reserialize(cfs.metadata, withIndex, header);

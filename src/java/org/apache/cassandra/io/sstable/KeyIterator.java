@@ -20,6 +20,7 @@ package org.apache.cassandra.io.sstable;
 import java.io.File;
 import java.io.IOException;
 
+import org.apache.cassandra.io.sstable.format.Version;
 import org.apache.cassandra.utils.AbstractIterator;
 
 import org.apache.cassandra.config.CFMetaData;
@@ -80,12 +81,13 @@ public class KeyIterator extends AbstractIterator<DecoratedKey> implements Close
         }
     }
 
+    private final Version version;
     private final In in;
     private final IPartitioner partitioner;
 
-
     public KeyIterator(Descriptor desc, CFMetaData metadata)
     {
+        this.version = desc.version;
         in = new In(new File(desc.filenameFor(Component.PRIMARY_INDEX)));
         partitioner = metadata.partitioner;
     }
@@ -98,7 +100,7 @@ public class KeyIterator extends AbstractIterator<DecoratedKey> implements Close
                 return endOfData();
 
             DecoratedKey key = partitioner.decorateKey(ByteBufferUtil.readWithShortLength(in.get()));
-            RowIndexEntry.Serializer.skip(in.get()); // skip remainder of the entry
+            RowIndexEntry.Serializer.skip(in.get(), version); // skip remainder of the entry
             return key;
         }
         catch (IOException e)

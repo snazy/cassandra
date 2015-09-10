@@ -813,7 +813,7 @@ public abstract class SSTableReader extends SSTable implements SelfRefCounted<SS
                 while ((indexPosition = primaryIndex.getFilePointer()) != indexSize)
                 {
                     ByteBuffer key = ByteBufferUtil.readWithShortLength(primaryIndex);
-                    RowIndexEntry.Serializer.skip(primaryIndex);
+                    RowIndexEntry.Serializer.skip(primaryIndex, descriptor.version);
                     DecoratedKey decoratedKey = decorateKey(key);
                     if (first == null)
                         first = decoratedKey;
@@ -920,7 +920,7 @@ public abstract class SSTableReader extends SSTable implements SelfRefCounted<SS
                     if (summaryEntriesChecked == Downsampling.BASE_SAMPLING_LEVEL)
                         return true;
                 }
-                RowIndexEntry.Serializer.skip(in);
+                RowIndexEntry.Serializer.skip(in, descriptor.version);
                 i++;
             }
         }
@@ -1197,7 +1197,7 @@ public abstract class SSTableReader extends SSTable implements SelfRefCounted<SS
                 while ((indexPosition = primaryIndex.getFilePointer()) != indexSize)
                 {
                     summaryBuilder.maybeAddEntry(decorateKey(ByteBufferUtil.readWithShortLength(primaryIndex)), indexPosition);
-                    RowIndexEntry.Serializer.skip(primaryIndex);
+                    RowIndexEntry.Serializer.skip(primaryIndex, descriptor.version);
                 }
 
                 return summaryBuilder.build(getPartitioner());
@@ -1603,7 +1603,7 @@ public abstract class SSTableReader extends SSTable implements SelfRefCounted<SS
                 if (indexDecoratedKey.compareTo(token) > 0)
                     return indexDecoratedKey;
 
-                RowIndexEntry.Serializer.skip(in);
+                RowIndexEntry.Serializer.skip(in, descriptor.version);
             }
         }
         catch (IOException e)
