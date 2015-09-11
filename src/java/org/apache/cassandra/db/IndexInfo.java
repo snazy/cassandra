@@ -161,10 +161,17 @@ public final class IndexInfo
 
         public void skip(DataInputBuffer in, ISerializer<ClusteringPrefix> clusteringSerializer) throws IOException
         {
-            in.readVInt();
-            in.readVInt();
-
             skipNames(in, clusteringSerializer);
+
+            if (!legacy)
+            {
+                in.readVInt();
+                in.readVInt();
+            }
+            else
+            {
+                in.skipBytes(8 + 8);
+            }
 
             if (!legacy && in.readBoolean())
                 DeletionTime.serializer.skip(in);

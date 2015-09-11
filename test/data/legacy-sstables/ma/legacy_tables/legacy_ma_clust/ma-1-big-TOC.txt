@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 Data.db
 Statistics.db
 Index.db
@@ -6,3 +7,13 @@ Filter.db
 Summary.db
 TOC.txt
 CompressionInfo.db
+=======
+Index.db
+Summary.db
+CompressionInfo.db
+Data.db
+Statistics.db
+Filter.db
+TOC.txt
+Digest.crc32
+>>>>>>> 555daf6... Make legacy sstables work with OHC key cache

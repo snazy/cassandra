@@ -36,6 +36,7 @@ import org.apache.cassandra.index.Index;
 import org.apache.cassandra.index.internal.CassandraIndex;
 import org.apache.cassandra.io.sstable.Descriptor;
 import org.apache.cassandra.io.sstable.format.SSTableFormat;
+import org.apache.cassandra.io.sstable.format.Version;
 import org.apache.cassandra.io.sstable.format.big.BigFormat;
 import org.apache.cassandra.io.util.DataInputBuffer;
 import org.apache.cassandra.io.util.DataOutputBufferFixed;
@@ -181,7 +182,9 @@ public final class OHCKeyCache
             if (cfm == null)
                 return;
 
-            RowIndexEntry.IndexSerializer indexSerializer = cfm.serializers().latestVersionRowIndexSerializer;
+            SerializationUtil.writeUTF(rowIndexEntry.value.version().getVersion(), buf);
+
+            RowIndexEntry.IndexSerializer indexSerializer = cfm.serializers().getRowIndexSerializer(rowIndexEntry.value.version());
             try
             {
                 indexSerializer.serialize(rowIndexEntry.value, new DataOutputBufferFixed(buf));
@@ -206,7 +209,9 @@ public final class OHCKeyCache
             if (cfm == null)
                 return sz;
 
-            sz += cfm.serializers().latestVersionRowIndexSerializer.serializedSize(rowIndexEntry.value);
+            sz += SerializationUtil.stringSerializedSize(rowIndexEntry.value.version().getVersion());
+
+            sz += cfm.serializers().getRowIndexSerializer(rowIndexEntry.value.version()).serializedSize(rowIndexEntry.value);
 
             return sz;
         }
@@ -275,7 +280,9 @@ public final class OHCKeyCache
 
             DataInputBuffer input = new DataInputBuffer(buf, false);
 
-            RowIndexEntry.IndexSerializer indexSerializer = cfm.serializers().getRowIndexSerializer(BigFormat.latestVersion);
+            Version version = BigFormat.instance.getVersion(SerializationUtil.readUTF(buf));
+
+            RowIndexEntry.IndexSerializer indexSerializer = cfm.serializers().getRowIndexSerializer(version);
             try
             {
                 RowIndexEntry entry = indexSerializer.deserialize(input);

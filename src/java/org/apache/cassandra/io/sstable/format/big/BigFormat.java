@@ -57,6 +57,9 @@ public class BigFormat implements SSTableFormat
     @Override
     public Version getVersion(String version)
     {
+        if (version.equals(latestVersion.getVersion()))
+            return latestVersion;
+
         return new BigVersion(version);
     }
 
