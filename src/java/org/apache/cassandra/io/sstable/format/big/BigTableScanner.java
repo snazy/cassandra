@@ -60,7 +60,7 @@ public class BigTableScanner implements ISSTableScanner
 
     private final ColumnFilter columns;
     private final DataRange dataRange;
-    private final RowIndexEntry.IndexSerializer rowIndexEntrySerializer;
+    private final RowIndexEntry.Serializer rowIndexEntrySerializer;
     private final boolean isForThrift;
 
     protected Iterator<UnfilteredRowIterator> iterator;

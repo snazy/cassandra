@@ -194,7 +194,7 @@ public abstract class SSTableReader extends SSTable implements SelfRefCounted<SS
     protected IndexSummary indexSummary;
     protected IFilter bf;
 
-    protected final RowIndexEntry.IndexSerializer rowIndexEntrySerializer;
+    protected final RowIndexEntry.Serializer rowIndexEntrySerializer;
 
     protected InstrumentingCache<KeyCacheKey, RowIndexEntry> keyCache;
 

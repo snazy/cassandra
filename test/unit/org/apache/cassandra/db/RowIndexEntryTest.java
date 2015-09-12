@@ -215,7 +215,7 @@ public class RowIndexEntryTest extends CQLTester
 
         DataOutputBuffer buffer = new DataOutputBuffer();
         SerializationHeader header = new SerializationHeader(cfs.metadata, cfs.metadata.partitionColumns(), EncodingStats.NO_STATS);
-        RowIndexEntry.IndexSerializer serializer = cfs.metadata.serializers().getRowIndexSerializer(BigFormat.latestVersion);
+        RowIndexEntry.Serializer serializer = cfs.metadata.serializers().getRowIndexSerializer(BigFormat.latestVersion);
 
         serializer.serialize(simple, buffer);
 

@@ -184,7 +184,7 @@ public final class OHCKeyCache
 
             SerializationUtil.writeUTF(rowIndexEntry.value.version().getVersion(), buf);
 
-            RowIndexEntry.IndexSerializer indexSerializer = cfm.serializers().getRowIndexSerializer(rowIndexEntry.value.version());
+            RowIndexEntry.Serializer indexSerializer = cfm.serializers().getRowIndexSerializer(rowIndexEntry.value.version());
             try
             {
                 indexSerializer.serialize(rowIndexEntry.value, new DataOutputBufferFixed(buf));
@@ -282,7 +282,7 @@ public final class OHCKeyCache
 
             Version version = BigFormat.instance.getVersion(SerializationUtil.readUTF(buf));
 
-            RowIndexEntry.IndexSerializer indexSerializer = cfm.serializers().getRowIndexSerializer(version);
+            RowIndexEntry.Serializer indexSerializer = cfm.serializers().getRowIndexSerializer(version);
             try
             {
                 RowIndexEntry entry = indexSerializer.deserialize(input);

@@ -41,7 +41,7 @@ public final class Serializers
     public static final IndexInfo.Serializer latestVersionIndexSerializer = new IndexInfo.Serializer(false);
     public static final IndexInfo.Serializer legacyVersionIndexSerializer = new IndexInfo.Serializer(true);
     public final ISerializer<ClusteringPrefix> latestVersionClusteringPrefixSerializer;
-    public final RowIndexEntry.IndexSerializer latestVersionRowIndexSerializer;
+    public final RowIndexEntry.Serializer latestVersionRowIndexSerializer;
 
     public Serializers(CFMetaData metadata)
     {
@@ -51,14 +51,14 @@ public final class Serializers
         this.latestVersionRowIndexSerializer = createRowIndexSerializer(BigFormat.latestVersion);
     }
 
-    public RowIndexEntry.IndexSerializer getRowIndexSerializer(Version version)
+    public RowIndexEntry.Serializer getRowIndexSerializer(Version version)
     {
         if (BigFormat.latestVersion.equals(version))
             return latestVersionRowIndexSerializer;
         return createRowIndexSerializer(version);
     }
 
-    private RowIndexEntry.IndexSerializer createRowIndexSerializer(Version version)
+    private RowIndexEntry.Serializer createRowIndexSerializer(Version version)
     {
         return new RowIndexEntry.Serializer(metadata, version);
     }

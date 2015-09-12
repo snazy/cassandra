@@ -473,7 +473,7 @@ public class CacheService implements CacheServiceMBean
                 RowIndexEntry.Serializer.skipPromotedIndex(input, reader.descriptor.version);
                 return null;
             }
-            RowIndexEntry.IndexSerializer indexSerializer = reader.metadata.serializers().getRowIndexSerializer(reader.descriptor.version);
+            RowIndexEntry.Serializer indexSerializer = reader.metadata.serializers().getRowIndexSerializer(reader.descriptor.version);
             RowIndexEntry entry = indexSerializer.deserialize(input);
             return Futures.immediateFuture(Pair.create(new KeyCacheKey(cfs.metadata.cfId, reader.descriptor, key), entry));
         }

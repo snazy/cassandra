@@ -175,14 +175,7 @@ public class RowIndexEntry
         return BigFormat.latestVersion;
     }
 
-    public interface IndexSerializer
-    {
-        void serialize(RowIndexEntry rie, DataOutputPlus out) throws IOException;
-        RowIndexEntry deserialize(DataInputPlus in) throws IOException;
-        int serializedSize(RowIndexEntry rie);
-    }
-
-    public static final class Serializer implements IndexSerializer
+    public static final class Serializer
     {
          // This is the default index size that we use to delta-encode width when serializing so we get better vint-encoding.
         // This is imperfect as user can change the index size and ideally we would save the index size used with each index file
