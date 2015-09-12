@@ -48,10 +48,10 @@ import org.apache.cassandra.utils.ByteBufferUtil;
  *  (int) DeletionTime.localDeletionTime
  * (long) DeletionTime.markedForDeletionAt
  *  (int) number of IndexInfo objects
+ *    (*) serialized IndexInfo objects, see below
  *    (*) offsets of serialized IndexInfo objects, since version "ma" (3.0)
  *        Each IndexInfo object's offset is relative to the first IndexInfo object _plus_ fixed value of 12.
  *        In other words: Each IndexInfo object's offset is relative to _deletionTime_ but excluding the offsets array at all.
- *    (*) serialized IndexInfo objects, see below
  * }
  * <p>
  * See {@link IndexInfo} for a description of the serialized format.
@@ -301,8 +301,6 @@ public class RowIndexEntry
         private final ByteBuffer offsets;
         // offset to offsets of IndexInfo objects in this.offsets
         private final int offsetsOffset;
-        // offset to offsets of IndexInfo objects in this.offsets
-        private final int indexInfoOffset;
         private final ClusteringComparator clusteringComparator;
         private final IndexInfo.Serializer serializer;
         private final ISerializer<ClusteringPrefix> clusteringSerializer;
@@ -320,15 +318,13 @@ public class RowIndexEntry
 
             if (version.storeRows())
             {
-                this.offsetsOffset = FIRST_INDEX_INFO_OFFSET;
+                this.offsetsOffset = buffer.limit() - indexCount() * 4;
                 this.offsets = buffer;
-                this.indexInfoOffset = 4 * this.indexCount;
             }
             else
             {
                 this.offsetsOffset = 0;
                 this.offsets = ByteBuffer.allocate(indexCount() * 4);
-                this.indexInfoOffset = 0;
             }
 
             this.clusteringComparator = metadata.comparator;
@@ -386,7 +382,7 @@ public class RowIndexEntry
             {
                 // We already know the offset of the requested IndexInfo, so just "seek" and deserialize.
                 // This is the only possible code path for 3.0 sstable format "ma".
-                buf.position(indexInfoOffset + offset);
+                buf.position(offset);
             }
             else
             {
@@ -407,7 +403,7 @@ public class RowIndexEntry
             if (!version.storeRows() && indexCount() > index + 1)
             {
                 // We know the offset of the next IndexInfo - so store it. (for pre-3.0 sstables)
-                indexInfoOffset(index + 1, buf.position() - indexInfoOffset);
+                indexInfoOffset(index + 1, buf.position());
             }
 
             lastIndexInfoIndex = index;
@@ -434,13 +430,13 @@ public class RowIndexEntry
                 i--;
                 offset = indexInfoOffset(i);
             }
-            buf.position(indexInfoOffset + offset);
+            buf.position(offset);
 
             // need to read through all IndexInfo objects until we reach the requested one
             for (; ; i++)
             {
                 // save IndexInfo offset
-                indexInfoOffset(i, buf.position() - indexInfoOffset);
+                indexInfoOffset(i, buf.position());
 
                 if (i == index)
                     break;
@@ -576,8 +572,10 @@ public class RowIndexEntry
             // the beginning of the row anyway, so we might as well read the tombstone there as well.
             if (this.buffer != null)
             {
-                offsetsBuffer.write(buffer.buffer());
                 ByteBuffer buf = offsetsBuffer.buffer();
+                buffer.write(buf);
+
+                buf = buffer.buffer();
                 buf.putInt(DELETION_TIME_SIZE, indexCount);
 
                 if (buf.capacity() - buf.limit() > 65536)
@@ -614,8 +612,8 @@ public class RowIndexEntry
                     this.buffer = new DataOutputBuffer(65536);
                     this.offsetsBuffer = new DataOutputBuffer(16384);
 
-                    DeletionTime.serializer.serialize(deletionTime, offsetsBuffer);
-                    offsetsBuffer.writeInt(0); // placeholder for number of IndexInfo objects
+                    DeletionTime.serializer.serialize(deletionTime, buffer);
+                    buffer.writeInt(0); // placeholder for number of IndexInfo objects
 
                     clusteringSerializer = metadata.serializers().clusteringPrefixSerializer(version);
                     addIndexInfo(firstIndexInfo);
@@ -635,7 +633,7 @@ public class RowIndexEntry
 
         private void addIndexInfo(IndexInfo cIndexInfo) throws IOException
         {
-            offsetsBuffer.writeInt(FIRST_INDEX_INFO_OFFSET + buffer.getLength());
+            offsetsBuffer.writeInt(buffer.getLength());
             Serializers.latestVersionIndexSerializer.serialize(cIndexInfo, buffer, clusteringSerializer);
             indexCount++;
         }

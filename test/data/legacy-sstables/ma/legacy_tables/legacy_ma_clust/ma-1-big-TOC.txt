@@ -9,11 +9,14 @@ TOC.txt
 CompressionInfo.db
 =======
 Index.db
-Summary.db
-CompressionInfo.db
-Data.db
-Statistics.db
 Filter.db
-TOC.txt
+CompressionInfo.db
+Statistics.db
 Digest.crc32
+<<<<<<< HEAD
 >>>>>>> 555daf6... Make legacy sstables work with OHC key cache
+=======
+TOC.txt
+Summary.db
+Data.db
+>>>>>>> 26b7fb7... move IndexInfo offsets back to end of serialized structure

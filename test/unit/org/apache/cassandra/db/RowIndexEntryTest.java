@@ -88,22 +88,15 @@ public class RowIndexEntryTest extends CQLTester
         IndexInfo.Serializer indexSerializer = Serializers.indexSerializer(BigFormat.latestVersion);
         ISerializer<ClusteringPrefix> clusteringSerializer = cfMeta.serializers().clusteringPrefixSerializer(BigFormat.latestVersion);
         dob.writeInt(3);
-        //
-        int indexOffsetsOffset = dob.getLength();
-        dob.writeInt(0);
-        dob.writeInt(0);
-        dob.writeInt(0);
-        int indexOffsetDiff = dob.getLength() - indexOffsetsOffset;
-        //
-        int off0 = dob.getLength() - indexOffsetDiff;
+        int off0 = dob.getLength();
         indexSerializer.serialize(new IndexInfo(cn(0L), cn(5L), 0, 0, deletionInfo), dob, clusteringSerializer);
-        int off1 = dob.getLength() - indexOffsetDiff;
+        int off1 = dob.getLength();
         indexSerializer.serialize(new IndexInfo(cn(10L), cn(15L), 0, 0, deletionInfo), dob, clusteringSerializer);
-        int off2 = dob.getLength() - indexOffsetDiff;
+        int off2 = dob.getLength();
         indexSerializer.serialize(new IndexInfo(cn(20L), cn(25L), 0, 0, deletionInfo), dob, clusteringSerializer);
-        dob.buffer().putInt(indexOffsetsOffset, off0);
-        dob.buffer().putInt(indexOffsetsOffset + 4, off1);
-        dob.buffer().putInt(indexOffsetsOffset + 8, off2);
+        dob.writeInt(off0);
+        dob.writeInt(off1);
+        dob.writeInt(off2);
 
         DataOutputBuffer dobRie = new DataOutputBuffer();
         dobRie.writeUnsignedVInt(42L);

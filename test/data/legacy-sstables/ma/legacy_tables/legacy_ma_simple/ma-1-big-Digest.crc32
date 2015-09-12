@@ -1,5 +1,9 @@
 <<<<<<< HEAD
+<<<<<<< HEAD
 2379822960
 =======
 2655144503
 >>>>>>> 555daf6... Make legacy sstables work with OHC key cache
+=======
+3249659567
+>>>>>>> 26b7fb7... move IndexInfo offsets back to end of serialized structure
