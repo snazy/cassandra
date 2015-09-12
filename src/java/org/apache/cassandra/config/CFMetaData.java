@@ -25,6 +25,7 @@ import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
@@ -117,6 +118,8 @@ public final class CFMetaData
     // that as convenience to access that column more easily (but we could replace calls by partitionColumns().iterator().next()
     // for those tables in practice).
     private volatile ColumnDefinition compactValueColumn;
+
+    public final IndexEntryStats indexEntryStats = new IndexEntryStats();
 
     /*
      * All of these methods will go away once CFMetaData becomes completely immutable.
@@ -1387,6 +1390,64 @@ public final class CFMetaData
                               .add("type", type)
                               .add("droppedTime", droppedTime)
                               .toString();
+        }
+    }
+
+    /**
+     * Tracks poor-man's statistics about the average partition size and
+     * {@link org.apache.cassandra.db.RowIndexEntry.IndexedEntry} serialized size using data available during runtime.
+     * This information is updated and used by the builder for {@link org.apache.cassandra.db.RowIndexEntry.IndexedEntry}.
+     */
+    public static final class IndexEntryStats
+    {
+        private static final long ASSUME_MIN_PARTITION_SIZE = 256 * 1024;
+        private static final long ASSUME_MIN_INDEX_SIZE = ASSUME_MIN_PARTITION_SIZE / DatabaseDescriptor.getColumnIndexSize() * 512;
+
+        private final AtomicLong totalPartitionSize = new AtomicLong();
+        private final AtomicLong totalIndexSize = new AtomicLong();
+        private final AtomicLong totalPartitionCount = new AtomicLong();
+
+        public void addIndexEntryStats(long partitionSize, int indexedSize, int indexCount)
+        {
+            partitionSize = totalPartitionSize.addAndGet(partitionSize);
+            if (partitionSize > Long.MAX_VALUE / 2)
+            {
+                // poor-man integer overflow protection
+
+                long partCount = totalPartitionCount.get();
+                long avgPartitionSize = partitionSize / partCount;
+                long avgIndexSize = totalIndexSize.get() / partCount;
+
+                totalIndexSize.set(avgIndexSize);
+                totalPartitionSize.set(avgPartitionSize);
+                totalPartitionCount.set(1);
+
+                return;
+            }
+
+            totalIndexSize.addAndGet(indexedSize);
+            totalPartitionCount.incrementAndGet();
+        }
+
+        public int averageIndexInfoCount()
+        {
+            int knownPartCount = (int) totalPartitionCount.get();
+            long partitionBytes = (knownPartCount > 0)
+                                  ? Math.max(totalPartitionSize.get() / knownPartCount, ASSUME_MIN_PARTITION_SIZE)
+                                  : ASSUME_MIN_PARTITION_SIZE;
+            long indexCount = partitionBytes / DatabaseDescriptor.getColumnIndexSize();
+
+            return (int) indexCount;
+        }
+
+        public int averageIndexedEntrySize()
+        {
+            int knownPartCount = (int) totalPartitionCount.get();
+            long indexSize = (knownPartCount > 0)
+                             ? Math.max(totalIndexSize.get() / knownPartCount, ASSUME_MIN_INDEX_SIZE)
+                             : ASSUME_MIN_INDEX_SIZE;
+
+            return (int) indexSize;
         }
     }
 }

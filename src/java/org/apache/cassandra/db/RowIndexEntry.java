@@ -586,14 +586,12 @@ public class RowIndexEntry
                 buf = buffer.buffer();
                 buf.putInt(DELETION_TIME_SIZE, indexCount);
 
-                if (buf.capacity() - buf.limit() > 65536)
-                {
-                    // re-allocate, if buf wastes more than 64kB
-                    ByteBuffer re = ByteBuffer.allocate(buf.limit());
-                    re.put(buf);
-                    re.flip();
-                    buf = re;
-                }
+                // Do not re-allocate the buffer to be "correctly" sized as the returned
+                // IndexEntry object is short-lived.
+
+                metadata.indexEntryStats.addIndexEntryStats(currentPosition() - initialPosition,
+                                                            buf.limit(),
+                                                            indexCount);
 
                 return new IndexedEntry(position, buf, metadata, version, null);
             }
@@ -617,8 +615,11 @@ public class RowIndexEntry
             {
                 if (firstIndexInfo != null)
                 {
-                    this.buffer = new DataOutputBuffer(65536);
-                    this.offsetsBuffer = new DataOutputBuffer(16384);
+                    int bufferSize = metadata.indexEntryStats.averageIndexedEntrySize();
+                    int offsetsSize = metadata.indexEntryStats.averageIndexInfoCount();
+
+                    this.buffer = new DataOutputBuffer(bufferSize);
+                    this.offsetsBuffer = new DataOutputBuffer(offsetsSize);
 
                     DeletionTime.serializer.serialize(deletionTime, buffer);
                     buffer.writeInt(0); // placeholder for number of IndexInfo objects
