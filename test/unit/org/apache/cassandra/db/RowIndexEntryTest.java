@@ -100,7 +100,7 @@ public class RowIndexEntryTest extends CQLTester
 
         ByteBuffer buf = dobRie.buffer();
 
-        RowIndexEntry rie = cfMeta.serializers().getRowIndexSerializer(BigFormat.latestVersion).deserialize(new DataInputBuffer(buf, false));
+        RowIndexEntry rie = cfMeta.serializers().getRowIndexSerializer(BigFormat.latestVersion).deserialize(new DataInputBuffer(buf, false), false);
 
         Assert.assertEquals(42L, rie.getPosition());
 
@@ -217,7 +217,7 @@ public class RowIndexEntryTest extends CQLTester
         SerializationHeader header = new SerializationHeader(cfs.metadata, cfs.metadata.partitionColumns(), EncodingStats.NO_STATS);
         RowIndexEntry.Serializer serializer = cfs.metadata.serializers().getRowIndexSerializer(BigFormat.latestVersion);
 
-        serializer.serialize(simple, buffer);
+        serializer.serialize(simple, buffer, false);
 
         assertEquals(4, buffer.getLength()); // as of Cassandra 3.0
 
@@ -271,7 +271,7 @@ public class RowIndexEntryTest extends CQLTester
         // sanity check
         assertTrue(withIndex.indexCount() >= 3);
 
-        serializer.serialize(withIndex, buffer);
+        serializer.serialize(withIndex, buffer, false);
         assertEquals(109 + withIndex.indexCount() * 4, // C* 3.0: raw length is 168 bytes + 4 bytes per IndexInfo offset
                      buffer.getLength());
 
@@ -289,13 +289,13 @@ public class RowIndexEntryTest extends CQLTester
 
     private static int serializedSize(CFMetaData metadata, RowIndexEntry rie)
     {
-        return metadata.serializers().getRowIndexSerializer(BigFormat.latestVersion).serializedSize(rie);
+        return metadata.serializers().getRowIndexSerializer(BigFormat.latestVersion).serializedSize(rie, false);
     }
 
     private static RowIndexEntry reserialize(CFMetaData metadata, RowIndexEntry rie, SerializationHeader header) throws IOException
     {
         DataOutputBuffer out = new DataOutputBuffer();
-        metadata.serializers().getRowIndexSerializer(BigFormat.latestVersion).serialize(rie, out);
-        return metadata.serializers().getRowIndexSerializer(BigFormat.latestVersion).deserialize(new DataInputBuffer(out.buffer(), false));
+        metadata.serializers().getRowIndexSerializer(BigFormat.latestVersion).serialize(rie, out, false);
+        return metadata.serializers().getRowIndexSerializer(BigFormat.latestVersion).deserialize(new DataInputBuffer(out.buffer(), false), false);
     }
 }

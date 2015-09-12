@@ -406,7 +406,7 @@ public class BigTableWriter extends SSTableWriter
             try
             {
                 ByteBufferUtil.writeWithShortLength(key.getKey(), indexFile);
-                rowIndexEntrySerializer.serialize(indexEntry, indexFile);
+                rowIndexEntrySerializer.serialize(indexEntry, indexFile, false);
             }
             catch (IOException e)
             {

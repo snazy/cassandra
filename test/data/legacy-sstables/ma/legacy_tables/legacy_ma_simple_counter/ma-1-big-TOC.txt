@@ -1,4 +1,5 @@
 <<<<<<< HEAD
+<<<<<<< HEAD
 Data.db
 Statistics.db
 Index.db
@@ -16,7 +17,17 @@ Digest.crc32
 <<<<<<< HEAD
 >>>>>>> 555daf6... Make legacy sstables work with OHC key cache
 =======
-TOC.txt
+=======
 Summary.db
+Filter.db
+>>>>>>> 1fe12af... serialize IndexInfo offsets for legacy versions in key-cache
+TOC.txt
+Digest.crc32
 Data.db
+<<<<<<< HEAD
 >>>>>>> 26b7fb7... move IndexInfo offsets back to end of serialized structure
+=======
+Index.db
+CompressionInfo.db
+Statistics.db
+>>>>>>> 1fe12af... serialize IndexInfo offsets for legacy versions in key-cache

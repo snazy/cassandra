@@ -192,7 +192,7 @@ public class RowIndexEntry
             this.version = version;
         }
 
-        public void serialize(RowIndexEntry rie, DataOutputPlus out) throws IOException
+        public void serialize(RowIndexEntry rie, DataOutputPlus out, boolean forCache) throws IOException
         {
             writePosition(out, rie);
 
@@ -202,24 +202,36 @@ public class RowIndexEntry
                 writeSize(out, version, indexed.buffer.limit());
                 indexed.buffer.position(0);
                 out.write(indexed.buffer);
+                if (!version.storeRows() && forCache)
+                {
+                    // write IndexInfo offsets for legacy versions for key-cache
+                    out.write(indexed.offsets);
+                }
             }
             else
                 writeSize(out, version, 0);
         }
 
-        public int serializedSize(RowIndexEntry rie)
+        public int serializedSize(RowIndexEntry rie, boolean forCache)
         {
             int size = rie.promotedSize(metadata, version);
 
             if (!version.storeRows())
+            {
+                if (forCache)
+                {
+                    // add size of IndexInfo offsets for legacy versions for key-cache
+                    size += rie.indexCount() * 4;
+                }
                 return 8 + 4 + size;
+            }
 
             return TypeSizes.sizeofUnsignedVInt(rie.position)
                    + TypeSizes.sizeofVInt(size - WIDTH_BASE)
                    + size;
         }
 
-        public RowIndexEntry deserialize(DataInputPlus in) throws IOException
+        public RowIndexEntry deserialize(DataInputPlus in, boolean forCache) throws IOException
         {
             long position = readPosition(in, version);
             int size = readSize(in, version);
@@ -227,7 +239,14 @@ public class RowIndexEntry
             if (size > 0)
             {
                 ByteBuffer buffer = ByteBufferUtil.read(in, size);
-                return new IndexedEntry(position, buffer, metadata, version);
+                ByteBuffer offsetsBuffer = null;
+                if (!version.storeRows() && forCache)
+                {
+                    // add size of IndexInfo offsets for legacy versions for key-cache
+                    int offsetsSize = IndexedEntry.indexCount(buffer) * 4;
+                    offsetsBuffer = ByteBufferUtil.read(in, offsetsSize);
+                }
+                return new IndexedEntry(position, buffer, metadata, version, offsetsBuffer);
             }
             else
             {
@@ -302,12 +321,12 @@ public class RowIndexEntry
         private int lastIndexInfoIndex = -1;
         private final int indexCount;
 
-        IndexedEntry(long position, ByteBuffer buffer, CFMetaData metadata, Version version)
+        IndexedEntry(long position, ByteBuffer buffer, CFMetaData metadata, Version version, ByteBuffer offsetsBuffer)
         {
             super(position);
             this.buffer = buffer;
 
-            this.indexCount = buffer.getInt(DELETION_TIME_SIZE);
+            this.indexCount = indexCount(buffer);
 
             this.clusteringComparator = metadata.comparator;
             this.version = version;
@@ -318,13 +337,24 @@ public class RowIndexEntry
             {
                 this.offsetsOffset = buffer.limit() - indexCount() * 4;
                 this.offsets = buffer;
+                assert offsetsBuffer == null : "got separate IndexInfo offsets buffer for non-legacy version";
             }
             else
             {
                 this.offsetsOffset = 0;
-                this.offsets = ByteBuffer.allocate(indexCount() * 4);
-                buildLegacyOffsets();
+                if (offsetsBuffer == null)
+                {
+                    this.offsets = ByteBuffer.allocate(indexCount() * 4);
+                    buildLegacyOffsets();
+                }
+                else
+                    this.offsets = offsetsBuffer;
             }
+        }
+
+        static int indexCount(ByteBuffer buffer)
+        {
+            return buffer.getInt(DELETION_TIME_SIZE);
         }
 
         private void buildLegacyOffsets()
@@ -565,7 +595,7 @@ public class RowIndexEntry
                     buf = re;
                 }
 
-                return new IndexedEntry(position, buf, metadata, version);
+                return new IndexedEntry(position, buf, metadata, version, null);
             }
             else
                 return new RowIndexEntry(position);

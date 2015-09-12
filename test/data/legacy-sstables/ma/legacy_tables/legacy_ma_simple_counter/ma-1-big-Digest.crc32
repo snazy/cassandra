@@ -1,5 +1,6 @@
 <<<<<<< HEAD
 <<<<<<< HEAD
+<<<<<<< HEAD
 2816492267
 =======
 2100965283
@@ -7,3 +8,6 @@
 =======
 3935252669
 >>>>>>> 26b7fb7... move IndexInfo offsets back to end of serialized structure
+=======
+625085780
+>>>>>>> 1fe12af... serialize IndexInfo offsets for legacy versions in key-cache

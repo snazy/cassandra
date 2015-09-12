@@ -187,7 +187,7 @@ public final class OHCKeyCache
             RowIndexEntry.Serializer indexSerializer = cfm.serializers().getRowIndexSerializer(rowIndexEntry.value.version());
             try
             {
-                indexSerializer.serialize(rowIndexEntry.value, new DataOutputBufferFixed(buf));
+                indexSerializer.serialize(rowIndexEntry.value, new DataOutputBufferFixed(buf), true);
             }
             catch (IOException e)
             {
@@ -211,7 +211,7 @@ public final class OHCKeyCache
 
             sz += SerializationUtil.stringSerializedSize(rowIndexEntry.value.version().getVersion());
 
-            sz += cfm.serializers().getRowIndexSerializer(rowIndexEntry.value.version()).serializedSize(rowIndexEntry.value);
+            sz += cfm.serializers().getRowIndexSerializer(rowIndexEntry.value.version()).serializedSize(rowIndexEntry.value, true);
 
             return sz;
         }
@@ -285,7 +285,7 @@ public final class OHCKeyCache
             RowIndexEntry.Serializer indexSerializer = cfm.serializers().getRowIndexSerializer(version);
             try
             {
-                RowIndexEntry entry = indexSerializer.deserialize(input);
+                RowIndexEntry entry = indexSerializer.deserialize(input, true);
                 return new KeyCacheValue(null, entry);
             }
             catch (IOException e)
