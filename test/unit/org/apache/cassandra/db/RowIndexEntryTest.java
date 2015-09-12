@@ -59,11 +59,6 @@ import static junit.framework.Assert.assertTrue;
 
 public class RowIndexEntryTest extends CQLTester
 {
-    private static final Version[] VERSIONS_NOT_LATEST = {
-        BigFormat.instance.getVersion("la"),
-        BigFormat.instance.getVersion("ka"),
-        BigFormat.instance.getVersion("jb"),
-    };
     private static final Version[] VERSIONS_STORE_ROWS = {
         BigFormat.instance.getVersion("ma")
     };
@@ -206,23 +201,6 @@ public class RowIndexEntryTest extends CQLTester
                     assertTrue("keyToFind:" + keyToFind, cfMeta.comparator.compare(ii.getFirstName(), value) > 0 ||
                                                          cfMeta.comparator.compare(ii.getLastName(), value) < 0);
                 }
-
-// TODO re-add after CASSANDRA-10237
-//                for (Version otherVersion : VERSIONS_NOT_LATEST)
-//                {
-//                    try
-//                    {
-//                        DataOutputBuffer dop = new DataOutputBuffer(rie.nativeSize());
-//                        rie.serialize(otherVersion, dop);
-//
-//                        RowIndexEntry rieOther = new RowIndexEntry.Serializer(otherVersion, header)
-//                                                 .deserialize(new DataInputBuffer(dop.buffer(), false));
-//                    }
-//                    catch (Throwable t)
-//                    {
-//                        throw new RuntimeException("error with primary version " + version + " using serialization version " + otherVersion, t);
-//                    }
-//                }
             }
         }
     }
