@@ -316,6 +316,11 @@ public class RowIndexEntry
 
             this.indexCount = buffer.getInt(DELETION_TIME_SIZE);
 
+            this.clusteringComparator = metadata.comparator;
+            this.version = version;
+            this.serializer = Serializers.indexSerializer(version);
+            this.clusteringSerializer = metadata.serializers().clusteringPrefixSerializer(version);
+
             if (version.storeRows())
             {
                 this.offsetsOffset = buffer.limit() - indexCount() * 4;
@@ -325,12 +330,35 @@ public class RowIndexEntry
             {
                 this.offsetsOffset = 0;
                 this.offsets = ByteBuffer.allocate(indexCount() * 4);
+                buildLegacyOffsets();
             }
+        }
 
-            this.clusteringComparator = metadata.comparator;
-            this.version = version;
-            this.serializer = Serializers.indexSerializer(version);
-            this.clusteringSerializer = metadata.serializers().clusteringPrefixSerializer(version);
+        private void buildLegacyOffsets()
+        {
+            ByteBuffer buf = buffer.duplicate();
+            try (DataInputBuffer input = new DataInputBuffer(buf, false))
+            {
+                // "seek" to last known IndexInfo
+                buf.position(FIRST_INDEX_INFO_OFFSET);
+                for (int i = 0; ; i++)
+                {
+                    // need to read through all IndexInfo objects until we reach the requested one
+
+                    // save IndexInfo offset
+                    indexInfoOffset(i, buf.position());
+
+                    if (i == indexCount - 1)
+                        // no need to skip the last IndexInfo
+                        break;
+
+                    serializer.skip(input, clusteringSerializer);
+                }
+            }
+            catch (IOException e)
+            {
+                throw new RuntimeException(e);
+            }
         }
 
         public Version version()
@@ -378,19 +406,9 @@ public class RowIndexEntry
         private IndexInfo indexInfo(int index, boolean deserialize, ByteBuffer buf, DataInputBuffer input) throws IOException
         {
             int offset = indexInfoOffset(index);
-            if (offset > 0)
-            {
-                // We already know the offset of the requested IndexInfo, so just "seek" and deserialize.
-                // This is the only possible code path for 3.0 sstable format "ma".
-                buf.position(offset);
-            }
-            else
-            {
-                // We do not know the index of the requested IndexInfo object - i.e. it is necessary
-                // to scan the serialized index. Discovered IndexInfo offsets will be cached.
-                // This is the only possible code path for pre-3.0 sstable formats.
-                legacyIndexInfoSearch(index, buf, input);
-            }
+            assert offset > 0 : "no offset for IndexInfo object";
+
+            buf.position(offset);
 
             if (!deserialize)
             {
@@ -410,39 +428,6 @@ public class RowIndexEntry
             lastIndexInfo = info;
 
             return info;
-        }
-
-        private void legacyIndexInfoSearch(int index, ByteBuffer buf, DataInputBuffer input) throws IOException
-        {
-            int i = 0;
-            // skip already discovered offsets
-            while (i < index && indexInfoOffset(i) != 0)
-                i++;
-
-            // "seek" to last known IndexInfo
-            int offset;
-            if (i == 0)
-            {
-                offset = FIRST_INDEX_INFO_OFFSET;
-            }
-            else
-            {
-                i--;
-                offset = indexInfoOffset(i);
-            }
-            buf.position(offset);
-
-            // need to read through all IndexInfo objects until we reach the requested one
-            for (; ; i++)
-            {
-                // save IndexInfo offset
-                indexInfoOffset(i, buf.position());
-
-                if (i == index)
-                    break;
-
-                serializer.skip(input, clusteringSerializer);
-            }
         }
 
         private int indexInfoOffset(int index)
