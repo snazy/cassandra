@@ -17,53 +17,66 @@
  */
 package org.apache.cassandra.db;
 
-import java.io.DataInput;
 import java.io.IOException;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Collections;
-import java.util.List;
+import java.nio.ByteBuffer;
 
 import com.google.common.primitives.Ints;
 
 import org.apache.cassandra.config.CFMetaData;
-import org.apache.cassandra.cache.IMeasurableMemory;
+import org.apache.cassandra.config.DatabaseDescriptor;
+import org.apache.cassandra.db.rows.RangeTombstoneMarker;
+import org.apache.cassandra.db.rows.Unfiltered;
+import org.apache.cassandra.db.rows.UnfilteredRowIterator;
+import org.apache.cassandra.db.rows.UnfilteredSerializer;
 import org.apache.cassandra.io.ISerializer;
-import org.apache.cassandra.io.sstable.IndexHelper;
 import org.apache.cassandra.io.sstable.format.Version;
+import org.apache.cassandra.io.sstable.format.big.BigFormat;
+import org.apache.cassandra.io.util.DataInputBuffer;
 import org.apache.cassandra.io.util.DataInputPlus;
+import org.apache.cassandra.io.util.DataOutputBuffer;
 import org.apache.cassandra.io.util.DataOutputPlus;
 import org.apache.cassandra.io.util.FileUtils;
-import org.apache.cassandra.utils.ObjectSizes;
+import org.apache.cassandra.io.util.SequentialWriter;
+import org.apache.cassandra.utils.ByteBufferUtil;
 
-public class RowIndexEntry<T> implements IMeasurableMemory
+/**
+ * Binary format of {@code RowIndexEntry} is defined as follows:
+ * {@code
+ * (long) position (64 bit long)
+ *  (int) serialized size of data that follows (32 bit int)
+ * -- following for indexed entries only (so serialized size > 0)
+ *  (int) DeletionTime.localDeletionTime
+ * (long) DeletionTime.markedForDeletionAt
+ *  (int) number of IndexInfo objects
+ *    (*) serialized IndexInfo objects, see below
+ *    (*) offsets of serialized IndexInfo objects, since version "ma" (3.0)
+ *        Each IndexInfo object's offset is relative to the first IndexInfo object _plus_ fixed value of 12.
+ *        In other words: Each IndexInfo object's offset is relative to _deletionTime_ but excluding the offsets array at all.
+ * }
+ * <p>
+ * See {@link IndexInfo} for a description of the serialized format.
+ * </p>
+ */
+public class RowIndexEntry
 {
-    private static final long EMPTY_SIZE = ObjectSizes.measure(new RowIndexEntry(0));
+    static final int DELETION_TIME_SIZE = (int) DeletionTime.serializer.serializedSize(null);
+    static final int FIRST_INDEX_INFO_OFFSET = (int) (TypeSizes.sizeof(0)/*columnsCount*/ + DELETION_TIME_SIZE);
 
-    public final long position;
+    private final long position;
 
     public RowIndexEntry(long position)
     {
         this.position = position;
     }
 
-    protected int promotedSize(IndexHelper.IndexInfo.Serializer idxSerializer)
+    public long getPosition()
     {
-        return 0;
+        return position;
     }
 
-    public static RowIndexEntry<IndexHelper.IndexInfo> create(long position, DeletionTime deletionTime, ColumnIndex index)
+    public int promotedSize(CFMetaData metadata, Version version)
     {
-        assert index != null;
-        assert deletionTime != null;
-
-        // we only consider the columns summary when determining whether to create an IndexedEntry,
-        // since if there are insufficient columns to be worth indexing we're going to seek to
-        // the beginning of the row anyway, so we might as well read the tombstone there as well.
-        if (index.columnsIndex.size() > 1)
-            return new IndexedEntry(position, deletionTime, index.partitionHeaderLength, index.columnsIndex);
-        else
-            return new RowIndexEntry<>(position);
+        return 0;
     }
 
     /**
@@ -72,7 +85,17 @@ public class RowIndexEntry<T> implements IMeasurableMemory
      */
     public boolean isIndexed()
     {
-        return !columnsIndex().isEmpty();
+        return false;
+    }
+
+    public int indexCount()
+    {
+        return 0;
+    }
+
+    public IndexInfo indexInfo(int index)
+    {
+        throw new IllegalStateException();
     }
 
     public DeletionTime deletionTime()
@@ -81,131 +104,185 @@ public class RowIndexEntry<T> implements IMeasurableMemory
     }
 
     /**
-     * @return the offset to the start of the header information for this row.
-     * For some formats this may not be the start of the row.
+     * The index of the IndexInfo in which a scan starting with @name should begin.
+     *
+     * @param name name to search for
+     * @param comparator the comparator to use
+     * @param reversed whether or not the search is reversed, i.e. we scan forward or backward from name
+     * @param lastIndex where to start the search from in indexList
+     *
+     * @return int index
      */
-    public long headerOffset()
+    public int indexOf(ClusteringPrefix name, ClusteringComparator comparator, boolean reversed, int lastIndex)
     {
-        return 0;
+        /*
+        Take the example from the unit test, and say your index looks like this:
+        [0..5][10..15][20..25]
+        and you look for the slice [13..17].
+
+        When doing forward slice, we are doing a binary search comparing 13 (the start of the query)
+        to the lastName part of the index slot. You'll end up with the "first" slot, going from left to right,
+        that may contain the start.
+
+        When doing a reverse slice, we do the same thing, only using as a start column the end of the query,
+        i.e. 17 in this example, compared to the firstName part of the index slots.  bsearch will give us the
+        first slot where firstName > start ([20..25] here), so we subtract an extra one to get the slot just before.
+        */
+        int size = indexCount();
+        int startIdx = 0;
+        int endIdx = size;
+        if (reversed)
+        {
+            if (lastIndex < size - 1)
+            {
+                endIdx = lastIndex + 1;
+            }
+        }
+        else
+        {
+            if (lastIndex > 0)
+            {
+                startIdx = lastIndex;
+            }
+        }
+        int index = binarySearch(name, reversed, startIdx, endIdx);
+        return index < 0 ? -index - (reversed ? 2 : 1) : index;
     }
 
-    /**
-     * The length of the row header (partition key, partition deletion and static row).
-     * This value is only provided for indexed entries and this method will throw
-     * {@code UnsupportedOperationException} if {@code !isIndexed()}.
-     */
-    public long headerLength()
-    {
-        throw new UnsupportedOperationException();
+    int binarySearch(ClusteringPrefix name, boolean reversed, int fromIndex, int toIndex) {
+        return -1;
     }
 
-    public List<T> columnsIndex()
+    public static RowIndexEntry buildIndex(UnfilteredRowIterator iterator, SequentialWriter writer,
+                                           SerializationHeader header, Version version,
+                                           CFMetaData metadata, long position, DeletionTime deletionTime)
     {
-        return Collections.emptyList();
+        assert !iterator.isEmpty() && version.storeRows() && deletionTime != null;
+
+        Builder builder = new Builder(iterator, writer, metadata, header, version, deletionTime);
+        try
+        {
+            return builder.build(position);
+        }
+        catch (IOException e)
+        {
+            throw new RuntimeException(e);
+        }
     }
 
-    public long unsharedHeapSize()
+    public Version version()
     {
-        return EMPTY_SIZE;
+        return BigFormat.latestVersion;
     }
 
-    public static interface IndexSerializer<T>
+    public static final class Serializer
     {
-        void serialize(RowIndexEntry<T> rie, DataOutputPlus out) throws IOException;
-        RowIndexEntry<T> deserialize(DataInputPlus in) throws IOException;
-        public int serializedSize(RowIndexEntry<T> rie);
-    }
+         // This is the default index size that we use to delta-encode width when serializing so we get better vint-encoding.
+        // This is imperfect as user can change the index size and ideally we would save the index size used with each index file
+        // to use as base. However, that's a bit more involved a change that we want for now and very seldom do use change the index
+        // size so using the default is almost surely better than using no base at all.
+        public static final long WIDTH_BASE = 64 * 1024;
 
-    public static class Serializer implements IndexSerializer<IndexHelper.IndexInfo>
-    {
-        private final IndexHelper.IndexInfo.Serializer idxSerializer;
+        private final CFMetaData metadata;
         private final Version version;
 
-        public Serializer(CFMetaData metadata, Version version, SerializationHeader header)
+        public Serializer(CFMetaData metadata, Version version)
         {
-            this.idxSerializer = new IndexHelper.IndexInfo.Serializer(metadata, version, header);
+            this.metadata = metadata;
             this.version = version;
         }
 
-        public void serialize(RowIndexEntry<IndexHelper.IndexInfo> rie, DataOutputPlus out) throws IOException
+        public void serialize(RowIndexEntry rie, DataOutputPlus out, boolean forCache) throws IOException
         {
-            assert version.storeRows() : "We read old index files but we should never write them";
-
-            out.writeUnsignedVInt(rie.position);
-            out.writeUnsignedVInt(rie.promotedSize(idxSerializer));
+            writePosition(out, rie);
 
             if (rie.isIndexed())
             {
-                out.writeUnsignedVInt(rie.headerLength());
-                DeletionTime.serializer.serialize(rie.deletionTime(), out);
-                out.writeUnsignedVInt(rie.columnsIndex().size());
-                for (IndexHelper.IndexInfo info : rie.columnsIndex())
-                    idxSerializer.serialize(info, out);
+                IndexedEntry indexed = (IndexedEntry) rie;
+                writeSize(out, version, indexed.buffer.limit());
+                indexed.buffer.position(0);
+                out.write(indexed.buffer);
+                if (!version.storeRows() && forCache)
+                {
+                    // write IndexInfo offsets for legacy versions for key-cache
+                    out.write(indexed.offsets);
+                }
             }
+            else
+                writeSize(out, version, 0);
         }
 
-        public RowIndexEntry<IndexHelper.IndexInfo> deserialize(DataInputPlus in) throws IOException
+        public int serializedSize(RowIndexEntry rie, boolean forCache)
         {
+            int size = rie.promotedSize(metadata, version);
+
             if (!version.storeRows())
             {
-                long position = in.readLong();
-
-                int size = in.readInt();
-                if (size > 0)
+                if (forCache)
                 {
-                    DeletionTime deletionTime = DeletionTime.serializer.deserialize(in);
-
-                    int entries = in.readInt();
-                    List<IndexHelper.IndexInfo> columnsIndex = new ArrayList<>(entries);
-
-                    // The old format didn't saved the partition header length per-se, but rather for each entry it's
-                    // offset from the beginning of the row. We don't use that offset anymore, but we do need the
-                    // header length so we basically need the first entry offset. And so we inline the deserialization
-                    // of the first index entry to get that information. While this is a bit ugly, we'll get rid of that
-                    // code once pre-3.0 backward compatibility is dropped so it feels fine as a temporary hack.
-                    ClusteringPrefix firstName = idxSerializer.clusteringSerializer.deserialize(in);
-                    ClusteringPrefix lastName = idxSerializer.clusteringSerializer.deserialize(in);
-                    long headerLength = in.readLong();
-                    long width = in.readLong();
-
-                    columnsIndex.add(new IndexHelper.IndexInfo(firstName, lastName, width, null));
-                    for (int i = 1; i < entries; i++)
-                        columnsIndex.add(idxSerializer.deserialize(in));
-
-                    return new IndexedEntry(position, deletionTime, headerLength, columnsIndex);
+                    // add size of IndexInfo offsets for legacy versions for key-cache
+                    size += rie.indexCount() * 4;
                 }
-                else
-                {
-                    return new RowIndexEntry<>(position);
-                }
+                return 8 + 4 + size;
             }
 
-            long position = in.readUnsignedVInt();
+            return TypeSizes.sizeofUnsignedVInt(rie.position)
+                   + TypeSizes.sizeofVInt(size - WIDTH_BASE)
+                   + size;
+        }
 
-            int size = (int)in.readUnsignedVInt();
+        public RowIndexEntry deserialize(DataInputPlus in, boolean forCache) throws IOException
+        {
+            long position = readPosition(in, version);
+            int size = readSize(in, version);
+
             if (size > 0)
             {
-                long headerLength = in.readUnsignedVInt();
-                DeletionTime deletionTime = DeletionTime.serializer.deserialize(in);
-                int entries = (int)in.readUnsignedVInt();
-                List<IndexHelper.IndexInfo> columnsIndex = new ArrayList<>(entries);
-                for (int i = 0; i < entries; i++)
-                    columnsIndex.add(idxSerializer.deserialize(in));
-
-                return new IndexedEntry(position, deletionTime, headerLength, columnsIndex);
+                ByteBuffer buffer = ByteBufferUtil.read(in, size);
+                ByteBuffer offsetsBuffer = null;
+                if (!version.storeRows() && forCache)
+                {
+                    // add size of IndexInfo offsets for legacy versions for key-cache
+                    int offsetsSize = IndexedEntry.indexCount(buffer) * 4;
+                    offsetsBuffer = ByteBufferUtil.read(in, offsetsSize);
+                }
+                return new IndexedEntry(position, buffer, metadata, version, offsetsBuffer);
             }
             else
             {
-                return new RowIndexEntry<>(position);
+                return new RowIndexEntry(position);
             }
         }
 
-        // Reads only the data 'position' of the index entry and returns it. Note that this left 'in' in the middle
-        // of reading an entry, so this is only useful if you know what you are doing and in most case 'deserialize'
-        // should be used instead.
+        private void writePosition(DataOutputPlus out, RowIndexEntry rie) throws IOException
+        {
+            long pos = rie.getPosition();
+            if (version.storeRows())
+                out.writeUnsignedVInt(pos);
+            else
+                out.writeLong(pos);
+        }
+
         public static long readPosition(DataInputPlus in, Version version) throws IOException
         {
-            return version.storeRows() ? in.readUnsignedVInt() : in.readLong();
+            return version.storeRows()
+                   ? in.readUnsignedVInt()
+                   : in.readLong();
+        }
+
+        private static void writeSize(DataOutputPlus out, Version version, int size) throws IOException
+        {
+            if (version.storeRows())
+                out.writeVInt(size - WIDTH_BASE);
+            else
+                out.writeInt(size);
+        }
+
+        private static int readSize(DataInputPlus in, Version version) throws IOException
+        {
+            return version.storeRows()
+                   ? (int) (in.readVInt() + WIDTH_BASE)
+                   : in.readInt();
         }
 
         public static void skip(DataInputPlus in, Version version) throws IOException
@@ -216,99 +293,382 @@ public class RowIndexEntry<T> implements IMeasurableMemory
 
         public static void skipPromotedIndex(DataInputPlus in, Version version) throws IOException
         {
-            int size = version.storeRows() ? (int)in.readUnsignedVInt() : in.readInt();
+            int size = readSize(in, version);
             if (size <= 0)
                 return;
 
             FileUtils.skipBytesFully(in, size);
-        }
-
-        public int serializedSize(RowIndexEntry<IndexHelper.IndexInfo> rie)
-        {
-            assert version.storeRows() : "We read old index files but we should never write them";
-
-            int size = TypeSizes.sizeofUnsignedVInt(rie.position) + TypeSizes.sizeofUnsignedVInt(rie.promotedSize(idxSerializer));
-
-            if (rie.isIndexed())
-            {
-                List<IndexHelper.IndexInfo> index = rie.columnsIndex();
-
-                size += TypeSizes.sizeofUnsignedVInt(rie.headerLength());
-                size += DeletionTime.serializer.serializedSize(rie.deletionTime());
-                size += TypeSizes.sizeofUnsignedVInt(index.size());
-
-                for (IndexHelper.IndexInfo info : index)
-                    size += idxSerializer.serializedSize(info);
-            }
-            return size;
         }
     }
 
     /**
      * An entry in the row index for a row whose columns are indexed.
      */
-    private static class IndexedEntry extends RowIndexEntry<IndexHelper.IndexInfo>
+    private static final class IndexedEntry extends RowIndexEntry
     {
-        private final DeletionTime deletionTime;
+        // binary representation of serialized RowIndexEntry.IndexedEntry
+        private final ByteBuffer buffer;
+        // buffer containing IndexInfo offsets - for pre-3.0 indexes this is a separate buffer, as pre-3.0
+        // indexes do not contain offsets to IndexInfo objects
+        private final ByteBuffer offsets;
+        // offset to offsets of IndexInfo objects in this.offsets
+        private final int offsetsOffset;
+        private final ClusteringComparator clusteringComparator;
+        private final IndexInfo.Serializer serializer;
+        private final ISerializer<ClusteringPrefix> clusteringSerializer;
+        private final Version version;
+        private IndexInfo lastIndexInfo;
+        private int lastIndexInfoIndex = -1;
+        private final int indexCount;
 
-        // The offset in the file when the index entry end
-        private final long headerLength;
-        private final List<IndexHelper.IndexInfo> columnsIndex;
-        private static final long BASE_SIZE =
-                ObjectSizes.measure(new IndexedEntry(0, DeletionTime.LIVE, 0, Arrays.<IndexHelper.IndexInfo>asList(null, null)))
-              + ObjectSizes.measure(new ArrayList<>(1));
-
-        private IndexedEntry(long position, DeletionTime deletionTime, long headerLength, List<IndexHelper.IndexInfo> columnsIndex)
+        IndexedEntry(long position, ByteBuffer buffer, CFMetaData metadata, Version version, ByteBuffer offsetsBuffer)
         {
             super(position);
-            assert deletionTime != null;
-            assert columnsIndex != null && columnsIndex.size() > 1;
-            this.deletionTime = deletionTime;
-            this.headerLength = headerLength;
-            this.columnsIndex = columnsIndex;
+            this.buffer = buffer;
+
+            this.indexCount = indexCount(buffer);
+
+            this.clusteringComparator = metadata.comparator;
+            this.version = version;
+            this.serializer = Serializers.indexSerializer(version);
+            this.clusteringSerializer = metadata.serializers().clusteringPrefixSerializer(version);
+
+            if (version.storeRows())
+            {
+                this.offsetsOffset = buffer.limit() - indexCount() * 4;
+                this.offsets = buffer;
+                assert offsetsBuffer == null : "got separate IndexInfo offsets buffer for non-legacy version";
+            }
+            else
+            {
+                this.offsetsOffset = 0;
+                if (offsetsBuffer == null)
+                {
+                    this.offsets = ByteBuffer.allocate(indexCount() * 4);
+                    buildLegacyOffsets();
+                }
+                else
+                    this.offsets = offsetsBuffer;
+            }
+        }
+
+        static int indexCount(ByteBuffer buffer)
+        {
+            return buffer.getInt(DELETION_TIME_SIZE);
+        }
+
+        private void buildLegacyOffsets()
+        {
+            ByteBuffer buf = buffer.duplicate();
+            try (DataInputBuffer input = new DataInputBuffer(buf, false))
+            {
+                // "seek" to last known IndexInfo
+                buf.position(FIRST_INDEX_INFO_OFFSET);
+                for (int i = 0; ; i++)
+                {
+                    // need to read through all IndexInfo objects until we reach the requested one
+
+                    // save IndexInfo offset
+                    indexInfoOffset(i, buf.position());
+
+                    if (i == indexCount - 1)
+                        // no need to skip the last IndexInfo
+                        break;
+
+                    serializer.skip(input, clusteringSerializer);
+                }
+            }
+            catch (IOException e)
+            {
+                throw new RuntimeException(e);
+            }
+        }
+
+        public Version version()
+        {
+            return version;
         }
 
         @Override
         public DeletionTime deletionTime()
         {
-            return deletionTime;
+            return DeletionTime.serializer.deserialize(buffer, 0);
         }
 
         @Override
-        public long headerLength()
+        public boolean isIndexed()
         {
-            return headerLength;
+            return true;
         }
 
         @Override
-        public List<IndexHelper.IndexInfo> columnsIndex()
+        public int indexCount()
         {
-            return columnsIndex;
+            return indexCount;
         }
 
         @Override
-        protected int promotedSize(IndexHelper.IndexInfo.Serializer idxSerializer)
+        public IndexInfo indexInfo(int index)
         {
-            long size = TypeSizes.sizeofUnsignedVInt(headerLength)
-                      + DeletionTime.serializer.serializedSize(deletionTime)
-                      + TypeSizes.sizeofUnsignedVInt(columnsIndex.size()); // number of entries
-            for (IndexHelper.IndexInfo info : columnsIndex)
-                size += idxSerializer.serializedSize(info);
+            // This method is called often with the same index argument.
+            // (see org.apache.cassandra.db.columniterator.AbstractSSTableIterator.IndexState.currentIndex())
+            if (lastIndexInfoIndex == index)
+                return lastIndexInfo;
 
-            return Ints.checkedCast(size);
+            ByteBuffer buf = buffer.duplicate();
+            try (DataInputBuffer input = new DataInputBuffer(buf, false))
+            {
+                return indexInfo(index, true, buf, input);
+            }
+            catch (IOException e)
+            {
+                throw new RuntimeException(e);
+            }
+        }
+
+        private IndexInfo indexInfo(int index, boolean deserialize, ByteBuffer buf, DataInputBuffer input) throws IOException
+        {
+            int offset = indexInfoOffset(index);
+            assert offset > 0 : "no offset for IndexInfo object";
+
+            buf.position(offset);
+
+            if (!deserialize)
+            {
+                // used by serialize() methods via ensureIndexInfoOffsets() to calculate all IndexInfo offsets
+                return null;
+            }
+
+            IndexInfo info = serializer.deserialize(input, clusteringSerializer);
+
+            if (!version.storeRows() && indexCount() > index + 1)
+            {
+                // We know the offset of the next IndexInfo - so store it. (for pre-3.0 sstables)
+                indexInfoOffset(index + 1, buf.position());
+            }
+
+            lastIndexInfoIndex = index;
+            lastIndexInfo = info;
+
+            return info;
+        }
+
+        private int indexInfoOffset(int index)
+        {
+            return offsets.getInt(offsetsOffset + index * 4);
+        }
+
+        private void indexInfoOffset(int indexIdx, int offset)
+        {
+            offsets.putInt(offsetsOffset + indexIdx * 4, offset);
         }
 
         @Override
-        public long unsharedHeapSize()
+        public int promotedSize(CFMetaData metadata, Version version)
         {
-            long entrySize = 0;
-            for (IndexHelper.IndexInfo idx : columnsIndex)
-                entrySize += idx.unsharedHeapSize();
+            return Ints.checkedCast(buffer.limit());
+        }
 
-            return BASE_SIZE
-                   + entrySize
-                   + deletionTime.unsharedHeapSize()
-                   + ObjectSizes.sizeOfReferenceArray(columnsIndex.size());
+        int binarySearch(ClusteringPrefix name, boolean reversed, int fromIndex, int toIndex) {
+            int low = fromIndex;
+            int high = toIndex - 1;
+
+            ByteBuffer buf = buffer.duplicate();
+            try (DataInputBuffer input = new DataInputBuffer(buf, false))
+            {
+                while (low <= high) {
+                    int mid = (low + high) >>> 1;
+
+                    // Do the comparation previously done via:
+                    //                IndexInfo midVal = indexInfo(mid);
+                    //                int cmp = c.compare(midVal, key);
+                    //
+                    // "seek" to start of serialized IndexInfo
+                    indexInfo(mid, false, buf, input);
+
+                    ClusteringPrefix c2 = reversed
+                                          ? IndexInfo.Serializer.readFirstName(input, clusteringSerializer)
+                                          : IndexInfo.Serializer.readLastName(input, clusteringSerializer);
+                    int cmp = -clusteringComparator.compare(name, c2);
+
+                    if (cmp < 0)
+                        low = mid + 1;
+                    else if (cmp > 0)
+                        high = mid - 1;
+                    else
+                        return mid; // key found
+                }
+                return -(low + 1);  // key not found
+            }
+            catch (IOException e)
+            {
+                throw new RuntimeException(e);
+            }
+        }
+    }
+
+    /**
+     * Help to create an index for a column family based on size of columns,
+     * and write said columns to disk.
+     */
+    private static final class Builder
+    {
+        private final UnfilteredRowIterator iterator;
+        private final SequentialWriter writer;
+        private final CFMetaData metadata;
+        private final SerializationHeader header;
+        private final Version version;
+
+        private final long initialPosition;
+        private long startPosition = -1;
+
+        private int written;
+
+        private ClusteringPrefix firstClustering;
+        private ClusteringPrefix lastClustering;
+
+        private DeletionTime openMarker;
+
+        private DataOutputBuffer buffer;
+        private IndexInfo firstIndexInfo;
+        private DataOutputBuffer offsetsBuffer;
+        private final DeletionTime deletionTime;
+        private int indexCount;
+        private ISerializer<ClusteringPrefix> clusteringSerializer;
+
+        Builder(UnfilteredRowIterator iterator,
+                SequentialWriter writer,
+                CFMetaData metadata, SerializationHeader header,
+                Version version, DeletionTime deletionTime)
+        {
+            this.iterator = iterator;
+            this.writer = writer;
+            this.metadata = metadata;
+            this.header = header;
+            this.version = version;
+            this.deletionTime = deletionTime;
+            this.initialPosition = writer.getFilePointer();
+        }
+
+        private void writePartitionHeader(UnfilteredRowIterator iterator) throws IOException
+        {
+            ByteBufferUtil.writeWithShortLength(iterator.partitionKey().getKey(), writer);
+            DeletionTime.serializer.serialize(iterator.partitionLevelDeletion(), writer);
+            if (header.hasStatic())
+                UnfilteredSerializer.serializer.serialize(iterator.staticRow(), header, writer, version.correspondingMessagingVersion());
+        }
+
+        RowIndexEntry build(long position) throws IOException
+        {
+            writePartitionHeader(iterator);
+
+            while (iterator.hasNext())
+                add(iterator.next());
+
+            UnfilteredSerializer.serializer.writeEndOfPartition(writer);
+
+            // It's possible we add no rows, just a top level deletion
+            if (written == 0)
+                return new RowIndexEntry(position);
+
+            // the last column may have fallen on an index boundary already.  if not, index it explicitly.
+            if (firstClustering != null)
+                addIndexBlock();
+
+            // we only consider the columns summary when determining whether to create an IndexedEntry,
+            // since if there are insufficient columns to be worth indexing we're going to seek to
+            // the beginning of the row anyway, so we might as well read the tombstone there as well.
+            if (this.buffer != null)
+            {
+                ByteBuffer buf = offsetsBuffer.buffer();
+                buffer.write(buf);
+
+                buf = buffer.buffer();
+                buf.putInt(DELETION_TIME_SIZE, indexCount);
+
+                // Do not re-allocate the buffer to be "correctly" sized as the returned
+                // IndexEntry object is short-lived.
+
+                metadata.indexEntryStats.addIndexEntryStats(currentPosition() - initialPosition,
+                                                            buf.limit(),
+                                                            indexCount);
+
+                return new IndexedEntry(position, buf, metadata, version, null);
+            }
+            else
+                return new RowIndexEntry(position);
+        }
+
+        private long currentPosition()
+        {
+            return writer.getFilePointer() - initialPosition;
+        }
+
+        private void addIndexBlock() throws IOException
+        {
+            IndexInfo cIndexInfo = new IndexInfo(firstClustering,
+                                                 lastClustering,
+                                                 startPosition,
+                                                 currentPosition() - startPosition,
+                                                 openMarker);
+            if (buffer == null)
+            {
+                if (firstIndexInfo != null)
+                {
+                    int bufferSize = metadata.indexEntryStats.averageIndexedEntrySize();
+                    int offsetsSize = metadata.indexEntryStats.averageIndexInfoCount();
+
+                    this.buffer = new DataOutputBuffer(bufferSize);
+                    this.offsetsBuffer = new DataOutputBuffer(offsetsSize);
+
+                    DeletionTime.serializer.serialize(deletionTime, buffer);
+                    buffer.writeInt(0); // placeholder for number of IndexInfo objects
+
+                    clusteringSerializer = metadata.serializers().clusteringPrefixSerializer(version);
+                    addIndexInfo(firstIndexInfo);
+
+                    firstIndexInfo = null;
+                }
+                else
+                    firstIndexInfo = cIndexInfo;
+            }
+            if (buffer != null)
+            {
+                addIndexInfo(cIndexInfo);
+            }
+
+            firstClustering = null;
+        }
+
+        private void addIndexInfo(IndexInfo cIndexInfo) throws IOException
+        {
+            offsetsBuffer.writeInt(buffer.getLength());
+            Serializers.latestVersionIndexSerializer.serialize(cIndexInfo, buffer, clusteringSerializer);
+            indexCount++;
+        }
+
+        private void add(Unfiltered unfiltered) throws IOException
+        {
+            if (firstClustering == null)
+            {
+                // Beginning of an index block. Remember the start and position
+                firstClustering = unfiltered.clustering();
+                startPosition = currentPosition();
+            }
+
+            UnfilteredSerializer.serializer.serialize(unfiltered, header, writer, version.correspondingMessagingVersion());
+            lastClustering = unfiltered.clustering();
+            ++written;
+
+            if (unfiltered.kind() == Unfiltered.Kind.RANGE_TOMBSTONE_MARKER)
+            {
+                RangeTombstoneMarker marker = (RangeTombstoneMarker)unfiltered;
+                openMarker = marker.isOpen(false) ? marker.openDeletionTime(false) : null;
+            }
+
+            // if we hit the column index size that we have to index after, go ahead and index it.
+            if (currentPosition() - startPosition >= DatabaseDescriptor.getColumnIndexSize())
+                addIndexBlock();
         }
     }
 }

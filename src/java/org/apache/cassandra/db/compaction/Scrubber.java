@@ -55,7 +55,7 @@ public class Scrubber implements Closeable
     private final RandomAccessReader dataFile;
     private final RandomAccessReader indexFile;
     private final ScrubInfo scrubInfo;
-    private final RowIndexEntry.IndexSerializer rowIndexEntrySerializer;
+    private final RowIndexEntry.Serializer rowIndexEntrySerializer;
 
     private final boolean isOffline;
 
@@ -98,9 +98,7 @@ public class Scrubber implements Closeable
         this.outputHandler = outputHandler;
         this.skipCorrupted = skipCorrupted;
         this.isOffline = isOffline;
-        this.rowIndexEntrySerializer = sstable.descriptor.version.getSSTableFormat().getIndexSerializer(sstable.metadata,
-                                                                                                        sstable.descriptor.version,
-                                                                                                        sstable.header);
+        this.rowIndexEntrySerializer = sstable.metadata.serializers().getRowIndexSerializer(sstable.descriptor.version);
 
         List<SSTableReader> toScrub = Collections.singletonList(sstable);
 
@@ -157,7 +155,7 @@ public class Scrubber implements Closeable
             if (indexAvailable())
             {
                 // throw away variable so we don't have a side effect in the assert
-                long firstRowPositionFromIndex = rowIndexEntrySerializer.deserialize(indexFile).position;
+                long firstRowPositionFromIndex = rowIndexEntrySerializer.deserialize(indexFile, false).getPosition();
                 assert firstRowPositionFromIndex == 0 : firstRowPositionFromIndex;
             }
 
@@ -344,7 +342,7 @@ public class Scrubber implements Closeable
 
             nextRowPositionFromIndex = !indexAvailable()
                     ? dataFile.length()
-                    : rowIndexEntrySerializer.deserialize(indexFile).position;
+                    : rowIndexEntrySerializer.deserialize(indexFile, false).getPosition();
         }
         catch (Throwable th)
         {

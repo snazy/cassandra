@@ -18,6 +18,7 @@
 package org.apache.cassandra.db;
 
 import java.io.IOException;
+import java.nio.ByteBuffer;
 import java.security.MessageDigest;
 
 import com.google.common.base.Objects;
@@ -166,9 +167,21 @@ public class DeletionTime implements Comparable<DeletionTime>, IMeasurableMemory
         {
             int ldt = in.readInt();
             long mfda = in.readLong();
+            return make(ldt, mfda);
+        }
+
+        public DeletionTime deserialize(ByteBuffer buf, int offset)
+        {
+            int ldt = buf.getInt(offset);
+            long mfda = buf.getLong(offset + 4);
+            return make(ldt, mfda);
+        }
+
+        private DeletionTime make(int ldt, long mfda)
+        {
             return mfda == Long.MIN_VALUE && ldt == Integer.MAX_VALUE
-                 ? LIVE
-                 : new DeletionTime(mfda, ldt);
+                   ? LIVE
+                   : new DeletionTime(mfda, ldt);
         }
 
         public void skip(DataInputPlus in) throws IOException
@@ -178,8 +191,7 @@ public class DeletionTime implements Comparable<DeletionTime>, IMeasurableMemory
 
         public long serializedSize(DeletionTime delTime)
         {
-            return TypeSizes.sizeof(delTime.localDeletionTime())
-                 + TypeSizes.sizeof(delTime.markedForDeleteAt());
+            return 4 + 8;
         }
     }
 }

@@ -53,7 +53,6 @@ import org.apache.cassandra.db.partitions.CachedPartition;
 import org.apache.cassandra.db.context.CounterContext;
 import org.apache.cassandra.io.util.DataInputPlus;
 import org.apache.cassandra.io.util.DataOutputPlus;
-import org.apache.cassandra.io.sstable.format.big.BigFormat;
 import org.apache.cassandra.utils.ByteBufferUtil;
 import org.apache.cassandra.utils.FBUtilities;
 import org.apache.cassandra.utils.Pair;
@@ -115,12 +114,9 @@ public class CacheService implements CacheServiceMBean
     {
         logger.info("Initializing key cache with capacity of {} MBs.", DatabaseDescriptor.getKeyCacheSizeInMB());
 
-        long keyCacheInMemoryCapacity = DatabaseDescriptor.getKeyCacheSizeInMB() * 1024 * 1024;
-
         // as values are constant size we can use singleton weigher
         // where 48 = 40 bytes (average size of the key) + 8 bytes (size of value)
-        ICache<KeyCacheKey, RowIndexEntry> kc;
-        kc = ConcurrentLinkedHashCache.create(keyCacheInMemoryCapacity);
+        ICache<KeyCacheKey, RowIndexEntry> kc = DatabaseDescriptor.getKeyCacheSizeInMB() > 0 ? OHCKeyCache.create() : new NopCacheProvider.NopCache<>();
         AutoSavingCache<KeyCacheKey, RowIndexEntry> keyCache = new AutoSavingCache<>(kc, CacheType.KEY_CACHE, new KeyCacheSerializer());
 
         int keyCacheKeysToSave = DatabaseDescriptor.getKeyCacheKeysToSave();
@@ -453,7 +449,7 @@ public class CacheService implements CacheServiceMBean
             ByteBufferUtil.writeWithLength(key.key, out);
             out.writeInt(key.desc.generation);
             out.writeBoolean(true);
-            key.desc.getFormat().getIndexSerializer(cfm, key.desc.version, SerializationHeader.forKeyCache(cfm)).serialize(entry, out);
+            cfm.serializers().getRowIndexSerializer(key.desc.version).serialize(entry, out, false);
         }
 
         public Future<Pair<KeyCacheKey, RowIndexEntry>> deserialize(DataInputPlus input, ColumnFamilyStore cfs) throws IOException
@@ -474,17 +470,15 @@ public class CacheService implements CacheServiceMBean
                 // wrong is during upgrade, in which case we fail at deserialization. This is not a huge deal however since 1) this is unlikely enough that
                 // this won't affect many users (if any) and only once, 2) this doesn't prevent the node from starting and 3) CASSANDRA-10219 shows that this
                 // part of the code has been broken for a while without anyone noticing (it is, btw, still broken until CASSANDRA-10219 is fixed).
-                RowIndexEntry.Serializer.skipPromotedIndex(input, BigFormat.instance.getLatestVersion());
+                RowIndexEntry.Serializer.skipPromotedIndex(input, reader.descriptor.version);
                 return null;
             }
-            RowIndexEntry.IndexSerializer<?> indexSerializer = reader.descriptor.getFormat().getIndexSerializer(reader.metadata,
-                                                                                                                reader.descriptor.version,
-                                                                                                                SerializationHeader.forKeyCache(cfs.metadata));
-            RowIndexEntry entry = indexSerializer.deserialize(input);
+            RowIndexEntry.Serializer indexSerializer = reader.metadata.serializers().getRowIndexSerializer(reader.descriptor.version);
+            RowIndexEntry entry = indexSerializer.deserialize(input, false);
             return Futures.immediateFuture(Pair.create(new KeyCacheKey(cfs.metadata.cfId, reader.descriptor, key), entry));
         }
 
-        private SSTableReader findDesc(int generation, Iterable<SSTableReader> collection)
+        private static SSTableReader findDesc(int generation, Iterable<SSTableReader> collection)
         {
             for (SSTableReader sstable : collection)
             {

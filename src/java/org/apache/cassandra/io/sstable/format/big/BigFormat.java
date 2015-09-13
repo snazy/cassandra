@@ -20,7 +20,6 @@ package org.apache.cassandra.io.sstable.format.big;
 import java.util.Set;
 
 import org.apache.cassandra.config.CFMetaData;
-import org.apache.cassandra.db.RowIndexEntry;
 import org.apache.cassandra.db.SerializationHeader;
 import org.apache.cassandra.db.lifecycle.LifecycleTransaction;
 import org.apache.cassandra.io.sstable.Component;
@@ -58,6 +57,9 @@ public class BigFormat implements SSTableFormat
     @Override
     public Version getVersion(String version)
     {
+        if (version.equals(latestVersion.getVersion()))
+            return latestVersion;
+
         return new BigVersion(version);
     }
 
@@ -71,12 +73,6 @@ public class BigFormat implements SSTableFormat
     public SSTableReader.Factory getReaderFactory()
     {
         return readerFactory;
-    }
-
-    @Override
-    public RowIndexEntry.IndexSerializer getIndexSerializer(CFMetaData metadata, Version version, SerializationHeader header)
-    {
-        return new RowIndexEntry.Serializer(metadata, version, header);
     }
 
     static class WriterFactory extends SSTableWriter.Factory

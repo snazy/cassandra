@@ -49,6 +49,7 @@ package org.apache.cassandra.utils.vint;
 import java.io.DataInput;
 import java.io.DataOutput;
 import java.io.IOException;
+import java.nio.ByteBuffer;
 
 import net.nicoulaj.compilecommand.annotations.Inline;
 
@@ -58,6 +59,30 @@ import net.nicoulaj.compilecommand.annotations.Inline;
  */
 public class VIntCoding
 {
+
+    public static long readUnsignedVInt(ByteBuffer buffer, int offset)
+    {
+        int firstByte = buffer.get(offset++);
+
+        //Bail out early if this is one byte, necessary or it fails later
+        if (firstByte >= 0)
+            return firstByte;
+
+        int size = numberOfExtraBytesToRead(firstByte);
+        long retval = firstByte & firstByteValueMask(size);
+        for (int ii = 0; ii < size; ii++)
+        {
+            byte b = buffer.get(offset++);
+            retval <<= 8;
+            retval |= b & 0xff;
+        }
+
+        return retval;
+    }
+
+    public static long readVInt(ByteBuffer buffer, int offset) {
+        return decodeZigZag64(readUnsignedVInt(buffer, offset));
+    }
 
     public static long readUnsignedVInt(DataInput input) throws IOException {
         int firstByte = input.readByte();

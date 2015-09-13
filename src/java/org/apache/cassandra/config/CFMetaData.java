@@ -25,6 +25,8 @@ import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 import com.google.common.annotations.VisibleForTesting;
@@ -60,6 +62,8 @@ import org.github.jamm.Unmetered;
 @Unmetered
 public final class CFMetaData
 {
+    private static final Pattern VALID_NAME = Pattern.compile("\\w+");
+
     public enum Flag
     {
         SUPER, COUNTER, DENSE, COMPOUND, VIEW
@@ -86,7 +90,7 @@ public final class CFMetaData
     public volatile ClusteringComparator comparator;  // bytes, long, timeuuid, utf8, etc. This is built directly from clusteringColumns
     public final IPartitioner partitioner;            // partitioner the table uses
 
-    private final Serializers serializers;
+    private volatile Serializers serializers;
 
     // non-final, for now
     public volatile TableParams params = TableParams.DEFAULT;
@@ -107,12 +111,15 @@ public final class CFMetaData
     private final Map<ByteBuffer, ColumnDefinition> columnMetadata = new ConcurrentHashMap<>(); // not on any hot path
     private volatile List<ColumnDefinition> partitionKeyColumns;  // Always of size keyValidator.componentsCount, null padded if necessary
     private volatile List<ColumnDefinition> clusteringColumns;    // Of size comparator.componentsCount or comparator.componentsCount -1, null padded if necessary
+    private volatile List<AbstractType<?>> clusteringTypes;
     private volatile PartitionColumns partitionColumns;           // Always non-PK, non-clustering columns
 
     // For dense tables, this alias the single non-PK column the table contains (since it can only have one). We keep
     // that as convenience to access that column more easily (but we could replace calls by partitionColumns().iterator().next()
     // for those tables in practice).
     private volatile ColumnDefinition compactValueColumn;
+
+    public final IndexEntryStats indexEntryStats = new IndexEntryStats();
 
     /*
      * All of these methods will go away once CFMetaData becomes completely immutable.
@@ -279,7 +286,6 @@ public final class CFMetaData
         this.clusteringColumns = clusteringColumns;
         this.partitionColumns = partitionColumns;
 
-        this.serializers = new Serializers(this);
         rebuild();
     }
 
@@ -287,7 +293,8 @@ public final class CFMetaData
     // are kept because they are often useful in a different format.
     private void rebuild()
     {
-        this.comparator = new ClusteringComparator(extractTypes(clusteringColumns));
+        this.clusteringTypes = extractTypes(clusteringColumns);
+        this.comparator = new ClusteringComparator(clusteringTypes);
 
         this.columnMetadata.clear();
         for (ColumnDefinition def : partitionKeyColumns)
@@ -305,6 +312,8 @@ public final class CFMetaData
 
         if (isCompactTable())
             this.compactValueColumn = CompactTables.getCompactValueColumn(partitionColumns, isSuper());
+
+        this.serializers = new Serializers(this);
     }
 
     public MaterializedViews getMaterializedViews()
@@ -390,7 +399,7 @@ public final class CFMetaData
      */
     public static CFMetaData createFake(String keyspace, String name)
     {
-        return CFMetaData.Builder.create(keyspace, name).addPartitionKey("key", BytesType.instance).build();
+        return Builder.create(keyspace, name).addPartitionKey("key", BytesType.instance).build();
     }
 
     public Triggers getTriggers()
@@ -625,6 +634,11 @@ public final class CFMetaData
         return clusteringColumns;
     }
 
+    public List<AbstractType<?>> clusteringTypes()
+    {
+        return clusteringTypes;
+    }
+
     public PartitionColumns partitionColumns()
     {
         return partitionColumns;
@@ -839,7 +853,7 @@ public final class CFMetaData
 
     public static boolean isNameValid(String name)
     {
-        return name != null && !name.isEmpty() && name.length() <= Schema.NAME_LENGTH && name.matches("\\w+");
+        return name != null && !name.isEmpty() && name.length() <= Schema.NAME_LENGTH && VALID_NAME.matcher(name).matches();
     }
 
     public CFMetaData validate() throws ConfigurationException
@@ -1376,6 +1390,64 @@ public final class CFMetaData
                               .add("type", type)
                               .add("droppedTime", droppedTime)
                               .toString();
+        }
+    }
+
+    /**
+     * Tracks poor-man's statistics about the average partition size and
+     * {@link org.apache.cassandra.db.RowIndexEntry.IndexedEntry} serialized size using data available during runtime.
+     * This information is updated and used by the builder for {@link org.apache.cassandra.db.RowIndexEntry.IndexedEntry}.
+     */
+    public static final class IndexEntryStats
+    {
+        private static final long ASSUME_MIN_PARTITION_SIZE = 256 * 1024;
+        private static final long ASSUME_MIN_INDEX_SIZE = ASSUME_MIN_PARTITION_SIZE / DatabaseDescriptor.getColumnIndexSize() * 512;
+
+        private final AtomicLong totalPartitionSize = new AtomicLong();
+        private final AtomicLong totalIndexSize = new AtomicLong();
+        private final AtomicLong totalPartitionCount = new AtomicLong();
+
+        public void addIndexEntryStats(long partitionSize, int indexedSize, int indexCount)
+        {
+            partitionSize = totalPartitionSize.addAndGet(partitionSize);
+            if (partitionSize > Long.MAX_VALUE / 2)
+            {
+                // poor-man integer overflow protection
+
+                long partCount = totalPartitionCount.get();
+                long avgPartitionSize = partitionSize / partCount;
+                long avgIndexSize = totalIndexSize.get() / partCount;
+
+                totalIndexSize.set(avgIndexSize);
+                totalPartitionSize.set(avgPartitionSize);
+                totalPartitionCount.set(1);
+
+                return;
+            }
+
+            totalIndexSize.addAndGet(indexedSize);
+            totalPartitionCount.incrementAndGet();
+        }
+
+        public int averageIndexInfoCount()
+        {
+            int knownPartCount = (int) totalPartitionCount.get();
+            long partitionBytes = (knownPartCount > 0)
+                                  ? Math.max(totalPartitionSize.get() / knownPartCount, ASSUME_MIN_PARTITION_SIZE)
+                                  : ASSUME_MIN_PARTITION_SIZE;
+            long indexCount = partitionBytes / DatabaseDescriptor.getColumnIndexSize();
+
+            return (int) indexCount;
+        }
+
+        public int averageIndexedEntrySize()
+        {
+            int knownPartCount = (int) totalPartitionCount.get();
+            long indexSize = (knownPartCount > 0)
+                             ? Math.max(totalIndexSize.get() / knownPartCount, ASSUME_MIN_INDEX_SIZE)
+                             : ASSUME_MIN_INDEX_SIZE;
+
+            return (int) indexSize;
         }
     }
 }

@@ -17,6 +17,7 @@
  */
 package org.apache.cassandra.io.util;
 
+import java.io.EOFException;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 
@@ -66,5 +67,27 @@ public class DataInputBuffer extends RebufferingInputStream
     public int available() throws IOException
     {
         return buffer.remaining();
+    }
+
+    @Override
+    public int skipBytes(int n) throws IOException
+    {
+        return (int) skip(n);
+    }
+
+    @Override
+    public long skip(long n) throws IOException
+    {
+        if (available() < n)
+            throw new EOFException();
+        if (n > Integer.MAX_VALUE)
+            // bit too big, ByteBuffer only supports 32 bit position
+            throw new IllegalArgumentException();
+        int pos = buffer.position();
+        if (pos + (int) n <= 0 )
+            // check for integer overflow
+            throw new IllegalArgumentException();
+        buffer.position(pos + (int) n);
+        return n;
     }
 }

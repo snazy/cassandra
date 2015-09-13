@@ -194,7 +194,7 @@ public abstract class SSTableReader extends SSTable implements SelfRefCounted<SS
     protected IndexSummary indexSummary;
     protected IFilter bf;
 
-    protected final RowIndexEntry.IndexSerializer rowIndexEntrySerializer;
+    protected final RowIndexEntry.Serializer rowIndexEntrySerializer;
 
     protected InstrumentingCache<KeyCacheKey, RowIndexEntry> keyCache;
 
@@ -608,7 +608,7 @@ public abstract class SSTableReader extends SSTable implements SelfRefCounted<SS
         this.header = header;
         this.maxDataAge = maxDataAge;
         this.openReason = openReason;
-        this.rowIndexEntrySerializer = descriptor.version.getSSTableFormat().getIndexSerializer(metadata, desc.version, header);
+        this.rowIndexEntrySerializer = metadata.serializers().getRowIndexSerializer(desc.version);
     }
 
     public static long getTotalBytes(Iterable<SSTableReader> sstables)
@@ -809,12 +809,11 @@ public abstract class SSTableReader extends SSTable implements SelfRefCounted<SS
             try (IndexSummaryBuilder summaryBuilder = summaryLoaded ? null : new IndexSummaryBuilder(estimatedKeys, metadata.params.minIndexInterval, samplingLevel))
             {
                 long indexPosition;
-                RowIndexEntry.IndexSerializer rowIndexSerializer = descriptor.getFormat().getIndexSerializer(metadata, descriptor.version, header);
 
                 while ((indexPosition = primaryIndex.getFilePointer()) != indexSize)
                 {
                     ByteBuffer key = ByteBufferUtil.readWithShortLength(primaryIndex);
-                    RowIndexEntry indexEntry = rowIndexSerializer.deserialize(primaryIndex);
+                    RowIndexEntry.Serializer.skip(primaryIndex, descriptor.version);
                     DecoratedKey decoratedKey = decorateKey(key);
                     if (first == null)
                         first = decoratedKey;
@@ -1090,7 +1089,7 @@ public abstract class SSTableReader extends SSTable implements SelfRefCounted<SS
             // TODO: merge with caller's firstKeyBeyond() work,to save time
             if (newStart.compareTo(first) > 0)
             {
-                final long dataStart = getPosition(newStart, Operator.EQ).position;
+                final long dataStart = getPosition(newStart, Operator.EQ).getPosition();
                 final long indexStart = getIndexScanPosition(newStart);
                 this.tidy.runOnClose = new DropPageCache(dfile, dataStart, ifile, indexStart, runOnClose);
             }
@@ -1496,10 +1495,10 @@ public abstract class SSTableReader extends SSTable implements SelfRefCounted<SS
             if (leftBound.compareTo(last) > 0 || rightBound.compareTo(first) < 0)
                 continue;
 
-            long left = getPosition(leftBound, Operator.GT).position;
+            long left = getPosition(leftBound, Operator.GT).getPosition();
             long right = (rightBound.compareTo(last) > 0)
                          ? uncompressedLength()
-                         : getPosition(rightBound, Operator.GT).position;
+                         : getPosition(rightBound, Operator.GT).getPosition();
 
             if (left == right)
                 // empty range
@@ -1555,19 +1554,22 @@ public abstract class SSTableReader extends SSTable implements SelfRefCounted<SS
         return null;
     }
 
+    protected boolean hasCachedPosition(KeyCacheKey unifiedKey)
+    {
+        return keyCache != null
+               && keyCache.getCapacity() > 0
+               && metadata.params.caching.cacheKeys()
+               && keyCache.containsKey(unifiedKey);
+    }
+
     /**
      * Get position updating key cache and stats.
-     * @see #getPosition(PartitionPosition, SSTableReader.Operator, boolean)
      */
     public RowIndexEntry getPosition(PartitionPosition key, Operator op)
     {
         return getPosition(key, op, true, false);
     }
 
-    public RowIndexEntry getPosition(PartitionPosition key, Operator op, boolean updateCacheAndStats)
-    {
-        return getPosition(key, op, updateCacheAndStats, false);
-    }
     /**
      * @param key The key to apply as the rhs to the given Operator. A 'fake' key is allowed to
      * allow key selection by token bounds but only if op != * EQ
@@ -1576,6 +1578,7 @@ public abstract class SSTableReader extends SSTable implements SelfRefCounted<SS
      * @return The index entry corresponding to the key, or null if the key is not present
      */
     protected abstract RowIndexEntry getPosition(PartitionPosition key, Operator op, boolean updateCacheAndStats, boolean permitMatchPastLast);
+    public abstract boolean hasPosition(PartitionPosition key);
 
     public abstract SliceableUnfilteredRowIterator iterator(DecoratedKey key, ColumnFilter selectedColumns, boolean reversed, boolean isForThrift);
     public abstract SliceableUnfilteredRowIterator iterator(FileDataInput file, DecoratedKey key, RowIndexEntry indexEntry, ColumnFilter selectedColumns, boolean reversed, boolean isForThrift);
