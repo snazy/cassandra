@@ -134,6 +134,34 @@ public class BigTableReader extends SSTableReader
             }
         }
 
+        return readAndCachePosition(key, op, updateCacheAndStats, permitMatchPastLast);
+    }
+
+    public boolean hasPosition(PartitionPosition key)
+    {
+        assert key instanceof DecoratedKey; // EQ only make sense if the key is a valid row key
+
+        DecoratedKey decoratedKey = (DecoratedKey)key;
+
+        if (!bf.isPresent(decoratedKey))
+        {
+            Tracing.trace("Bloom filter allows skipping sstable {}", descriptor.generation);
+            return false;
+        }
+
+        // next, the key cache (only make sense for valid row key)
+        KeyCacheKey cacheKey = new KeyCacheKey(metadata.cfId, descriptor, decoratedKey.getKey());
+        if (hasCachedPosition(cacheKey))
+        {
+            Tracing.trace("Key cache hit for sstable {}", descriptor.generation);
+            return true;
+        }
+
+        return readAndCachePosition(key, SSTableReader.Operator.EQ, false, false) != null;
+    }
+
+    private RowIndexEntry readAndCachePosition(PartitionPosition key, Operator op, boolean updateCacheAndStats, boolean permitMatchPastLast)
+    {
         // check the smallest and greatest keys in the sstable to see if it can't be present
         boolean skip = false;
         if (key.compareTo(first) < 0)
@@ -247,7 +275,7 @@ public class BigTableReader extends SSTableReader
             throw new CorruptSSTableException(e, path);
         }
 
-        if (op == SSTableReader.Operator.EQ && updateCacheAndStats)
+        if (op == Operator.EQ && updateCacheAndStats)
             bloomFilterTracker.addFalsePositive();
         Tracing.trace("Partition index lookup complete (bloom filter false positive) for sstable {}", descriptor.generation);
         return null;

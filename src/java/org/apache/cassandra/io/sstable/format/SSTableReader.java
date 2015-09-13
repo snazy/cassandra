@@ -1554,19 +1554,22 @@ public abstract class SSTableReader extends SSTable implements SelfRefCounted<SS
         return null;
     }
 
+    protected boolean hasCachedPosition(KeyCacheKey unifiedKey)
+    {
+        return keyCache != null
+               && keyCache.getCapacity() > 0
+               && metadata.params.caching.cacheKeys()
+               && keyCache.containsKey(unifiedKey);
+    }
+
     /**
      * Get position updating key cache and stats.
-     * @see #getPosition(PartitionPosition, SSTableReader.Operator, boolean)
      */
     public RowIndexEntry getPosition(PartitionPosition key, Operator op)
     {
         return getPosition(key, op, true, false);
     }
 
-    public RowIndexEntry getPosition(PartitionPosition key, Operator op, boolean updateCacheAndStats)
-    {
-        return getPosition(key, op, updateCacheAndStats, false);
-    }
     /**
      * @param key The key to apply as the rhs to the given Operator. A 'fake' key is allowed to
      * allow key selection by token bounds but only if op != * EQ
@@ -1575,6 +1578,7 @@ public abstract class SSTableReader extends SSTable implements SelfRefCounted<SS
      * @return The index entry corresponding to the key, or null if the key is not present
      */
     protected abstract RowIndexEntry getPosition(PartitionPosition key, Operator op, boolean updateCacheAndStats, boolean permitMatchPastLast);
+    public abstract boolean hasPosition(PartitionPosition key);
 
     public abstract SliceableUnfilteredRowIterator iterator(DecoratedKey key, ColumnFilter selectedColumns, boolean reversed, boolean isForThrift);
     public abstract SliceableUnfilteredRowIterator iterator(FileDataInput file, DecoratedKey key, RowIndexEntry indexEntry, ColumnFilter selectedColumns, boolean reversed, boolean isForThrift);
