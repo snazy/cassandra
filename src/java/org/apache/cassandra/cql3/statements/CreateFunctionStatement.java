@@ -51,6 +51,7 @@ public final class CreateFunctionStatement extends SchemaAlteringStatement
     private final List<CQL3Type.Raw> argRawTypes;
     private final CQL3Type.Raw rawReturnType;
     private final boolean calledOnNullInput;
+    private final boolean trusted;
 
     private List<AbstractType<?>> argTypes;
     private AbstractType<?> returnType;
@@ -64,6 +65,7 @@ public final class CreateFunctionStatement extends SchemaAlteringStatement
                                    List<CQL3Type.Raw> argRawTypes,
                                    CQL3Type.Raw rawReturnType,
                                    boolean calledOnNullInput,
+                                   boolean trusted,
                                    boolean orReplace,
                                    boolean ifNotExists)
     {
@@ -74,6 +76,7 @@ public final class CreateFunctionStatement extends SchemaAlteringStatement
         this.argRawTypes = argRawTypes;
         this.rawReturnType = rawReturnType;
         this.calledOnNullInput = calledOnNullInput;
+        this.trusted = trusted;
         this.orReplace = orReplace;
         this.ifNotExists = ifNotExists;
     }
@@ -122,11 +125,19 @@ public final class CreateFunctionStatement extends SchemaAlteringStatement
     public void checkAccess(ClientState state) throws UnauthorizedException, InvalidRequestException
     {
         if (Schema.instance.findFunction(functionName, argTypes).isPresent() && orReplace)
+        {
+            if (trusted)
+                state.ensureHasPermission(Permission.ALTER, TrustedFunctionResource.root());
             state.ensureHasPermission(Permission.ALTER, FunctionResource.function(functionName.keyspace,
                                                                                   functionName.name,
                                                                                   argTypes));
+        }
         else
+        {
+            if (trusted)
+                state.ensureHasPermission(Permission.CREATE, TrustedFunctionResource.root());
             state.ensureHasPermission(Permission.CREATE, FunctionResource.keyspace(functionName.keyspace));
+        }
     }
 
     public void validate(ClientState state) throws InvalidRequestException
@@ -167,7 +178,7 @@ public final class CreateFunctionStatement extends SchemaAlteringStatement
                                                                 functionName, returnType.asCQL3Type(), old.returnType().asCQL3Type()));
         }
 
-        this.udFunction = UDFunction.create(functionName, argNames, argTypes, returnType, calledOnNullInput, language, body);
+        this.udFunction = UDFunction.create(functionName, argNames, argTypes, returnType, calledOnNullInput, language, body, trusted);
         this.replaced = old != null;
 
         MigrationManager.announceNewFunction(udFunction, isLocalOnly);

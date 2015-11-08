@@ -214,6 +214,7 @@ public final class SchemaKeyspace
                 + "language text,"
                 + "return_type text,"
                 + "called_on_null_input boolean,"
+                + "trusted boolean,"
                 + "PRIMARY KEY ((keyspace_name), function_name, argument_types))");
 
     private static final CFMetaData Aggregates =
@@ -801,6 +802,7 @@ public final class SchemaKeyspace
              .add("language", function.language())
              .add("return_type", function.returnType().asCQL3Type().toString())
              .add("called_on_null_input", function.isCalledOnNullInput())
+             .add("trusted", function.isTrusted())
              .frozenList("argument_names", function.argNames().stream().map((c) -> bbToString(c.bytes)).collect(toList()));
 
         adder.build();
@@ -1163,8 +1165,9 @@ public final class SchemaKeyspace
         String language = row.getString("language");
         String body = row.getString("body");
         boolean calledOnNullInput = row.getBoolean("called_on_null_input");
+        boolean trusted = row.has("trusted") && row.getBoolean("trusted");
 
-        org.apache.cassandra.cql3.functions.Function existing = Schema.instance.findFunction(name, argTypes).orElse(null);
+        Function existing = Schema.instance.findFunction(name, argTypes).orElse(null);
         if (existing instanceof UDFunction)
         {
             // This check prevents duplicate compilation of effectively the same UDF.
@@ -1186,12 +1189,12 @@ public final class SchemaKeyspace
 
         try
         {
-            return UDFunction.create(name, argNames, argTypes, returnType, calledOnNullInput, language, body);
+            return UDFunction.create(name, argNames, argTypes, returnType, calledOnNullInput, language, body, trusted);
         }
         catch (InvalidRequestException e)
         {
             logger.error(String.format("Cannot load function '%s' from schema: this function won't be available (on this node)", name), e);
-            return UDFunction.createBrokenFunction(name, argNames, argTypes, returnType, calledOnNullInput, language, body, e);
+            return UDFunction.createBrokenFunction(name, argNames, argTypes, returnType, calledOnNullInput, language, body, trusted, e);
         }
     }
 

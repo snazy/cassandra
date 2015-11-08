@@ -607,8 +607,10 @@ createFunctionStatement returns [CreateFunctionStatement expr]
         List<ColumnIdentifier> argsNames = new ArrayList<>();
         List<CQL3Type.Raw> argsTypes = new ArrayList<>();
         boolean calledOnNullInput = false;
+        boolean trusted = false;
     }
     : K_CREATE (K_OR K_REPLACE { orReplace = true; })?
+      (K_TRUSTED { trusted = true; })?
       K_FUNCTION
       (K_IF K_NOT K_EXISTS { ifNotExists = true; })?
       fn=functionName
@@ -623,7 +625,8 @@ createFunctionStatement returns [CreateFunctionStatement expr]
       K_LANGUAGE language = IDENT
       K_AS body = STRING_LITERAL
       { $expr = new CreateFunctionStatement(fn, $language.text.toLowerCase(), $body.text,
-                                            argsNames, argsTypes, rt, calledOnNullInput, orReplace, ifNotExists); }
+                                            argsNames, argsTypes, rt, calledOnNullInput, trusted,
+                                            orReplace, ifNotExists); }
     ;
 
 dropFunctionStatement returns [DropFunctionStatement expr]
@@ -988,6 +991,7 @@ resource returns [IResource res]
     : d=dataResource { $res = $d.res; }
     | r=roleResource { $res = $r.res; }
     | f=functionResource { $res = $f.res; }
+    | t=trustedFunctionResource { $res = $t.res; }
     ;
 
 dataResource returns [DataResource res]
@@ -1019,6 +1023,11 @@ functionResource returns [FunctionResource res]
         ')'
       )
       { $res = FunctionResource.functionFromCql($fn.s.keyspace, $fn.s.name, argsTypes); }
+    ;
+
+trustedFunctionResource returns [TrustedFunctionResource res]
+    : K_TRUSTED K_FUNCTION
+    { $res = TrustedFunctionResource.root(); }
     ;
 
 /**
@@ -1627,6 +1636,7 @@ basic_unreserved_keyword returns [String str]
         | K_JSON
         | K_CALLED
         | K_INPUT
+        | K_TRUSTED
         ) { $str = $k.text; }
     ;
 
@@ -1701,6 +1711,7 @@ K_AUTHORIZE:   A U T H O R I Z E;
 K_DESCRIBE:    D E S C R I B E;
 K_EXECUTE:     E X E C U T E;
 K_NORECURSIVE: N O R E C U R S I V E;
+K_TRUSTED:     T R U S T E D;
 
 K_USER:        U S E R;
 K_USERS:       U S E R S;

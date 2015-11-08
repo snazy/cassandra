@@ -332,7 +332,8 @@ public class LegacySchemaMigratorTest
                                             LongType.instance,
                                             false,
                                             "java",
-                                            "return 42L;");
+                                            "return 42L;",
+                                            false);
 
         // an overload with the same name, not a typo
         UDFunction udf2 = UDFunction.create(new FunctionName(keyspace, "udf"),
@@ -341,7 +342,8 @@ public class LegacySchemaMigratorTest
                                             Int32Type.instance,
                                             true,
                                             "java",
-                                            "return 42;");
+                                            "return 42;",
+                                            false);
 
         UDFunction udf3 = UDFunction.create(new FunctionName(keyspace, "udf3"),
                                             ImmutableList.of(new ColumnIdentifier("col4", false)),
@@ -349,7 +351,8 @@ public class LegacySchemaMigratorTest
                                             BooleanType.instance,
                                             false,
                                             "java",
-                                            "return true;");
+                                            "return true;",
+                                            false);
 
         return KeyspaceMetadata.create(keyspace,
                                        KeyspaceParams.simple(1),
@@ -369,7 +372,8 @@ public class LegacySchemaMigratorTest
                                             Int32Type.instance,
                                             false,
                                             "java",
-                                            "return 42;");
+                                            "return 42;",
+                                            false);
 
         UDFunction udf2 = UDFunction.create(new FunctionName(keyspace, "udf2"),
                                             ImmutableList.of(new ColumnIdentifier("col1", false), new ColumnIdentifier("col2", false)),
@@ -377,7 +381,8 @@ public class LegacySchemaMigratorTest
                                             LongType.instance,
                                             false,
                                             "java",
-                                            "return 42L;");
+                                            "return 42L;",
+                                            false);
 
         UDFunction udf3 = UDFunction.create(new FunctionName(keyspace, "udf3"),
                                             ImmutableList.of(new ColumnIdentifier("col1", false)),
@@ -385,7 +390,8 @@ public class LegacySchemaMigratorTest
                                             DoubleType.instance,
                                             false,
                                             "java",
-                                            "return 42d;");
+                                            "return 42d;",
+                                            false);
 
         Functions udfs = Functions.builder().add(udf1).add(udf2).add(udf3).build();
 
@@ -435,7 +441,8 @@ public class LegacySchemaMigratorTest
                                             LongType.instance,
                                             false,
                                             "java",
-                                            "return 42L;");
+                                            "return 42L;",
+                                            false);
 
         // an overload with the same name, not a typo
         UDFunction udf2 = UDFunction.create(new FunctionName(keyspace, "udf"),
@@ -444,7 +451,8 @@ public class LegacySchemaMigratorTest
                                             Int32Type.instance,
                                             true,
                                             "java",
-                                            "return 42;");
+                                            "return 42;",
+                                            false);
 
         UDFunction udf3 = UDFunction.create(new FunctionName(keyspace, "udf3"),
                                             ImmutableList.of(new ColumnIdentifier("col4", false)),
@@ -452,7 +460,8 @@ public class LegacySchemaMigratorTest
                                             BooleanType.instance,
                                             false,
                                             "java",
-                                            "return true;");
+                                            "return true;",
+                                            false);
 
         return KeyspaceMetadata.create(keyspace,
                                        KeyspaceParams.simple(1),
@@ -482,7 +491,8 @@ public class LegacySchemaMigratorTest
                                             udt1,
                                             false,
                                             "java",
-                                            "return null;");
+                                            "return null;",
+                                            false);
 
         UDFunction udf2 = UDFunction.create(new FunctionName(keyspace, "udf2"),
                                             ImmutableList.of(new ColumnIdentifier("col1", false), new ColumnIdentifier("col2", false)),
@@ -490,7 +500,8 @@ public class LegacySchemaMigratorTest
                                             udt2,
                                             false,
                                             "java",
-                                            "return null;");
+                                            "return null;",
+                                            false);
 
         UDFunction udf3 = UDFunction.create(new FunctionName(keyspace, "udf3"),
                                             ImmutableList.of(new ColumnIdentifier("col1", false)),
@@ -498,7 +509,8 @@ public class LegacySchemaMigratorTest
                                             DoubleType.instance,
                                             false,
                                             "java",
-                                            "return 42d;");
+                                            "return 42d;",
+                                            false);
 
         Functions udfs = Functions.builder().add(udf1).add(udf2).add(udf3).build();
 

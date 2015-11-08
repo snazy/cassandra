@@ -1372,13 +1372,11 @@ syntax_rules += r'''
                              ;
 
 <permission> ::= "AUTHORIZE"
-               | "CREATE"
                | "ALTER"
                | "DROP"
                | "SELECT"
                | "MODIFY"
                | "DESCRIBE"
-               | "EXECUTE"
                ;
 
 <permissionExpr> ::= ( <permission> "PERMISSION"? )
@@ -1388,6 +1386,7 @@ syntax_rules += r'''
 <resource> ::= <dataResource>
              | <roleResource>
              | <functionResource>
+             | <trustedFunctionResource>
              ;
 
 <dataResource> ::= ( "ALL" "KEYSPACES" )
@@ -1406,6 +1405,8 @@ syntax_rules += r'''
                            ")" )
                        )
                      ;
+
+<trustedFunctionResource> ::= ( "TRUSTED" "FUNCTION" )
 '''
 
 

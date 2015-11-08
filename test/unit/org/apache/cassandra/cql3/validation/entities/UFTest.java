@@ -1771,6 +1771,7 @@ public class UFTest extends CQLTester
                                                             true,
                                                             "java",
                                                             f.body(),
+                                                            false,
                                                             new InvalidRequestException("foo bar is broken"));
         Schema.instance.setKeyspaceMetadata(ksm.withSwapped(ksm.functions.without(f.name(), f.argTypes()).with(broken)));
 

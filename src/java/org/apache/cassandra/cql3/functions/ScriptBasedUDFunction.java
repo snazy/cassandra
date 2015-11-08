@@ -144,19 +144,43 @@ final class ScriptBasedUDFunction extends UDFunction
                           AbstractType<?> returnType,
                           boolean calledOnNullInput,
                           String language,
-                          String body)
+                          String body,
+                          boolean trusted)
     {
-        super(name, argNames, argTypes, returnType, calledOnNullInput, language, body);
+        super(name, argNames, argTypes, returnType, calledOnNullInput, language, body, trusted);
 
         Compilable scriptEngine = scriptEngines.get(language);
         if (scriptEngine == null)
             throw new InvalidRequestException(String.format("Invalid language '%s' for function '%s'", language, name));
 
+        this.script = trusted
+                      ? setupTrusted(scriptEngine, body)
+                      : setupUntrusted(scriptEngine, body);
+
+    }
+
+    private CompiledScript setupTrusted(Compilable scriptEngine, String body)
+    {
         // execute compilation with no-permissions to prevent evil code e.g. via "static code blocks" / "class initialization"
         try
         {
-            this.script = AccessController.doPrivileged((PrivilegedExceptionAction<CompiledScript>) () -> scriptEngine.compile(body),
-                                                        accessControlContext);
+            return scriptEngine.compile(body);
+        }
+        catch (ScriptException e)
+        {
+            logger.info("Failed to compile function '{}' for language {}: ", name, language, e);
+            throw new InvalidRequestException(
+                                             String.format("Failed to compile function '%s' for language %s: %s", name, language, e));
+        }
+    }
+
+    private CompiledScript setupUntrusted(Compilable scriptEngine, String body)
+    {
+        // execute compilation with no-permissions to prevent evil code e.g. via "static code blocks" / "class initialization"
+        try
+        {
+            return AccessController.doPrivileged((PrivilegedExceptionAction<CompiledScript>) () -> scriptEngine.compile(body),
+                                                 accessControlContext);
         }
         catch (PrivilegedActionException x)
         {

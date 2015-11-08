@@ -60,6 +60,8 @@ public abstract class UDFunction extends AbstractFunction implements ScalarFunct
     protected final DataType returnDataType;
     protected final boolean calledOnNullInput;
 
+    protected final boolean trusted;
+
     //
     // Access to classes is controlled via a whitelist and a blacklist.
     //
@@ -163,10 +165,11 @@ public abstract class UDFunction extends AbstractFunction implements ScalarFunct
                          AbstractType<?> returnType,
                          boolean calledOnNullInput,
                          String language,
-                         String body)
+                         String body,
+                         boolean trusted)
     {
         this(name, argNames, argTypes, UDHelper.driverTypes(argTypes), returnType,
-             UDHelper.driverType(returnType), calledOnNullInput, language, body);
+             UDHelper.driverType(returnType), calledOnNullInput, language, body, trusted);
     }
 
     protected UDFunction(FunctionName name,
@@ -177,7 +180,8 @@ public abstract class UDFunction extends AbstractFunction implements ScalarFunct
                          DataType returnDataType,
                          boolean calledOnNullInput,
                          String language,
-                         String body)
+                         String body,
+                         boolean trusted)
     {
         super(name, argTypes, returnType);
         assert new HashSet<>(argNames).size() == argNames.size() : "duplicate argument names";
@@ -187,6 +191,7 @@ public abstract class UDFunction extends AbstractFunction implements ScalarFunct
         this.argDataTypes = argDataTypes;
         this.returnDataType = returnDataType;
         this.calledOnNullInput = calledOnNullInput;
+        this.trusted = trusted;
     }
 
     public static UDFunction create(FunctionName name,
@@ -195,16 +200,17 @@ public abstract class UDFunction extends AbstractFunction implements ScalarFunct
                                     AbstractType<?> returnType,
                                     boolean calledOnNullInput,
                                     String language,
-                                    String body)
+                                    String body,
+                                    boolean trusted)
     {
         UDFunction.assertUdfsEnabled(language);
 
         switch (language)
         {
             case "java":
-                return new JavaBasedUDFunction(name, argNames, argTypes, returnType, calledOnNullInput, body);
+                return new JavaBasedUDFunction(name, argNames, argTypes, returnType, calledOnNullInput, body, trusted);
             default:
-                return new ScriptBasedUDFunction(name, argNames, argTypes, returnType, calledOnNullInput, language, body);
+                return new ScriptBasedUDFunction(name, argNames, argTypes, returnType, calledOnNullInput, language, body, trusted);
         }
     }
 
@@ -224,9 +230,10 @@ public abstract class UDFunction extends AbstractFunction implements ScalarFunct
                                                   boolean calledOnNullInput,
                                                   String language,
                                                   String body,
+                                                  boolean trusted,
                                                   InvalidRequestException reason)
     {
-        return new UDFunction(name, argNames, argTypes, returnType, calledOnNullInput, language, body)
+        return new UDFunction(name, argNames, argTypes, returnType, calledOnNullInput, language, body, trusted)
         {
             protected ByteBuffer executeAsync(int protocolVersion, List<ByteBuffer> parameters)
             {
@@ -256,7 +263,7 @@ public abstract class UDFunction extends AbstractFunction implements ScalarFunct
         try
         {
             // Using async UDF execution is expensive (adds about 100us overhead per invocation on a Core-i7 MBPr).
-            ByteBuffer result = DatabaseDescriptor.enableUserDefinedFunctionsThreads()
+            ByteBuffer result = !trusted && DatabaseDescriptor.enableUserDefinedFunctionsThreads()
                                 ? executeAsync(protocolVersion, parameters)
                                 : executeUserDefined(protocolVersion, parameters);
 
@@ -330,6 +337,11 @@ public abstract class UDFunction extends AbstractFunction implements ScalarFunct
     public boolean isCalledOnNullInput()
     {
         return calledOnNullInput;
+    }
+
+    public boolean isTrusted()
+    {
+        return trusted;
     }
 
     public List<ColumnIdentifier> argNames()
