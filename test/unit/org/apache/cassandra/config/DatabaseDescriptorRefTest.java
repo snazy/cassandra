@@ -15,7 +15,11 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
+/*
+ * Copyright DataStax, Inc.
+ *
+ * Modified by DataStax, Inc.
+ */
 package org.apache.cassandra.config;
 
 import java.io.ByteArrayOutputStream;
@@ -70,7 +74,7 @@ public class DatabaseDescriptorRefTest
     "org.apache.cassandra.config.Config$DiskOptimizationStrategy",
     "org.apache.cassandra.config.Config$InternodeCompression",
     "org.apache.cassandra.config.Config$MemtableAllocationType",
-    "org.apache.cassandra.config.Config$UserFunctionTimeoutPolicy",
+    "org.apache.cassandra.config.Config$UserFunctionFailPolicy",
     "org.apache.cassandra.config.RequestSchedulerOptions",
     "org.apache.cassandra.config.ParameterizedClass",
     "org.apache.cassandra.config.EncryptionOptions",

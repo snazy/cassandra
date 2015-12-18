@@ -15,6 +15,11 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+/*
+ * Copyright DataStax, Inc.
+ *
+ * Modified by DataStax, Inc.
+ */
 package org.apache.cassandra.cql3.functions;
 
 import java.math.BigDecimal;
@@ -24,17 +29,23 @@ import java.nio.ByteBuffer;
 import java.security.*;
 import java.security.cert.Certificate;
 import java.util.*;
-import java.util.concurrent.ExecutorService;
+import java.util.concurrent.*;
 import javax.script.*;
 
 import jdk.nashorn.api.scripting.AbstractJSObject;
 import org.apache.cassandra.concurrent.NamedThreadFactory;
+import org.apache.cassandra.config.Config;
+import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.cql3.ColumnIdentifier;
 import org.apache.cassandra.db.marshal.AbstractType;
+import org.apache.cassandra.exceptions.FunctionExecutionException;
 import org.apache.cassandra.exceptions.InvalidRequestException;
+import org.apache.cassandra.service.ClientWarn;
+import org.apache.cassandra.utils.JVMStabilityInspector;
 
 final class ScriptBasedUDFunction extends UDFunction
 {
+
     static final Map<String, Compilable> scriptEngines = new HashMap<>();
 
     private static final ProtectionDomain protectionDomain;
@@ -80,16 +91,14 @@ final class ScriptBasedUDFunction extends UDFunction
     "com.datastax.driver.core",
     "com.datastax.driver.core.utils"
     };
+    private static final Set<String> allowedPackages = new HashSet<>(Arrays.asList(allowedPackagesArray));
 
     // use a JVM standard ExecutorService as DebuggableThreadPoolExecutor references internal
     // classes, which triggers AccessControlException from the UDF sandbox
     private static final UDFExecutorService executor =
         new UDFExecutorService(new NamedThreadFactory("UserDefinedScriptFunctions",
                                                       Thread.MIN_PRIORITY,
-                                                      udfClassLoader,
-                                                      new SecurityThreadGroup("UserDefinedScriptFunctions",
-                                                                              Collections.unmodifiableSet(new HashSet<>(Arrays.asList(allowedPackagesArray))),
-                                                                              UDFunction::initializeThread)),
+                                                      udfClassLoader),
                                "userscripts");
 
     static
@@ -166,18 +175,15 @@ final class ScriptBasedUDFunction extends UDFunction
                 : udfContext;
     }
 
-    protected ExecutorService executor()
-    {
-        return executor;
-    }
-
     public ByteBuffer executeUserDefined(int protocolVersion, List<ByteBuffer> parameters)
     {
         Object[] params = new Object[argTypes.size()];
         for (int i = 0; i < params.length; i++)
             params[i] = compose(protocolVersion, i, parameters.get(i));
 
-        Object result = executeScriptInternal(params);
+        Object result = DatabaseDescriptor.enableUserDefinedFunctionsThreads()
+                        ? executeAsync(params)
+                        : executeSameThread(params);
 
         return decompose(protocolVersion, result);
     }
@@ -195,10 +201,112 @@ final class ScriptBasedUDFunction extends UDFunction
         for (int i = 1; i < params.length; i++)
             params[i] = compose(protocolVersion, i, parameters.get(i - 1));
 
-        return executeScriptInternal(params);
+        return DatabaseDescriptor.enableUserDefinedFunctionsThreads()
+               ? executeAsync(params)
+               : executeSameThread(params);
     }
 
-    private Object executeScriptInternal(Object[] params)
+    private Object executeSameThread(Object[] parameters)
+    {
+        UDFQuotaState quotaState = newQuotaState();
+        try
+        {
+            return executeScriptInternal(quotaState, parameters);
+        }
+        finally
+        {
+            checkExecResult(quotaState.afterExec(new UDFExecResult()));
+        }
+    }
+
+    private Object executeAsync(Object[] parameters)
+    {
+        QuotaHolder quotaHolder = new QuotaHolder();
+
+        Future<Object> future = executor.submit(() -> {
+            quotaHolder.setup();
+            try
+            {
+                return executeScriptInternal(quotaHolder.quotaState, parameters);
+            }
+            finally
+            {
+                quotaHolder.finish();
+            }
+        });
+
+        try
+        {
+            if (DatabaseDescriptor.getUserDefinedFunctionWarnCpuTime() > 0)
+                try
+                {
+                    return future.get(DatabaseDescriptor.getUserDefinedFunctionWarnCpuTime(), TimeUnit.MILLISECONDS);
+                }
+                catch (TimeoutException e)
+                {
+                    // log and emit a warning that UDF execution took long
+                    String warn = String.format("User defined function %s ran longer than %dms", this, DatabaseDescriptor.getUserDefinedFunctionWarnCpuTime());
+                    logger.warn(warn);
+                    ClientWarn.instance.warn(warn);
+                }
+
+            // retry with difference of warn-timeout to fail-timeout
+            return future.get(DatabaseDescriptor.getUserDefinedFunctionFailCpuTime() - DatabaseDescriptor.getUserDefinedFunctionWarnCpuTime(), TimeUnit.MILLISECONDS);
+        }
+        catch (InterruptedException e)
+        {
+            Thread.currentThread().interrupt();
+            throw new RuntimeException(e);
+        }
+        catch (ExecutionException e)
+        {
+            Throwable c = e.getCause();
+            if (c instanceof RuntimeException)
+                throw (RuntimeException) c;
+            throw new RuntimeException(c);
+        }
+        catch (TimeoutException e)
+        {
+            // retry a last time with the difference of UDF-fail-timeout to consumed CPU time (just in case execution hit a badly timed GC)
+            try
+            {
+                long cpuTimeMillis = quotaHolder.quotaState == null ? 0L : quotaHolder.quotaState.cpuTimeNanos() / 1000000L;
+
+                return future.get(Math.max(DatabaseDescriptor.getUserDefinedFunctionFailCpuTime() - cpuTimeMillis, 0L),
+                                  TimeUnit.MILLISECONDS);
+            }
+            catch (InterruptedException e1)
+            {
+                Thread.currentThread().interrupt();
+                throw new RuntimeException(e);
+            }
+            catch (ExecutionException e1)
+            {
+                Throwable c = e.getCause();
+                if (c instanceof RuntimeException)
+                    throw (RuntimeException) c;
+                throw new RuntimeException(c);
+            }
+            catch (TimeoutException e1)
+            {
+                TimeoutException cause = new TimeoutException(String.format("User defined function %s ran longer than %dms%s",
+                                                                            this,
+                                                                            DatabaseDescriptor.getUserDefinedFunctionFailCpuTime(),
+                                                                            DatabaseDescriptor.getUserFunctionFailPolicy() == Config.UserFunctionFailPolicy.ignore
+                                                                            ? "" : " - will stop Cassandra VM"));
+                FunctionExecutionException fe = FunctionExecutionException.create(this, cause);
+                JVMStabilityInspector.userFunctionTimeout(cause);
+                throw fe;
+            }
+        }
+        finally
+        {
+            if (quotaHolder.execResult != null)
+                checkExecResult(quotaHolder.execResult);
+        }
+    }
+
+    private Object executeScriptInternal(UDFQuotaState quotaState, Object[] params)
     {
         ScriptContext scriptContext = new SimpleScriptContext();
         scriptContext.setAttribute("javax.script.filename", this.name.toString(), ScriptContext.ENGINE_SCOPE);
@@ -210,6 +318,8 @@ final class ScriptBasedUDFunction extends UDFunction
         Object result;
         try
         {
+            ThreadAwareSecurityManager.enterSecureSection(quotaState, allowedPackages, UDFunction::initializeThread);
+
             // How to prevent Class.forName() _without_ "help" from the script engine ?
             // NOTE: Nashorn enforces a special permission to allow class-loading, which is not granted - so it's fine.
 
@@ -218,6 +328,10 @@ final class ScriptBasedUDFunction extends UDFunction
         catch (ScriptException e)
         {
             throw new RuntimeException(e);
+        }
+        finally
+        {
+            ThreadAwareSecurityManager.leaveSecureSection();
         }
         if (result == null)
             return null;
@@ -338,6 +452,23 @@ final class ScriptBasedUDFunction extends UDFunction
                     return fArgTup;
             }
             return super.getMember(name);
+        }
+    }
+
+    // cannot be migrated to an AtomicReference since the _class_ needs reference to the code
+    private static final class QuotaHolder
+    {
+        volatile UDFQuotaState quotaState;
+        volatile UDFExecResult execResult;
+
+        void setup()
+        {
+            this.quotaState = newQuotaState();
+        }
+
+        void finish()
+        {
+            execResult = quotaState.afterExec(new UDFExecResult());
         }
     }
 }

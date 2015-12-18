@@ -15,7 +15,11 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
+/*
+ * Copyright DataStax, Inc.
+ *
+ * Modified by DataStax, Inc.
+ */
 package org.apache.cassandra.cql3.functions;
 
 import java.security.AccessControlException;
@@ -28,10 +32,10 @@ import java.security.Policy;
 import java.security.ProtectionDomain;
 import java.util.Collections;
 import java.util.Enumeration;
+import java.util.Set;
 
 /**
- * Custom {@link SecurityManager} and {@link Policy} implementation that only performs access checks
- * if explicitly enabled.
+ * Custom {@link SecurityManager} and {@link Policy} implementation.
  * <p>
  * This implementation gives no measurable performance panalty
  * (see <a href="http://cstar.datastax.com/tests/id/1d461628-12ba-11e5-918f-42010af0688f">see cstar test</a>).
@@ -132,26 +136,58 @@ public final class ThreadAwareSecurityManager extends SecurityManager
         });
     }
 
-    private static final ThreadLocal<Boolean> initializedThread = new ThreadLocal<>();
+    /**
+     * Contains the status of each thread that executes a UDF.
+     */
+    private static final class ThreadStatus
+    {
+        Set<String> allowedPackages;
+        UDFQuotaState quotaState;
+    }
+
+    private static final ThreadLocal<ThreadStatus> threadStatus = new ThreadLocal<>();
 
     private ThreadAwareSecurityManager()
     {
     }
 
-    private static boolean isSecuredThread()
+    private static boolean securedThread()
     {
-        ThreadGroup tg = Thread.currentThread().getThreadGroup();
-        if (!(tg instanceof SecurityThreadGroup))
-            return false;
-        Boolean threadInitialized = initializedThread.get();
-        if (threadInitialized == null)
+        ThreadStatus status = threadStatus.get();
+
+        return status != null && status.quotaState != null;
+    }
+
+    static void enterSecureSection(UDFQuotaState securedState, Set<String> allowedPackages, ThreadInitializer threadInitializer)
+    {
+        ThreadStatus status = threadStatus.get();
+        if (status == null)
         {
-            initializedThread.set(false);
-            ((SecurityThreadGroup) tg).initializeThread();
-            initializedThread.set(true);
-            threadInitialized = true;
+            threadStatus.set(status = new ThreadStatus());
+            if (threadInitializer != null)
+                threadInitializer.initializeThread();
         }
-        return threadInitialized;
+
+        assert status.quotaState == null;
+        status.quotaState = securedState;
+        status.allowedPackages = allowedPackages;
+    }
+
+    static UDFQuotaState secureSection()
+    {
+        ThreadStatus status = threadStatus.get();
+        assert status != null && status.quotaState != null;
+        return status.quotaState;
+    }
+
+    static UDFQuotaState leaveSecureSection()
+    {
+        ThreadStatus status = threadStatus.get();
+        assert status != null && status.quotaState != null;
+        UDFQuotaState quotaState = status.quotaState;
+        status.quotaState = null;
+        status.allowedPackages = null;
+        return quotaState;
     }
 
     public void checkAccess(Thread t)
@@ -159,7 +195,7 @@ public final class ThreadAwareSecurityManager extends SecurityManager
         // need to override since the default implementation only checks the permission if the current thread's
         // in the root-thread-group
 
-        if (isSecuredThread())
+        if (securedThread())
             throw new AccessControlException("access denied: " + MODIFY_THREAD_PERMISSION, MODIFY_THREAD_PERMISSION);
         super.checkAccess(t);
     }
@@ -169,14 +205,14 @@ public final class ThreadAwareSecurityManager extends SecurityManager
         // need to override since the default implementation only checks the permission if the current thread's
         // in the root-thread-group
 
-        if (isSecuredThread())
+        if (securedThread())
             throw new AccessControlException("access denied: " + MODIFY_THREADGROUP_PERMISSION, MODIFY_THREADGROUP_PERMISSION);
         super.checkAccess(g);
     }
 
     public void checkPermission(Permission perm)
     {
-        if (!isSecuredThread())
+        if (!securedThread())
             return;
 
         // required by JavaDriver 2.2.0-rc3 and 3.0.0-a2 or newer
@@ -189,21 +225,28 @@ public final class ThreadAwareSecurityManager extends SecurityManager
 
     public void checkPermission(Permission perm, Object context)
     {
-        if (isSecuredThread())
+        if (securedThread())
             super.checkPermission(perm, context);
     }
 
     public void checkPackageAccess(String pkg)
     {
-        if (!isSecuredThread())
+        ThreadStatus status = threadStatus.get();
+        if (status == null || status.quotaState == null)
             return;
 
-        if (!((SecurityThreadGroup) Thread.currentThread().getThreadGroup()).isPackageAllowed(pkg))
+        if (status.allowedPackages != null && !status.allowedPackages.contains(pkg))
         {
             RuntimePermission perm = new RuntimePermission("accessClassInPackage." + pkg);
             throw new AccessControlException("access denied: " + perm, perm);
         }
 
         super.checkPackageAccess(pkg);
+    }
+
+    @FunctionalInterface
+    interface ThreadInitializer
+    {
+        void initializeThread();
     }
 }

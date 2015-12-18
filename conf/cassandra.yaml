@@ -1082,28 +1082,80 @@ inter_dc_tcp_nodelay: false
 tracetype_query_ttl: 86400
 tracetype_repair_ttl: 604800
 
-# By default, Cassandra logs GC Pauses greater than 200 ms at INFO level
-# This threshold can be adjusted to minimize logging if necessary
-# gc_log_threshold_in_ms: 200
-
-# If unset, all GC Pauses greater than gc_log_threshold_in_ms will log at
-# INFO level
-# UDFs (user defined functions) are disabled by default.
-# As of Cassandra 3.0 there is a sandbox in place that should prevent execution of evil code.
-enable_user_defined_functions: false
-
-# Enables scripted UDFs (JavaScript UDFs).
-# Java UDFs are always enabled, if enable_user_defined_functions is true.
-# Enable this option to be able to use UDFs with "language javascript" or any custom JSR-223 provider.
-# This option has no effect, if enable_user_defined_functions is false.
-enable_scripted_user_defined_functions: false
-
 # The default Windows kernel timer and scheduling resolution is 15.6ms for power conservation.
 # Lowering this value on Windows can provide much tighter latency and better throughput, however
 # some virtualized environments may see a negative performance impact from changing this setting
 # below their system default. The sysinternals 'clockres' tool can confirm your system's default
 # setting.
 windows_timer_interval: 1
+
+# By default, Cassandra logs GC Pauses greater than 200 ms at INFO level
+# This threshold can be adjusted to minimize logging if necessary
+# gc_log_threshold_in_ms: 200
+
+# GC Pauses greater than gc_warn_threshold_in_ms will be logged at WARN level
+# If unset, all GC Pauses greater than gc_log_threshold_in_ms will log at
+# INFO level
+# Adjust the threshold based on your application throughput requirement
+# gc_warn_threshold_in_ms: 1000
+
+# UDFs (user defined functions) are disabled by default.
+# As of Cassandra 3.0 there is a sandbox in place that should prevent execution of evil code.
+enable_user_defined_functions: false
+
+# Enables scripted UDFs (JavaScript UDFs).
+#
+# Java UDFs are always enabled, if enable_user_defined_functions is true.
+# Enable this option to be able to use UDFs with "language javascript" or any custom JSR-223 provider.
+# This option has no effect, if enable_user_defined_functions is false.
+enable_scripted_user_defined_functions: false
+
+# Optionally disable asynchronous execution of scripted UDF.
+# Note: Java UDFs are not run asynchronously.
+#
+# By default, async scripted UDF execution is enabled to be able to detect UDFs
+# that run too long / forever and be able to fail fast - i.e. stop the Cassandra daemon,
+# which is currently the only appropriate approach to # "tell" a user that there's
+# something really wrong with the UDF. When you disable async UDF execution, users
+# MUST pay attention to read-timeouts since these may indicate UDFs that run too long
+# or forever - and this can destabilize the cluster.
+enable_user_defined_functions_threads: true
+
+# Time in milliseconds (CPU time) after a warning will be emitted to the log and
+# to the client that a UDF runs too long.
+# Java-UDFs will always emit a warning, script-UDFs only if
+# enable_user_defined_functions_threads is set to true.
+user_defined_function_warn_timeout: 500
+
+# Time in milliseconds (CPU time) after a fatal UDF run-time situation is detected.
+# For Java-UDFs the function is safely aborted.
+# For script-UDFs the action according to user_function_timeout_policy will take place.
+# Java-UDFs will always throw an exception, script-UDFs only if
+# enable_user_defined_functions_threads is set to true.
+user_defined_function_fail_timeout: 1500
+
+# If a Java UDF allocates more than user_defined_function_warn_heap_mb on the heap,
+# a warning will be emitted to the log and the client.
+# Java-UDFs will always emit a warning, script-UDFs only if
+# enable_user_defined_functions_threads is set to true.
+user_defined_function_warn_heap_mb: 50
+
+# UDFs that allocate more than user_defined_function_fail_heap_mb, will fail.
+# For Java-UDFs the function is safely aborted.
+# For script-UDFs the action according to user_function_timeout_policy will take place.
+# Java-UDFs will always throw an exception, script-UDFs only if
+# enable_user_defined_functions_threads is set to true.
+user_defined_function_fail_heap_mb: 100
+
+# Defines what to do when a script-UDF ran longer than user_defined_function_fail_timeout.
+# (Only valid, if enable_user_defined_functions_threads is set to true)
+# Possible options are:
+# - 'die' - i.e. it is able to emit a warning to the client before the Cassandra Daemon
+#   will shut down.
+# - 'die_immediate' - shut down C* daemon immediately (effectively prevent the chance that
+#   the client will receive a warning).
+# - 'ignore' - just log - the most dangerous option.
+user_function_timeout_policy: die
 
 
 # Enables encrypting data at-rest (on disk). Different key providers can be plugged in, but the default reads from

@@ -15,7 +15,11 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
+/*
+ * Copyright DataStax, Inc.
+ *
+ * Modified by DataStax, Inc.
+ */
 package org.apache.cassandra.cql3.functions;
 
 import java.nio.ByteBuffer;
@@ -24,7 +28,7 @@ import java.util.List;
 import com.datastax.driver.core.TypeCodec;
 
 /**
- * Base class for all Java UDFs.
+ * Base class for all generated Java UDFs.
  * Used to separate internal classes like {@link UDFunction} from user provided code.
  * Only references <b>to</b> this class (and generated implementations) are allowed -
  * references from this class back to C* code are not allowed (except argument/return type information).
@@ -41,6 +45,15 @@ public abstract class JavaUDF
         this.returnCodec = returnCodec;
         this.argCodecs = argCodecs;
         this.udfContext = udfContext;
+    }
+
+    /**
+     * Called by bytecode manipulated Java-UDFs (see UDFByteCodeVerifier)
+     */
+    // do not remove - used by generated Java UDFs
+    protected static boolean udfExecCall()
+    {
+        return JavaUDFQuotaHandler.udfExecCall();
     }
 
     protected abstract ByteBuffer executeImpl(int protocolVersion, List<ByteBuffer> params);

@@ -15,6 +15,11 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+/*
+ * Copyright DataStax, Inc.
+ *
+ * Modified by DataStax, Inc.
+ */
 package org.apache.cassandra.config;
 
 import java.io.File;
@@ -2261,34 +2266,59 @@ public class DatabaseDescriptor
         return conf.enable_user_defined_functions_threads;
     }
 
-    public static long getUserDefinedFunctionWarnTimeout()
+    public static void enableUserDefinedFunctionsThreads(boolean enableUserDefinedFunctionsThreads)
+    {
+        conf.enable_user_defined_functions_threads = enableUserDefinedFunctionsThreads;
+    }
+
+    public static long getUserDefinedFunctionWarnCpuTime()
     {
         return conf.user_defined_function_warn_timeout;
     }
 
-    public static void setUserDefinedFunctionWarnTimeout(long userDefinedFunctionWarnTimeout)
+    public static void setUserDefinedFunctionWarnCpuTime(long userDefinedFunctionWarnCpuTime)
     {
-        conf.user_defined_function_warn_timeout = userDefinedFunctionWarnTimeout;
+        conf.user_defined_function_warn_timeout = userDefinedFunctionWarnCpuTime;
     }
 
-    public static long getUserDefinedFunctionFailTimeout()
+    public static long getUserDefinedFunctionFailCpuTime()
     {
         return conf.user_defined_function_fail_timeout;
     }
 
-    public static void setUserDefinedFunctionFailTimeout(long userDefinedFunctionFailTimeout)
+    public static void setUserDefinedFunctionFailCpuTime(long userDefinedFunctionFailCpuTime)
     {
-        conf.user_defined_function_fail_timeout = userDefinedFunctionFailTimeout;
+        conf.user_defined_function_fail_timeout = userDefinedFunctionFailCpuTime;
     }
 
-    public static Config.UserFunctionTimeoutPolicy getUserFunctionTimeoutPolicy()
+    public static long getUserDefinedFunctionWarnHeapMb()
+    {
+        return conf.user_defined_function_warn_heap_mb;
+    }
+
+    public static void setUserDefinedFunctionWarnHeapMb(long userDefinedFunctionWarnHeapMb)
+    {
+        conf.user_defined_function_warn_heap_mb = userDefinedFunctionWarnHeapMb;
+    }
+
+    public static long getUserDefinedFunctionFailHeapMb()
+    {
+        return conf.user_defined_function_fail_heap_mb;
+    }
+
+    public static void setUserDefinedFunctionFailHeapMb(long userDefinedFunctionFailHeapMb)
+    {
+        conf.user_defined_function_fail_heap_mb = userDefinedFunctionFailHeapMb;
+    }
+
+    public static Config.UserFunctionFailPolicy getUserFunctionFailPolicy()
     {
         return conf.user_function_timeout_policy;
     }
 
-    public static void setUserFunctionTimeoutPolicy(Config.UserFunctionTimeoutPolicy userFunctionTimeoutPolicy)
+    public static void setUserFunctionTimeoutPolicy(Config.UserFunctionFailPolicy userFunctionFailPolicy)
     {
-        conf.user_function_timeout_policy = userFunctionTimeoutPolicy;
+        conf.user_function_timeout_policy = userFunctionFailPolicy;
     }
 
     public static long getGCLogThreshold()

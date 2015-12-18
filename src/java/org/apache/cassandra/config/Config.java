@@ -15,6 +15,11 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+/*
+ * Copyright DataStax, Inc.
+ *
+ * Modified by DataStax, Inc.
+ */
 package org.apache.cassandra.config;
 
 import java.lang.reflect.Field;
@@ -326,34 +331,48 @@ public class Config
     public boolean enable_scripted_user_defined_functions = false;
     /**
      * Optionally disable asynchronous UDF execution.
-     * Disabling asynchronous UDF execution also implicitly disables the security-manager!
-     * By default, async UDF execution is enabled to be able to detect UDFs that run too long / forever and be
+     * By default, async scripted UDF execution is enabled to be able to detect UDFs that run too long / forever and be
      * able to fail fast - i.e. stop the Cassandra daemon, which is currently the only appropriate approach to
      * "tell" a user that there's something really wrong with the UDF.
      * When you disable async UDF execution, users MUST pay attention to read-timeouts since these may indicate
      * UDFs that run too long or forever - and this can destabilize the cluster.
+     * Note: Java UDFs are not run asynchronously.
      */
     public boolean enable_user_defined_functions_threads = true;
     /**
-     * Time in milliseconds after a warning will be emitted to the log and to the client that a UDF runs too long.
-     * (Only valid, if enable_user_defined_functions_threads==true)
+     * Time in milliseconds (CPU time) after a warning will be emitted to the log and to the client that a UDF runs too long.
+     * Java-UDFs will always emit a warning, script-UDFs only if enable_user_defined_functions_threads==true.
      */
     public long user_defined_function_warn_timeout = 500;
     /**
-     * Time in milliseconds after a fatal UDF run-time situation is detected and action according to
-     * user_function_timeout_policy will take place.
-     * (Only valid, if enable_user_defined_functions_threads==true)
+     * Time in milliseconds (CPU time) after a fatal UDF run-time situation is detected.
+     * For Java-UDFs the function is safely aborted.
+     * For script-UDFs the action according to user_function_timeout_policy will take place.
+     * Java-UDFs will always throw an exception, script-UDFs only if enable_user_defined_functions_threads==true.
      */
     public long user_defined_function_fail_timeout = 1500;
     /**
-     * Defines what to do when a UDF ran longer than user_defined_function_fail_timeout.
+     * If a Java UDF allocates more than user_defined_function_warn_heap_mb on the heap, a warning will be emitted to the
+     * log and the client.
+     * Java-UDFs will always emit a warning, script-UDFs only if enable_user_defined_functions_threads==true.
+     */
+    public long user_defined_function_warn_heap_mb = 50;
+    /**
+     * UDFs that allocate more than user_defined_function_fail_heap_mb, will fail.
+     * For Java-UDFs the function is safely aborted.
+     * For script-UDFs the action according to user_function_timeout_policy will take place.
+     * Java-UDFs will always throw an exception, script-UDFs only if enable_user_defined_functions_threads==true.
+     */
+    public long user_defined_function_fail_heap_mb = 100;
+    /**
+     * Defines what to do when a script-UDF ran longer than user_defined_function_fail_timeout.
      * Possible options are:
      * - 'die' - i.e. it is able to emit a warning to the client before the Cassandra Daemon will shut down.
      * - 'die_immediate' - shut down C* daemon immediately (effectively prevent the chance that the client will receive a warning).
      * - 'ignore' - just log - the most dangerous option.
      * (Only valid, if enable_user_defined_functions_threads==true)
      */
-    public UserFunctionTimeoutPolicy user_function_timeout_policy = UserFunctionTimeoutPolicy.die;
+    public UserFunctionFailPolicy user_function_timeout_policy = UserFunctionFailPolicy.die;
 
     public static boolean getOutboundBindAny()
     {
@@ -429,7 +448,7 @@ public class Config
         die,
     }
 
-    public enum UserFunctionTimeoutPolicy
+    public enum UserFunctionFailPolicy
     {
         ignore,
         die,

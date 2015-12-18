@@ -15,7 +15,11 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
+/*
+ * Copyright DataStax, Inc.
+ *
+ * Modified by DataStax, Inc.
+ */
 package org.apache.cassandra.cql3.functions;
 
 import java.util.ArrayList;
@@ -28,12 +32,7 @@ import java.util.TreeSet;
 import com.google.common.collect.HashMultimap;
 import com.google.common.collect.Multimap;
 
-import org.objectweb.asm.ClassReader;
-import org.objectweb.asm.ClassVisitor;
-import org.objectweb.asm.FieldVisitor;
-import org.objectweb.asm.Handle;
-import org.objectweb.asm.MethodVisitor;
-import org.objectweb.asm.Opcodes;
+import org.objectweb.asm.*;
 
 /**
  * Verifies Java UDF byte code.
@@ -42,7 +41,7 @@ import org.objectweb.asm.Opcodes;
  * use of {@code synchronized} blocks,
  * too many methods.
  */
-public final class UDFByteCodeVerifier
+public class JavaUDFByteCodeVerifier
 {
 
     public static final String JAVA_UDF_NAME = JavaUDF.class.getName().replace('.', '/');
@@ -53,7 +52,7 @@ public final class UDFByteCodeVerifier
     private final Multimap<String, String> disallowedMethodCalls = HashMultimap.create();
     private final List<String> disallowedPackages = new ArrayList<>();
 
-    public UDFByteCodeVerifier()
+    public JavaUDFByteCodeVerifier()
     {
         addDisallowedMethodCall(OBJECT_NAME, "clone");
         addDisallowedMethodCall(OBJECT_NAME, "finalize");
@@ -62,58 +61,64 @@ public final class UDFByteCodeVerifier
         addDisallowedMethodCall(OBJECT_NAME, "wait");
     }
 
-    public UDFByteCodeVerifier addDisallowedClass(String clazz)
+    public JavaUDFByteCodeVerifier addDisallowedClass(String clazz)
     {
         disallowedClasses.add(clazz);
         return this;
     }
 
-    public UDFByteCodeVerifier addDisallowedMethodCall(String clazz, String method)
+    public JavaUDFByteCodeVerifier addDisallowedMethodCall(String clazz, String method)
     {
         disallowedMethodCalls.put(clazz, method);
         return this;
     }
 
-    public UDFByteCodeVerifier addDisallowedPackage(String pkg)
+    public JavaUDFByteCodeVerifier addDisallowedPackage(String pkg)
     {
         disallowedPackages.add(pkg);
         return this;
     }
 
-    public Set<String> verify(String clsName, byte[] bytes)
+    public ClassAndErrors verifyAndInstrument(String clsName, byte[] bytes)
     {
         String clsNameSl = clsName.replace('.', '/');
+        ClassWriter classWriter = new ClassWriter(ClassWriter.COMPUTE_FRAMES | ClassWriter.COMPUTE_MAXS);
+
         Set<String> errors = new TreeSet<>(); // it's a TreeSet for unit tests
-        ClassVisitor classVisitor = new ClassVisitor(Opcodes.ASM5)
+        ClassVisitor classVisitor = new ClassVisitor(Opcodes.ASM5, classWriter)
         {
             public FieldVisitor visitField(int access, String name, String desc, String signature, Object value)
             {
                 errors.add("field declared: " + name);
-                return null;
+                return super.visitField(access, name, desc, signature, value);
             }
 
             public MethodVisitor visitMethod(int access, String name, String desc, String signature, String[] exceptions)
             {
+                if ((access & Opcodes.ACC_SYNCHRONIZED) != 0)
+                    errors.add("synchronized method " + name);
+
+                MethodVisitor delegate = super.visitMethod(access, name, desc, signature, exceptions);
                 if ("<init>".equals(name) && CTOR_SIG.equals(desc))
                 {
                     if (Opcodes.ACC_PUBLIC != access)
                         errors.add("constructor not public");
-                    // allowed constructor - JavaUDF(TypeCodec returnCodec, TypeCodec[] argCodecs)
-                    return new ConstructorVisitor(errors);
+                    // allowed constructor - JavaUDF(TypeCodec returnDataType, TypeCodec[] argDataTypes)
+                    return new ConstructorVisitor(errors, delegate);
                 }
                 if ("executeImpl".equals(name) && "(ILjava/util/List;)Ljava/nio/ByteBuffer;".equals(desc))
                 {
                     if (Opcodes.ACC_PROTECTED != access)
                         errors.add("executeImpl not protected");
                     // the executeImpl method - ByteBuffer executeImpl(int protocolVersion, List<ByteBuffer> params)
-                    return new ExecuteImplVisitor(errors);
+                    return new ExecuteImplVisitor(errors, delegate);
                 }
                 if ("executeAggregateImpl".equals(name) && "(ILjava/lang/Object;Ljava/util/List;)Ljava/lang/Object;".equals(desc))
                 {
                     if (Opcodes.ACC_PROTECTED != access)
                         errors.add("executeAggregateImpl not protected");
                     // the executeImpl method - ByteBuffer executeImpl(int protocolVersion, List<ByteBuffer> params)
-                    return new ExecuteImplVisitor(errors);
+                    return new ExecuteImplVisitor(errors, delegate);
                 }
                 if ("<clinit>".equals(name))
                 {
@@ -122,9 +127,9 @@ public final class UDFByteCodeVerifier
                 else
                 {
                     errors.add("not allowed method declared: " + name + desc);
-                    return new ExecuteImplVisitor(errors);
+                    return new ExecuteImplVisitor(errors, delegate);
                 }
-                return null;
+                return delegate;
             }
 
             public void visit(int version, int access, String name, String signature, String superName, String[] interfaces)
@@ -149,18 +154,26 @@ public final class UDFByteCodeVerifier
         };
 
         ClassReader classReader = new ClassReader(bytes);
-        classReader.accept(classVisitor, ClassReader.SKIP_DEBUG);
+        classReader.accept(classVisitor, 0);
 
-        return errors;
+        byte[] newByteCode = classWriter.toByteArray();
+
+        return new ClassAndErrors(newByteCode, errors);
+    }
+
+    public boolean checkMethodCall(String owner, String name)
+    {
+        // extension point
+        return true;
     }
 
     private class ExecuteImplVisitor extends MethodVisitor
     {
         private final Set<String> errors;
 
-        ExecuteImplVisitor(Set<String> errors)
+        ExecuteImplVisitor(Set<String> errors, MethodVisitor delegate)
         {
-            super(Opcodes.ASM5);
+            super(Opcodes.ASM5, delegate);
             this.errors = errors;
         }
 
@@ -182,6 +195,9 @@ public final class UDFByteCodeVerifier
                     if (owner.startsWith(pkg))
                         errorDisallowed(owner, name);
                 }
+
+                if (!checkMethodCall(owner, name))
+                    errorDisallowed(owner, name);
             }
             super.visitMethodInsn(opcode, owner, name, desc, itf);
         }
@@ -189,6 +205,35 @@ public final class UDFByteCodeVerifier
         private void errorDisallowed(String owner, String name)
         {
             errors.add("call to " + owner.replace('/', '.') + '.' + name + "()");
+        }
+
+        public void visitLabel(Label label)
+        {
+            // The trick to detect long running UDFs, is to inject a test method call after each label like this:
+            //      if (super.runtimeExceeded()) return super.RUNTIME_EXCEEDED;
+            super.visitLabel(label);
+
+            Label continueLabel = new Label();
+            // Insert following Java code
+            //     if (o.a.c.cql3.functions.JavaUDF.checkTimeout())
+            //         return null;
+            // using the following bytecode
+            //    INVOKESTATIC org/apache/cassandra/cql3/functions/JavaUDF.checkTimeout ()Z
+            super.visitMethodInsn(Opcodes.INVOKESTATIC, "org/apache/cassandra/cql3/functions/JavaUDF", "udfExecCall", "()Z", false);
+            //    IFEQ continueLabel
+            super.visitJumpInsn(Opcodes.IFEQ, continueLabel);
+            //    ACONST_NULL
+            super.visitInsn(Opcodes.ACONST_NULL);
+            //    ARETURN
+            super.visitInsn(Opcodes.ARETURN);
+
+            // need a label to continue normal execution
+            super.visitLabel(continueLabel);
+        }
+
+        public void visitFrame(int type, int nLocal, Object[] local, int nStack, Object[] stack)
+        {
+            super.visitFrame(type, nLocal, local, nStack, stack);
         }
 
         public void visitInsn(int opcode)
@@ -208,9 +253,9 @@ public final class UDFByteCodeVerifier
     {
         private final Set<String> errors;
 
-        ConstructorVisitor(Set<String> errors)
+        ConstructorVisitor(Set<String> errors, MethodVisitor delegate)
         {
-            super(Opcodes.ASM5);
+            super(Opcodes.ASM5, delegate);
             this.errors = errors;
         }
 
@@ -236,6 +281,18 @@ public final class UDFByteCodeVerifier
                 errors.add("initializer declared");
             }
             super.visitInsn(opcode);
+        }
+    }
+
+    public static class ClassAndErrors
+    {
+        public final byte[] bytecode;
+        public final Set<String> errors;
+
+        ClassAndErrors(byte[] bytecode, Set<String> errors)
+        {
+            this.bytecode = bytecode;
+            this.errors = errors;
         }
     }
 }

@@ -15,50 +15,56 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
+/*
+ * Copyright DataStax, Inc.
+ *
+ * Modified by DataStax, Inc.
+ */
 package org.apache.cassandra.cql3.validation.entities;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.PrintWriter;
+import java.lang.reflect.Constructor;
+import java.lang.reflect.Method;
 import java.net.URL;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.Set;
+import java.util.List;
+import java.util.concurrent.*;
 
 import org.junit.Test;
 
+import com.datastax.driver.core.TypeCodec;
 import org.apache.cassandra.cql3.CQLTester;
-import org.apache.cassandra.cql3.functions.UDFByteCodeVerifier;
-import org.apache.cassandra.cql3.validation.entities.udfverify.CallClone;
-import org.apache.cassandra.cql3.validation.entities.udfverify.CallComDatastax;
-import org.apache.cassandra.cql3.validation.entities.udfverify.CallFinalize;
-import org.apache.cassandra.cql3.validation.entities.udfverify.CallOrgApache;
-import org.apache.cassandra.cql3.validation.entities.udfverify.ClassWithField;
-import org.apache.cassandra.cql3.validation.entities.udfverify.ClassWithInitializer;
-import org.apache.cassandra.cql3.validation.entities.udfverify.ClassWithInitializer2;
-import org.apache.cassandra.cql3.validation.entities.udfverify.ClassWithInitializer3;
-import org.apache.cassandra.cql3.validation.entities.udfverify.ClassWithInnerClass;
-import org.apache.cassandra.cql3.validation.entities.udfverify.ClassWithInnerClass2;
-import org.apache.cassandra.cql3.validation.entities.udfverify.ClassWithStaticInitializer;
-import org.apache.cassandra.cql3.validation.entities.udfverify.ClassWithStaticInnerClass;
-import org.apache.cassandra.cql3.validation.entities.udfverify.GoodClass;
-import org.apache.cassandra.cql3.validation.entities.udfverify.UseOfSynchronized;
-import org.apache.cassandra.cql3.validation.entities.udfverify.UseOfSynchronizedWithNotify;
-import org.apache.cassandra.cql3.validation.entities.udfverify.UseOfSynchronizedWithNotifyAll;
-import org.apache.cassandra.cql3.validation.entities.udfverify.UseOfSynchronizedWithWait;
-import org.apache.cassandra.cql3.validation.entities.udfverify.UseOfSynchronizedWithWaitL;
-import org.apache.cassandra.cql3.validation.entities.udfverify.UseOfSynchronizedWithWaitLI;
-import org.apache.cassandra.cql3.validation.entities.udfverify.UsingMapEntry;
+import org.apache.cassandra.cql3.functions.JavaUDFByteCodeVerifier;
+import org.apache.cassandra.cql3.functions.UDFContext;
+import org.apache.cassandra.cql3.validation.entities.udfverify.*;
+import org.objectweb.asm.ClassReader;
+import org.objectweb.asm.util.TraceClassVisitor;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.fail;
 
 /**
  * Test the Java UDF byte code verifier.
  */
 public class UFVerifierTest extends CQLTester
 {
+
+    private static Set<String> verify(Class cls)
+    {
+        return new JavaUDFByteCodeVerifier().verifyAndInstrument(cls.getName(), readClass(cls)).errors;
+    }
+
+    private static Set<String> verify(String disallowedPkg, Class cls)
+    {
+        return new JavaUDFByteCodeVerifier().addDisallowedPackage(disallowedPkg).verifyAndInstrument(cls.getName(), readClass(cls)).errors;
+    }
+
     @Test
     public void testByteCodeVerifier()
     {
@@ -198,16 +204,6 @@ public class UFVerifierTest extends CQLTester
     {
         assertEquals(Collections.emptySet(),
                      verify(ClassWithInnerClass2.class));
-    }
-
-    private Set<String> verify(Class cls)
-    {
-        return new UDFByteCodeVerifier().verify(cls.getName(), readClass(cls));
-    }
-
-    private Set<String> verify(String disallowedPkg, Class cls)
-    {
-        return new UDFByteCodeVerifier().addDisallowedPackage(disallowedPkg).verify(cls.getName(), readClass(cls));
     }
 
     @SuppressWarnings("resource")
@@ -376,5 +372,141 @@ public class UFVerifierTest extends CQLTester
                              "CALLED ON NULL INPUT " +
                              "RETURNS double " +
                              "LANGUAGE java AS $$" + body + "$$");
+    }
+
+    //
+    // advanced timeout detection
+    //
+
+    static class UFVerifierTestClassLoader extends ClassLoader
+    {
+        private final byte[] bytecode;
+        private final String name;
+
+        UFVerifierTestClassLoader(String name, byte[] bytecode)
+        {
+            super(Thread.currentThread().getContextClassLoader());
+            this.name = name;
+            this.bytecode = bytecode;
+        }
+
+        public Class<?> loadClass(String name) throws ClassNotFoundException
+        {
+            if (this.name.equals(name))
+                return defineClass(name, bytecode, 0, bytecode.length);
+            return super.loadClass(name);
+        }
+    }
+
+    private static void testAmokClass(Class<?> clazz) throws Exception
+    {
+        byte[] bytecode = readClass(clazz);
+
+//        dumpBytecode("original " + clazz.getCanonicalName(), bytecode);
+
+        JavaUDFByteCodeVerifier.ClassAndErrors result = new JavaUDFByteCodeVerifier().verifyAndInstrument(clazz.getName(), bytecode);
+        assertEquals(Collections.emptySet(), result.errors);
+
+        dumpBytecode("transformed " + clazz.getCanonicalName(), result.bytecode);
+
+        Class<?> secured = Class.forName(clazz.getName(),
+                                         true,
+                                         new UFVerifierTestClassLoader(clazz.getName(), result.bytecode));
+        Method mExecImpl = secured.getDeclaredMethod("executeImpl", int.class, List.class);
+        mExecImpl.setAccessible(true);
+        Object instance = secured.getDeclaredConstructor(TypeCodec.class, TypeCodec[].class, UDFContext.class).newInstance(null, null, null);
+
+        Class<?> cQuotaState = Class.forName("org.apache.cassandra.cql3.functions.UDFQuotaState");
+        Constructor<?> cQuotaStateCtor = cQuotaState.getDeclaredConstructor(long.class, long.class, long.class, long.class);
+        cQuotaStateCtor.setAccessible(true);
+
+        Class<?> cTimeoutHandler = Class.forName("org.apache.cassandra.cql3.functions.JavaUDFQuotaHandler");
+        Method mBeforeStart = cTimeoutHandler.getDeclaredMethod("beforeStart", cQuotaState);
+        mBeforeStart.setAccessible(true);
+        Method mUdfExecCall = cTimeoutHandler.getDeclaredMethod("udfExecCall");
+        mUdfExecCall.setAccessible(true);
+
+        ExecutorService executor = Executors.newFixedThreadPool(1);
+        try
+        {
+            Future<Object> future = executor.submit(() -> {
+                try
+                {
+                    Object quotaState = cQuotaStateCtor.newInstance(20L, 0L, 20L, 0L);
+                    mBeforeStart.invoke(null, quotaState);
+                    return mExecImpl.invoke(instance, 3, null);
+                }
+                catch (Exception e)
+                {
+                    throw new RuntimeException(e);
+                }
+                finally
+                {
+                    for (int i = 0; i < 1000; i++)
+                        if ((Boolean)mUdfExecCall.invoke(null))
+                            throw new RuntimeException("failure detected");
+                }
+            });
+
+            try
+            {
+                future.get(2500, TimeUnit.MILLISECONDS);
+                fail();
+            }
+            catch (ExecutionException ee)
+            {
+                Throwable cause = ee.getCause();
+                assertEquals("failure detected", cause.getMessage());
+            }
+        }
+        finally
+        {
+            executor.shutdown();
+        }
+    }
+
+    private static void dumpBytecode(String title, byte[] bytecode)
+    {
+        ClassReader classReader = new ClassReader(bytecode);
+
+        System.out.println("******************* byte code for " + title);
+        TraceClassVisitor traceClassVisitor = new TraceClassVisitor(new PrintWriter(System.out));
+        classReader.accept(traceClassVisitor, 0);
+    }
+
+    @Test
+    public void testEndlessLoopClass() throws Exception
+    {
+        testAmokClass(EndlessLoopClass.class);
+    }
+
+    @Test
+    public void testGotoEndlessLoopClass() throws Exception
+    {
+        testAmokClass(GotoEndlessLoopClass.class);
+    }
+
+    @Test
+    public void testNestedLoopsClass() throws Exception
+    {
+        testAmokClass(NestedLoopsClass.class);
+    }
+
+    @Test
+    public void testNestedTryCatchLoopsClass() throws Exception
+    {
+        testAmokClass(NestedTryCatchLoopsClass.class);
+    }
+
+    @Test
+    public void testAllocWarn() throws Exception
+    {
+        testAmokClass(HugeAllocClass.class);
+    }
+
+    @Test
+    public void testManyAllocWarn() throws Exception
+    {
+        testAmokClass(ManyHugeAllocClass.class);
     }
 }

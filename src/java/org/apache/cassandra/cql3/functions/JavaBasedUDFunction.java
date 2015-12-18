@@ -15,7 +15,11 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
+/*
+ * Copyright DataStax, Inc.
+ *
+ * Modified by DataStax, Inc.
+ */
 package org.apache.cassandra.cql3.functions;
 
 import java.io.ByteArrayOutputStream;
@@ -31,11 +35,10 @@ import java.nio.ByteBuffer;
 import java.security.*;
 import java.security.cert.Certificate;
 import java.util.*;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.ThreadLocalRandom;
+import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.io.ByteStreams;
@@ -44,14 +47,13 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import com.datastax.driver.core.TypeCodec;
-import org.apache.cassandra.concurrent.NamedThreadFactory;
 import org.apache.cassandra.cql3.ColumnIdentifier;
 import org.apache.cassandra.db.marshal.AbstractType;
 import org.apache.cassandra.exceptions.InvalidRequestException;
 import org.apache.cassandra.utils.FBUtilities;
 import org.eclipse.jdt.core.compiler.IProblem;
 import org.eclipse.jdt.internal.compiler.*;
-import org.eclipse.jdt.internal.compiler.Compiler;
+import org.eclipse.jdt.internal.compiler.Compiler; // ambigous with java.lang.Compiler
 import org.eclipse.jdt.internal.compiler.classfmt.ClassFileReader;
 import org.eclipse.jdt.internal.compiler.classfmt.ClassFormatException;
 import org.eclipse.jdt.internal.compiler.env.ICompilationUnit;
@@ -70,18 +72,14 @@ public final class JavaBasedUDFunction extends UDFunction
 
     private static final AtomicInteger classSequence = new AtomicInteger();
 
-    // use a JVM standard ExecutorService as DebuggableThreadPoolExecutor references internal
-    // classes, which triggers AccessControlException from the UDF sandbox
-    private static final UDFExecutorService executor =
-        new UDFExecutorService(new NamedThreadFactory("UserDefinedFunctions",
-                                                      Thread.MIN_PRIORITY,
-                                                      udfClassLoader,
-                                                      new SecurityThreadGroup("UserDefinedFunctions", null, UDFunction::initializeThread)),
-                               "userfunction");
-
     private static final EcjTargetClassLoader targetClassLoader = new EcjTargetClassLoader();
 
-    private static final UDFByteCodeVerifier udfByteCodeVerifier = new UDFByteCodeVerifier();
+    private static final JavaUDFByteCodeVerifier udfByteCodeVerifier = new JavaUDFByteCodeVerifier() {
+        public boolean checkMethodCall(String owner, String name)
+        {
+            return secureResource(owner + ".class");
+        }
+    };
 
     private static final ProtectionDomain protectionDomain;
 
@@ -114,6 +112,9 @@ public final class JavaBasedUDFunction extends UDFunction
         udfByteCodeVerifier.addDisallowedMethodCall("java/lang/ClassLoader", "setClassAssertionStatus");
         udfByteCodeVerifier.addDisallowedMethodCall("java/lang/ClassLoader", "setDefaultAssertionStatus");
         udfByteCodeVerifier.addDisallowedMethodCall("java/lang/ClassLoader", "setPackageAssertionStatus");
+        udfByteCodeVerifier.addDisallowedMethodCall("java/lang/System", "console");
+        udfByteCodeVerifier.addDisallowedMethodCall("java/lang/System", "gc");
+        udfByteCodeVerifier.addDisallowedMethodCall("java/lang/System", "runFinalization");
         udfByteCodeVerifier.addDisallowedMethodCall("java/nio/ByteBuffer", "allocateDirect");
         for (String ia : new String[]{"java/net/InetAddress", "java/net/Inet4Address", "java/net/Inet6Address"})
         {
@@ -128,8 +129,15 @@ public final class JavaBasedUDFunction extends UDFunction
             // ICMP PING
             udfByteCodeVerifier.addDisallowedMethodCall(ia, "isReachable");
         }
-        udfByteCodeVerifier.addDisallowedClass("java/net/NetworkInterface");
-        udfByteCodeVerifier.addDisallowedClass("java/net/SocketException");
+        udfByteCodeVerifier.addDisallowedClass("java/net/NetworkInterface"); // must be disallowed as it is whitelisted in UDFunction
+        udfByteCodeVerifier.addDisallowedClass("java/net/SocketException"); // must be disallowed as it is whitelisted in UDFunction
+        udfByteCodeVerifier.addDisallowedMethodCall("java/util/Collections", "synchronizedCollection");
+        udfByteCodeVerifier.addDisallowedMethodCall("java/util/Collections", "synchronizedList");
+        udfByteCodeVerifier.addDisallowedMethodCall("java/util/Collections", "synchronizedMap");
+        udfByteCodeVerifier.addDisallowedMethodCall("java/util/Collections", "synchronizedNavigableMap");
+        udfByteCodeVerifier.addDisallowedMethodCall("java/util/Collections", "synchronizedNavigableSet");
+        udfByteCodeVerifier.addDisallowedMethodCall("java/util/Collections", "synchronizedSet");
+        udfByteCodeVerifier.addDisallowedMethodCall("java/util/Collections", "synchronizedSortedSet");
 
         Map<String, String> settings = new HashMap<>();
         settings.put(CompilerOptions.OPTION_LineNumberAttribute,
@@ -297,17 +305,20 @@ public final class JavaBasedUDFunction extends UDFunction
             }
 
             // Verify the UDF bytecode against use of probably dangerous code
-            Set<String> errors = udfByteCodeVerifier.verify(targetClassName, targetClassLoader.classData(targetClassName));
+            JavaUDFByteCodeVerifier.ClassAndErrors verifyResult;
+            verifyResult = udfByteCodeVerifier.verifyAndInstrument(targetClassName,
+                                                                   targetClassLoader.classData(targetClassName));
+            // exclude the detected, but perfectly valid validation errors about the declaration of
+            // the 'executeInternal' method and the call to it
             String validDeclare = "not allowed method declared: " + executeInternalName + '(';
-            for (Iterator<String> i = errors.iterator(); i.hasNext();)
-            {
-                String error = i.next();
-                // we generate a random name of the private, internal execute method, which is detected by the byte-code verifier
-                if (error.startsWith(validDeclare))
-                    i.remove();
-            }
+            String validCall = "call to " + targetClassName + '.' + executeInternalName + '(';
+            List<String> errors = verifyResult.errors.stream().filter(error -> !error.startsWith(validCall) &&
+                                                                               !error.startsWith(validDeclare))
+                                                     .collect(Collectors.toList());
             if (!errors.isEmpty())
                 throw new InvalidRequestException("Java UDF validation failed: " + errors);
+
+            targetClassLoader.addClass(targetClassName, verifyResult.bytecode);
 
             // Load the class and create a new instance of it
             Thread thread = Thread.currentThread();
@@ -357,19 +368,54 @@ public final class JavaBasedUDFunction extends UDFunction
         }
     }
 
-    protected ExecutorService executor()
-    {
-        return executor;
-    }
-
     protected ByteBuffer executeUserDefined(int protocolVersion, List<ByteBuffer> params)
     {
-        return javaUDF.executeImpl(protocolVersion, params);
+        UDFExecResult<ByteBuffer> result = executeUserDefinedInternal(protocolVersion, params);
+
+        checkExecResult(result);
+
+        return result.result;
     }
 
     protected Object executeAggregateUserDefined(int protocolVersion, Object firstParam, List<ByteBuffer> params)
     {
-        return javaUDF.executeAggregateImpl(protocolVersion, firstParam, params);
+        UDFExecResult<Object> result = executeAggregateUserDefinedInternal(protocolVersion, firstParam, params);
+
+        checkExecResult(result);
+
+        return result.result;
+    }
+
+    private UDFExecResult<ByteBuffer> executeUserDefinedInternal(int protocolVersion, List<ByteBuffer> params)
+    {
+        UDFExecResult<ByteBuffer> result = new UDFExecResult<>();
+        // beforeStart/afterExec implicitly "secure" the current thread
+        JavaUDFQuotaHandler.beforeStart(newQuotaState());
+        try
+        {
+            result.result = javaUDF.executeImpl(protocolVersion, params);
+        }
+        finally
+        {
+            JavaUDFQuotaHandler.afterExec(result);
+        }
+        return result;
+    }
+
+    private UDFExecResult<Object> executeAggregateUserDefinedInternal(int protocolVersion, Object firstParam, List<ByteBuffer> params)
+    {
+        UDFExecResult<Object> result = new UDFExecResult<>();
+        // beforeStart/afterExec implicitly "secure" the current thread
+        JavaUDFQuotaHandler.beforeStart(newQuotaState());
+        try
+        {
+            result.result = javaUDF.executeAggregateImpl(protocolVersion, firstParam, params);
+        }
+        finally
+        {
+            JavaUDFQuotaHandler.afterExec(result);
+        }
+        return result;
     }
 
     private static int countNewlines(StringBuilder javaSource)

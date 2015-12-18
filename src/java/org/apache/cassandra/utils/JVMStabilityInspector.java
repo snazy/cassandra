@@ -15,6 +15,11 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+/*
+ * Copyright DataStax, Inc.
+ *
+ * Modified by DataStax, Inc.
+ */
 package org.apache.cassandra.utils;
 
 import java.io.FileNotFoundException;
@@ -95,7 +100,7 @@ public final class JVMStabilityInspector
 
     public static void userFunctionTimeout(Throwable t)
     {
-        switch (DatabaseDescriptor.getUserFunctionTimeoutPolicy())
+        switch (DatabaseDescriptor.getUserFunctionFailPolicy())
         {
             case die:
                 // policy to give 250ms grace time to

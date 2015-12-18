@@ -15,6 +15,11 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+/*
+ * Copyright DataStax, Inc.
+ *
+ * Modified by DataStax, Inc.
+ */
 package org.apache.cassandra.concurrent;
 
 import java.util.concurrent.ThreadFactory;
@@ -33,7 +38,6 @@ public class NamedThreadFactory implements ThreadFactory
     public final String id;
     private final int priority;
     private final ClassLoader contextClassLoader;
-    private final ThreadGroup threadGroup;
     protected final AtomicInteger n = new AtomicInteger(1);
 
     public NamedThreadFactory(String id)
@@ -43,21 +47,20 @@ public class NamedThreadFactory implements ThreadFactory
 
     public NamedThreadFactory(String id, int priority)
     {
-        this(id, priority, null, null);
+        this(id, priority, null);
     }
 
-    public NamedThreadFactory(String id, int priority, ClassLoader contextClassLoader, ThreadGroup threadGroup)
+    public NamedThreadFactory(String id, int priority, ClassLoader contextClassLoader)
     {
         this.id = id;
         this.priority = priority;
         this.contextClassLoader = contextClassLoader;
-        this.threadGroup = threadGroup;
     }
 
     public Thread newThread(Runnable runnable)
     {
-        String name = id + ":" + n.getAndIncrement();
-        Thread thread = new FastThreadLocalThread(threadGroup, runnable, name);
+        String name = id + ':' + n.getAndIncrement();
+        Thread thread = new FastThreadLocalThread(runnable, name);
         thread.setPriority(priority);
         thread.setDaemon(true);
         if (contextClassLoader != null)
