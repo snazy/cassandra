@@ -1453,6 +1453,7 @@ relation[WhereClause.Builder clauses]
       | type=relationType tupleMarker=markerForTuple /* (a, b, c) >= ? */
           { $clauses.add(MultiColumnRelation.createNonInRelation(ids, type, tupleMarker)); }
       )
+    | f=function type=relationType t=term   { $clauses.add(new FunctionRelation(f, type, t)); }
     | '(' relation[$clauses] ')'
     ;
 
