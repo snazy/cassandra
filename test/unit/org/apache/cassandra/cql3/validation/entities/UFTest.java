@@ -20,6 +20,7 @@ package org.apache.cassandra.cql3.validation.entities;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.Date;
 import java.util.List;
 import java.util.Map;
@@ -600,6 +601,53 @@ public class UFTest extends CQLTester
                    row(2, 2d, 1L),
                    row(3, 3d, 1L)
         );
+    }
+
+    @Test
+    public void testTypeSignatures() throws Throwable
+    {
+        String type = createType("CREATE TYPE %s (v1 int, v2 text)");
+
+        checkFunctionTypeSignature(
+        type, "frozen<" + type + '>',
+        "arg0 text, arg1 float", Arrays.asList("text", "float")
+        );
+        checkFunctionTypeSignature(
+        "text", "text",
+        "arg0 " + type + ", arg1 float", Arrays.asList("frozen<" + type + '>', "float")
+        );
+        checkFunctionTypeSignature(
+        "tuple<list<int>, text>", "frozen<tuple<frozen<list<int>>, text>>",
+        "arg0 text, arg1 float", Arrays.asList("text", "float")
+        );
+        checkFunctionTypeSignature(
+        "text", "text",
+        "arg0 tuple<list<int>, text>, arg1 float", Arrays.asList("frozen<tuple<frozen<list<int>>, text>>", "float")
+        );
+        checkFunctionTypeSignature(
+        "map<text, int>", "map<text, int>",
+        "arg0 int, arg1 list<frozen<list<text>>>", Arrays.asList("int", "list<frozen<list<text>>>")
+        );
+    }
+
+    private void checkFunctionTypeSignature(String ddlReturnType, String schemaReturnType,
+                                            String ddlArguments, List<String> schemaArgTypes)
+    throws Throwable
+    {
+        String cqlTesterSig = schemaReturnType.toLowerCase();
+        cqlTesterSig = cqlTesterSig.substring(1, cqlTesterSig.length() - 1);
+
+        String fName = createFunction(KEYSPACE, cqlTesterSig,
+                                      "CREATE FUNCTION %s(" + ddlArguments + ") " +
+                                      "CALLED ON NULL INPUT " +
+                                      "RETURNS " + ddlReturnType + ' ' +
+                                      "LANGUAGE JAVA " +
+                                      "AS 'return null;'");
+        fName = shortFunctionName(fName); // strip keyspace
+
+        assertRows(execute("SELECT return_type, argument_types FROM system_schema.functions WHERE keyspace_name=? AND function_name=?", KEYSPACE, fName),
+                   row(schemaReturnType, schemaArgTypes));
+
     }
 
     @Test
