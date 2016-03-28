@@ -2700,4 +2700,26 @@ public class UFTest extends CQLTester
         assertRows(execute("SELECT " + fTup + "(sval) FROM %s"),
                    row(tuple(88, userType("a", 42, "b", "42", "c", 4242L))));
     }
+
+    @Test
+    public void testJavaLambda() throws Throwable
+    {
+        createFunction(KEYSPACE, "map<text,bigint>,list<text>",
+                       "CREATE FUNCTION %s (state map<text,bigint>, styles list<text>)\n" +
+                       " RETURNS NULL ON NULL INPUT\n" +
+                       " RETURNS map<text,bigint>\n" +
+                       " LANGUAGE java\n" +
+                       " AS $$\n" +
+                       "   styles.forEach((Object o) -> {\n" +
+                       "       String style = (String)o;\n" +
+                       "       if(state.containsKey(style)) {\n" +
+                       "            state.put(style, ((Long) state.get(style))+1);\n" +
+                       "       } else {\n" +
+                       "            state.put(style, 1L);   \n" +
+                       "       }\n" +
+                       "   });\n" +
+                       "   \n" +
+                       "   return (Map<String, Long>) state;\n" +
+                       " $$;");
+    }
 }

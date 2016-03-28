@@ -143,7 +143,6 @@ public abstract class UDFunction extends AbstractFunction implements ScalarFunct
     "java/util/ServiceLoader.class",
     "java/util/Timer.class",
     "java/util/concurrent/",
-    "java/util/function/",
     "java/util/jar/",
     "java/util/logging/",
     "java/util/prefs/",
