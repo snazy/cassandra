@@ -80,9 +80,10 @@ public final class SchemaKeyspace
     public static final String FUNCTIONS = "functions";
     public static final String AGGREGATES = "aggregates";
     public static final String INDEXES = "indexes";
+    public static final String COMMENTS = "comments";
 
     public static final List<String> ALL =
-        ImmutableList.of(KEYSPACES, TABLES, COLUMNS, DROPPED_COLUMNS, TRIGGERS, VIEWS, TYPES, FUNCTIONS, AGGREGATES, INDEXES);
+        ImmutableList.of(KEYSPACES, TABLES, COLUMNS, DROPPED_COLUMNS, TRIGGERS, VIEWS, TYPES, FUNCTIONS, AGGREGATES, INDEXES, COMMENTS);
 
     private static final CFMetaData Keyspaces =
         compile(KEYSPACES,
@@ -229,6 +230,17 @@ public final class SchemaKeyspace
                 + "state_func text,"
                 + "state_type text,"
                 + "PRIMARY KEY ((keyspace_name), aggregate_name, argument_types))");
+
+    private static final CFMetaData Comments =
+        compile(COMMENTS,
+                "comments on schema objects",
+                "CREATE TABLE %s ("
+                + "keyspace_name text,"
+                + "entity_type text,"
+                + "entity_name text,"
+                + "entity_spec text,"
+                + "comment_text text,"
+                + "PRIMARY KEY ((keyspace_name), entity_type, entity_name, entity_spec))");
 
     public static final List<CFMetaData> ALL_TABLE_METADATA =
         ImmutableList.of(Keyspaces, Tables, Columns, Triggers, DroppedColumns, Views, Types, Functions, Aggregates, Indexes);

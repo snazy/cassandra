@@ -42,16 +42,13 @@ public final class DropAggregateStatement extends SchemaAlteringStatement
     private FunctionName functionName;
     private final boolean ifExists;
     private final List<CQL3Type.Raw> argRawTypes;
-    private final boolean argsPresent;
 
     public DropAggregateStatement(FunctionName functionName,
                                   List<CQL3Type.Raw> argRawTypes,
-                                  boolean argsPresent,
                                   boolean ifExists)
     {
         this.functionName = functionName;
         this.argRawTypes = argRawTypes;
-        this.argsPresent = argsPresent;
         this.ifExists = ifExists;
     }
 
@@ -81,7 +78,7 @@ public final class DropAggregateStatement extends SchemaAlteringStatement
     {
         Collection<Function> olds = Schema.instance.getFunctions(functionName);
 
-        if (!argsPresent && olds != null && olds.size() > 1)
+        if (argRawTypes == null && olds != null && olds.size() > 1)
             throw new InvalidRequestException(String.format("'DROP AGGREGATE %s' matches multiple function definitions; " +
                                                             "specify the argument types by issuing a statement like " +
                                                             "'DROP AGGREGATE %s (type, type, ...)'. Hint: use cqlsh " +
@@ -89,7 +86,7 @@ public final class DropAggregateStatement extends SchemaAlteringStatement
                                                             functionName, functionName, functionName));
 
         Function old = null;
-        if (argsPresent)
+        if (argRawTypes != null)
         {
             if (Schema.instance.getKSMetaData(functionName.keyspace) != null)
             {

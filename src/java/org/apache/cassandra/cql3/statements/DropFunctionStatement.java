@@ -19,6 +19,7 @@ package org.apache.cassandra.cql3.statements;
 
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.List;
 
 import com.google.common.base.Joiner;
@@ -46,18 +47,15 @@ public final class DropFunctionStatement extends SchemaAlteringStatement
     private FunctionName functionName;
     private final boolean ifExists;
     private final List<CQL3Type.Raw> argRawTypes;
-    private final boolean argsPresent;
 
     private List<AbstractType<?>> argTypes;
 
     public DropFunctionStatement(FunctionName functionName,
                                  List<CQL3Type.Raw> argRawTypes,
-                                 boolean argsPresent,
                                  boolean ifExists)
     {
         this.functionName = functionName;
         this.argRawTypes = argRawTypes;
-        this.argsPresent = argsPresent;
         this.ifExists = ifExists;
     }
 
@@ -66,18 +64,25 @@ public final class DropFunctionStatement extends SchemaAlteringStatement
     {
         if (Schema.instance.getKSMetaData(functionName.keyspace) != null)
         {
-            argTypes = new ArrayList<>(argRawTypes.size());
-            for (CQL3Type.Raw rawType : argRawTypes)
+            if (argRawTypes == null)
             {
-                if (rawType.isFrozen())
-                    throw new InvalidRequestException("The function arguments should not be frozen; remove the frozen<> modifier");
+                argTypes = Collections.emptyList();
+            }
+            else
+            {
+                argTypes = new ArrayList<>(argRawTypes.size());
+                for (CQL3Type.Raw rawType : argRawTypes)
+                {
+                    if (rawType.isFrozen())
+                        throw new InvalidRequestException("The function arguments should not be frozen; remove the frozen<> modifier");
 
-                // UDT are not supported non frozen but we do not allow the frozen keyword for argument. So for the moment we
-                // freeze them here
-                if (!rawType.canBeNonFrozen())
-                    rawType.freeze();
+                    // UDT are not supported non frozen but we do not allow the frozen keyword for argument. So for the moment we
+                    // freeze them here
+                    if (!rawType.canBeNonFrozen())
+                        rawType.freeze();
 
-                argTypes.add(rawType.prepare(functionName.keyspace).getType());
+                    argTypes.add(rawType.prepare(functionName.keyspace).getType());
+                }
             }
         }
 
@@ -119,7 +124,7 @@ public final class DropFunctionStatement extends SchemaAlteringStatement
     {
         Collection<Function> olds = Schema.instance.getFunctions(functionName);
 
-        if (!argsPresent && olds != null && olds.size() > 1)
+        if (argRawTypes == null && olds != null && olds.size() > 1)
             throw new InvalidRequestException(String.format("'DROP FUNCTION %s' matches multiple function definitions; " +
                                                             "specify the argument types by issuing a statement like " +
                                                             "'DROP FUNCTION %s (type, type, ...)'. Hint: use cqlsh " +
@@ -154,8 +159,8 @@ public final class DropFunctionStatement extends SchemaAlteringStatement
         // just build a nicer error message
         StringBuilder sb = new StringBuilder("Cannot drop non existing function '");
         sb.append(functionName);
-        if (argsPresent)
-            sb.append(Joiner.on(", ").join(argRawTypes));
+        if (argRawTypes != null)
+            sb.append('(').append(Joiner.on(", ").join(argRawTypes)).append(')');
         sb.append('\'');
         return sb.toString();
     }
@@ -163,7 +168,7 @@ public final class DropFunctionStatement extends SchemaAlteringStatement
     private Function findFunction()
     {
         Function old;
-        if (argsPresent)
+        if (argRawTypes != null)
         {
             if (argTypes == null)
             {

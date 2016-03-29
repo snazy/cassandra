@@ -84,9 +84,9 @@ public final class CreateFunctionStatement extends SchemaAlteringStatement
 
         argTypes = new ArrayList<>(argRawTypes.size());
         for (CQL3Type.Raw rawType : argRawTypes)
-            argTypes.add(prepareType("arguments", rawType));
+            argTypes.add(RawType.prepareType(functionName.keyspace, "arguments", rawType));
 
-        returnType = prepareType("return type", rawReturnType);
+        returnType = RawType.prepareType(functionName.keyspace, "return type", rawReturnType);
         return super.prepare();
     }
 
@@ -166,19 +166,5 @@ public final class CreateFunctionStatement extends SchemaAlteringStatement
         return new Event.SchemaChange(replaced ? Event.SchemaChange.Change.UPDATED : Event.SchemaChange.Change.CREATED,
                                       Event.SchemaChange.Target.FUNCTION,
                                       udFunction.name().keyspace, udFunction.name().name, AbstractType.asCQLTypeStringList(udFunction.argTypes()));
-    }
-
-    private AbstractType<?> prepareType(String typeName, CQL3Type.Raw rawType)
-    {
-        if (rawType.isFrozen())
-            throw new InvalidRequestException(String.format("The function %s should not be frozen; remove the frozen<> modifier", typeName));
-
-        // UDT are not supported non frozen but we do not allow the frozen keyword for argument. So for the moment we
-        // freeze them here
-        if (!rawType.canBeNonFrozen())
-            rawType.freeze();
-
-        AbstractType<?> type = rawType.prepare(functionName.keyspace).getType();
-        return type;
     }
 }

@@ -241,6 +241,7 @@ cqlStatement returns [ParsedStatement stmt]
     | st38=createMaterializedViewStatement { $stmt = st38; }
     | st39=dropMaterializedViewStatement   { $stmt = st39; }
     | st40=alterMaterializedViewStatement  { $stmt = st40; }
+    | st41=commentOnStatement              { $stmt = st41; }
     ;
 
 /*
@@ -518,23 +519,27 @@ batchStatementObjective returns [ModificationStatement.Parsed statement]
     | d=deleteStatement  { $statement = d; }
     ;
 
+funcArgsTypes returns [List<CQL3Type.Raw> argsTypes]
+    :
+    { $argsTypes = new ArrayList<>(); }
+    '('
+      (
+        v=comparatorType { argsTypes.add(v); }
+        ( ',' v=comparatorType { argsTypes.add(v); } )*
+      )?
+    ')'
+    ;
+
 createAggregateStatement returns [CreateAggregateStatement expr]
     @init {
         boolean orReplace = false;
         boolean ifNotExists = false;
-
-        List<CQL3Type.Raw> argsTypes = new ArrayList<>();
     }
     : K_CREATE (K_OR K_REPLACE { orReplace = true; })?
       K_AGGREGATE
       (K_IF K_NOT K_EXISTS { ifNotExists = true; })?
       fn=functionName
-      '('
-        (
-          v=comparatorType { argsTypes.add(v); }
-          ( ',' v=comparatorType { argsTypes.add(v); } )*
-        )?
-      ')'
+      argsTypes=funcArgsTypes
       K_SFUNC sfunc = allowedFunctionName
       K_STYPE stype = comparatorType
       (
@@ -543,28 +548,19 @@ createAggregateStatement returns [CreateAggregateStatement expr]
       (
         K_INITCOND ival = term
       )?
-      { $expr = new CreateAggregateStatement(fn, argsTypes, sfunc, stype, ffunc, ival, orReplace, ifNotExists); }
+      { $expr = new CreateAggregateStatement(fn, $argsTypes.argsTypes, sfunc, stype, ffunc, ival, orReplace, ifNotExists); }
     ;
 
 dropAggregateStatement returns [DropAggregateStatement expr]
     @init {
         boolean ifExists = false;
-        List<CQL3Type.Raw> argsTypes = new ArrayList<>();
-        boolean argsPresent = false;
+        List<CQL3Type.Raw> argsTypesList = null;
     }
     : K_DROP K_AGGREGATE
       (K_IF K_EXISTS { ifExists = true; } )?
       fn=functionName
-      (
-        '('
-          (
-            v=comparatorType { argsTypes.add(v); }
-            ( ',' v=comparatorType { argsTypes.add(v); } )*
-          )?
-        ')'
-        { argsPresent = true; }
-      )?
-      { $expr = new DropAggregateStatement(fn, argsTypes, argsPresent, ifExists); }
+      ( argsTypes=funcArgsTypes { argsTypesList=$argsTypes.argsTypes; } )?
+      { $expr = new DropAggregateStatement(fn, argsTypesList, ifExists); }
     ;
 
 createFunctionStatement returns [CreateFunctionStatement expr]
@@ -597,22 +593,13 @@ createFunctionStatement returns [CreateFunctionStatement expr]
 dropFunctionStatement returns [DropFunctionStatement expr]
     @init {
         boolean ifExists = false;
-        List<CQL3Type.Raw> argsTypes = new ArrayList<>();
-        boolean argsPresent = false;
+        List<CQL3Type.Raw> argsTypesList = null;
     }
     : K_DROP K_FUNCTION
       (K_IF K_EXISTS { ifExists = true; } )?
       fn=functionName
-      (
-        '('
-          (
-            v=comparatorType { argsTypes.add(v); }
-            ( ',' v=comparatorType { argsTypes.add(v); } )*
-          )?
-        ')'
-        { argsPresent = true; }
-      )?
-      { $expr = new DropFunctionStatement(fn, argsTypes, argsPresent, ifExists); }
+      ( argsTypes=funcArgsTypes { argsTypesList=$argsTypes.argsTypes;} )?
+      { $expr = new DropFunctionStatement(fn, argsTypesList, ifExists); }
     ;
 
 /**
@@ -983,22 +970,12 @@ roleResource returns [RoleResource res]
     ;
 
 functionResource returns [FunctionResource res]
-    @init {
-        List<CQL3Type.Raw> argsTypes = new ArrayList<>();
-    }
     : K_ALL K_FUNCTIONS { $res = FunctionResource.root(); }
     | K_ALL K_FUNCTIONS K_IN K_KEYSPACE ks = keyspaceName { $res = FunctionResource.keyspace($ks.id); }
     // Arg types are mandatory for DCL statements on Functions
     | K_FUNCTION fn=functionName
-      (
-        '('
-          (
-            v=comparatorType { argsTypes.add(v); }
-            ( ',' v=comparatorType { argsTypes.add(v); } )*
-          )?
-        ')'
-      )
-      { $res = FunctionResource.functionFromCql($fn.s.keyspace, $fn.s.name, argsTypes); }
+      argsTypes=funcArgsTypes
+      { $res = FunctionResource.functionFromCql($fn.s.keyspace, $fn.s.name, $argsTypes.argsTypes); }
     ;
 
 /**
@@ -1140,6 +1117,33 @@ roleOption[RoleOptions opts]
 userPassword[RoleOptions opts]
     :  K_PASSWORD v=STRING_LITERAL { opts.setOption(IRoleManager.Option.PASSWORD, $v.text); }
     ;
+
+commentOnStatement returns [CommentOnStatement stmt]
+    @init {
+        CommentType type = null;
+        String k = null;
+        String t = null;
+        String c = null;
+
+        List<CQL3Type.Raw> argsTypesList = null;
+    }
+    : K_COMMENT K_ON
+      (
+        ( K_KEYSPACE ks=keyspaceName                            { type=CommentType.KEYSPACE; k=ks; } ) |
+        ( K_TABLE cf=columnFamilyName                           { type=CommentType.TABLE; k=cf.getKeyspace(); t=cf.getColumnFamily(); } ) |
+        ( K_TABLE cf=columnFamilyName K_COLUMN col=cident       { type=CommentType.COLUMN; k=cf.getKeyspace(); t=cf.getColumnFamily(); c=col.toString(); } ) |
+        ( K_TYPE ut=userTypeName                                { type=CommentType.TYPE; k=ut.getKeyspace(); t=ut.getStringTypeName(); } ) |
+        ( ( K_USER | K_ROLE ) role=userOrRoleName               { type=CommentType.ROLE; k=AuthKeyspace.NAME; t=role.getName(); } ) |
+        ( K_INDEX idx=indexName                                 { type=CommentType.INDEX; k=idx.getKeyspace(); t=idx.getIdx(); } ) |
+        ( K_MATERIALIZED K_VIEW cf=columnFamilyName             { type=CommentType.MATERIALIZED_VIEW; k=cf.getKeyspace(); t=cf.getColumnFamily(); } ) |
+        ( K_FUNCTION f=functionName                             { type=CommentType.FUNCTION; k=f.keyspace; t=f.name; } ) |
+        ( K_FUNCTION f=functionName argsTypes=funcArgsTypes     { type=CommentType.FUNCTION; k=f.keyspace; t=f.name; argsTypesList=$argsTypes.argsTypes; } ) |
+        ( K_AGGREGATE f=functionName                            { type=CommentType.AGGREGATE; k=f.keyspace; t=f.name; } )
+        ( K_AGGREGATE f=functionName argsTypes=funcArgsTypes    { type=CommentType.AGGREGATE; k=f.keyspace; t=f.name; argsTypesList=$argsTypes.argsTypes; } )
+      )
+      K_IS comment=STRING_LITERAL
+      { $stmt = new CommentOnStatement(type, k, t, c, argsTypesList, $comment.text); }
+      ;
 
 /** DEFINITIONS **/
 
