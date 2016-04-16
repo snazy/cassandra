@@ -68,6 +68,7 @@ import org.apache.cassandra.metrics.DefaultNameFactory;
 import org.apache.cassandra.metrics.StorageMetrics;
 import org.apache.cassandra.schema.LegacySchemaMigrator;
 import org.apache.cassandra.cql3.functions.ThreadAwareSecurityManager;
+import org.apache.cassandra.service.vmpause.VMPauseDetectorLoader;
 import org.apache.cassandra.thrift.ThriftServer;
 import org.apache.cassandra.tracing.Tracing;
 import org.apache.cassandra.utils.*;
@@ -547,6 +548,9 @@ public class CassandraDaemon
                 logger.error("error registering MBean {}", MBEAN_NAME, e);
                 //Allow the server to start even if the bean can't be registered
             }
+
+            // VM pause detector initialization
+            VMPauseDetectorLoader.vmPauseDetector.getLotalPauseTimeMillis();
 
             if (FBUtilities.isWindows())
             {
