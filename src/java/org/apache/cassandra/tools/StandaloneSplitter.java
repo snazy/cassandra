@@ -48,11 +48,15 @@ public class StandaloneSplitter
     private static final String HELP_OPTION = "help";
     private static final String NO_SNAPSHOT_OPTION = "no-snapshot";
     private static final String SIZE_OPTION = "size";
+    private static final String FORCE_RUN_OPTION  = "run-even-if-cassandra-is-running";
 
     public static void main(String args[])
     {
         Options options = Options.parseArgs(args);
         Util.initDatabaseDescriptor();
+
+        if (!options.forceRun)
+            Util.cassandraDaemonCheckAndExit(TOOL_NAME);
 
         try
         {
@@ -191,6 +195,7 @@ public class StandaloneSplitter
         public boolean debug;
         public boolean snapshot;
         public int sizeInMB;
+        public boolean forceRun;
 
         private Options(List<String> filenames)
         {
@@ -222,6 +227,7 @@ public class StandaloneSplitter
                 opts.debug = cmd.hasOption(DEBUG_OPTION);
                 opts.snapshot = !cmd.hasOption(NO_SNAPSHOT_OPTION);
                 opts.sizeInMB = DEFAULT_SSTABLE_SIZE;
+                opts.forceRun = cmd.hasOption(FORCE_RUN_OPTION);
 
                 if (cmd.hasOption(SIZE_OPTION))
                     opts.sizeInMB = Integer.parseInt(cmd.getOptionValue(SIZE_OPTION));
@@ -249,6 +255,7 @@ public class StandaloneSplitter
             options.addOption("h",  HELP_OPTION,           "display this help message");
             options.addOption(null, NO_SNAPSHOT_OPTION,    "don't snapshot the sstables before splitting");
             options.addOption("s",  SIZE_OPTION, "size",   "maximum size in MB for the output sstables (default: " + DEFAULT_SSTABLE_SIZE + ")");
+            options.addOption(null, FORCE_RUN_OPTION,      "run even if Cassandra is running, which is really not recommended");
             return options;
         }
 

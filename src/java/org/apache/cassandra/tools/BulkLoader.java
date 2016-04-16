@@ -51,6 +51,10 @@ public class BulkLoader
     public static void load(LoaderOptions options) throws BulkLoadException
     {
         DatabaseDescriptor.toolInitialization();
+
+        if (!options.forceRun)
+            Util.cassandraDaemonCheckAndExit(LoaderOptions.TOOL_NAME);
+
         OutputHandler handler = new OutputHandler.SystemOutput(options.verbose, options.debug);
         SSTableLoader loader = new SSTableLoader(
                 options.directory,

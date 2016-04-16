@@ -51,6 +51,7 @@ public class LoaderOptions
     public static final String CONFIG_PATH = "conf-path";
     public static final String THROTTLE_MBITS = "throttle";
     public static final String INTER_DC_THROTTLE_MBITS = "inter-dc-throttle";
+    public static final String FORCE_RUN_OPTION  = "run-even-if-cassandra-is-running";
     public static final String TOOL_NAME = "sstableloader";
 
     /* client encryption options */
@@ -66,6 +67,7 @@ public class LoaderOptions
     public final File directory;
     public final boolean debug;
     public final boolean verbose;
+    public final boolean forceRun;
     public final boolean noProgress;
     public final int nativePort;
     public final String user;
@@ -87,6 +89,7 @@ public class LoaderOptions
         debug = builder.debug;
         verbose = builder.verbose;
         noProgress = builder.noProgress;
+        forceRun = builder.forceRun;
         nativePort = builder.nativePort;
         user = builder.user;
         passwd = builder.passwd;
@@ -107,6 +110,7 @@ public class LoaderOptions
         boolean debug;
         boolean verbose;
         boolean noProgress;
+        boolean forceRun;
         int nativePort = 9042;
         String user;
         String passwd;
@@ -293,6 +297,7 @@ public class LoaderOptions
 
                 verbose = cmd.hasOption(VERBOSE_OPTION);
                 noProgress = cmd.hasOption(NOPROGRESS_OPTION);
+                forceRun = cmd.hasOption(FORCE_RUN_OPTION);
 
                 if (cmd.hasOption(NATIVE_PORT_OPTION))
                 {
@@ -543,6 +548,7 @@ public class LoaderOptions
         options.addOption("st", SSL_STORE_TYPE, "STORE-TYPE", "Client SSL: type of store");
         options.addOption("ciphers", SSL_CIPHER_SUITES, "CIPHER-SUITES", "Client SSL: comma-separated list of encryption suites to use");
         options.addOption("f", CONFIG_PATH, "path to config file", "cassandra.yaml file path for streaming throughput and client/server SSL.");
+        options.addOption(null, FORCE_RUN_OPTION, "run even if Cassandra is running, which is really not recommended");
         return options;
     }
 

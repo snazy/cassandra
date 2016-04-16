@@ -50,11 +50,15 @@ public class StandaloneScrubber
     private static final String MANIFEST_CHECK_OPTION  = "manifest-check";
     private static final String SKIP_CORRUPTED_OPTION = "skip-corrupted";
     private static final String NO_VALIDATE_OPTION = "no-validate";
+    private static final String FORCE_RUN_OPTION  = "run-even-if-cassandra-is-running";
 
     public static void main(String args[])
     {
         Options options = Options.parseArgs(args);
         Util.initDatabaseDescriptor();
+
+        if (!options.forceRun)
+            Util.cassandraDaemonCheckAndExit(TOOL_NAME, "Consider using 'nodetool scrub'.");
 
         try
         {
@@ -199,6 +203,7 @@ public class StandaloneScrubber
         public boolean manifestCheckOnly;
         public boolean skipCorrupted;
         public boolean noValidate;
+        public boolean forceRun;
 
         private Options(String keyspaceName, String cfName)
         {
@@ -239,6 +244,7 @@ public class StandaloneScrubber
                 opts.manifestCheckOnly = cmd.hasOption(MANIFEST_CHECK_OPTION);
                 opts.skipCorrupted = cmd.hasOption(SKIP_CORRUPTED_OPTION);
                 opts.noValidate = cmd.hasOption(NO_VALIDATE_OPTION);
+                opts.forceRun = cmd.hasOption(FORCE_RUN_OPTION);
 
                 return opts;
             }
@@ -265,6 +271,7 @@ public class StandaloneScrubber
             options.addOption("m",  MANIFEST_CHECK_OPTION, "only check and repair the leveled manifest, without actually scrubbing the sstables");
             options.addOption("s",  SKIP_CORRUPTED_OPTION, "skip corrupt rows in counter tables");
             options.addOption("n",  NO_VALIDATE_OPTION,    "do not validate columns using column validator");
+            options.addOption(null, FORCE_RUN_OPTION,      "run even if Cassandra is running, which is really not recommended");
             return options;
         }
 

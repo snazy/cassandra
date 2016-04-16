@@ -25,8 +25,13 @@ import java.nio.file.attribute.FileTime;
 import java.util.Arrays;
 import java.util.List;
 
+import org.apache.commons.cli.CommandLine;
+import org.apache.commons.cli.CommandLineParser;
+import org.apache.commons.cli.GnuParser;
+import org.apache.commons.cli.HelpFormatter;
+import org.apache.commons.cli.ParseException;
+
 import org.apache.cassandra.config.Config;
-import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.io.sstable.Component;
 import org.apache.cassandra.io.sstable.Descriptor;
 import org.apache.cassandra.service.ActiveRepairService;
@@ -44,6 +49,13 @@ import org.apache.cassandra.service.ActiveRepairService;
  */
 public class SSTableRepairedAtSetter
 {
+    private static final String TOOL_NAME = "sstablerepairedset";
+    private static final String FORCE_RUN_OPTION = "really-set";
+    private static final String FILES_OPTION = "files";
+    private static final String SET_REPAIRED_OPTION = "is-repaired";
+    private static final String SET_UNREPAIRED_OPTION = "is-unrepaired";
+    private static final String HELP_OPTION  = "help";
+
     /**
      * @param args a list of sstables whose metadata we are changing
      */
@@ -65,18 +77,24 @@ public class SSTableRepairedAtSetter
             System.exit(1);
         }
 
+        // Necessary since BufferPool used in RandomAccessReader needs to access DatabaseDescriptor
+        Config.setClientMode(true);
+
+        Options options = Options.parseArgs(args);
+
         Util.initDatabaseDescriptor();
 
-        boolean setIsRepaired = args[1].equals("--is-repaired");
+        if (!options.forceRun)
+            Util.cassandraDaemonCheckAndExit(TOOL_NAME);
 
         List<String> fileNames;
-        if (args[2].equals("-f"))
+        if (options.file != null)
         {
-            fileNames = Files.readAllLines(Paths.get(args[3]), Charset.defaultCharset());
+            fileNames = Files.readAllLines(Paths.get(options.file), Charset.defaultCharset());
         }
         else
         {
-            fileNames = Arrays.asList(args).subList(2, args.length);
+            fileNames = options.sstables;
         }
 
         for (String fname: fileNames)
@@ -84,7 +102,7 @@ public class SSTableRepairedAtSetter
             Descriptor descriptor = Descriptor.fromFilename(fname);
             if (descriptor.version.hasRepairedAt())
             {
-                if (setIsRepaired)
+                if (options.setRepaired)
                 {
                     FileTime f = Files.getLastModifiedTime(new File(descriptor.filenameFor(Component.DATA)).toPath());
                     descriptor.getMetadataSerializer().mutateRepairedAt(descriptor, f.toMillis());
@@ -98,6 +116,99 @@ public class SSTableRepairedAtSetter
             {
                 System.err.println("SSTable " + fname + " does not have repaired property, run upgradesstables");
             }
+        }
+    }
+
+    private static class Options
+    {
+        public final List<String> sstables;
+        public final String file;
+
+        public boolean debug;
+        public boolean forceRun;
+        public boolean setRepaired;
+        public boolean setUnrepaired;
+
+        private Options(List<String> sstables, String file)
+        {
+            this.sstables = sstables;
+            this.file = file;
+        }
+
+        public static Options parseArgs(String cmdArgs[])
+        {
+            CommandLineParser parser = new GnuParser();
+            BulkLoader.CmdLineOptions options = getCmdLineOptions();
+            try
+            {
+                CommandLine cmd = parser.parse(options, cmdArgs, false);
+
+                if (cmd.hasOption(HELP_OPTION))
+                {
+                    printUsage(options);
+                    System.exit(0);
+                }
+
+                String file = cmd.getOptionValue(FILES_OPTION);
+
+                String[] args = cmd.getArgs();
+                if (args.length == 1 && file == null)
+                {
+                    System.err.println("Missing arguments");
+                    printUsage(options);
+                    System.exit(1);
+                }
+
+                List<String> sstables = args.length > 0 ? Arrays.asList(args)  : null;
+
+                Options opts = new Options(sstables, file);
+
+                opts.forceRun = cmd.hasOption(FORCE_RUN_OPTION);
+                opts.setRepaired = cmd.hasOption(SET_REPAIRED_OPTION);
+                opts.setUnrepaired = cmd.hasOption(SET_UNREPAIRED_OPTION);
+
+                if (opts.setRepaired && opts.setUnrepaired)
+                {
+                    System.err.println("Options " + SET_REPAIRED_OPTION + " and " + SET_UNREPAIRED_OPTION + " are exclusive");
+                    printUsage(options);
+                    System.exit(1);
+                }
+
+                return opts;
+            }
+            catch (ParseException e)
+            {
+                errorMsg(e.getMessage(), options);
+                return null;
+            }
+        }
+
+        private static void errorMsg(String msg, BulkLoader.CmdLineOptions options)
+        {
+            System.err.println(msg);
+            printUsage(options);
+            System.exit(1);
+        }
+
+        private static BulkLoader.CmdLineOptions getCmdLineOptions()
+        {
+            BulkLoader.CmdLineOptions options = new BulkLoader.CmdLineOptions();
+            options.addOption(null, FORCE_RUN_OPTION,      "run even if Cassandra is running, which is really not recommended");
+            options.addOption(null, SET_REPAIRED_OPTION,   "mark sstables as repaired");
+            options.addOption(null, SET_UNREPAIRED_OPTION, "mark sstables as unrepaired");
+            options.addOption("f",  FILES_OPTION,          "file with sstables");
+            return options;
+        }
+
+        public static void printUsage(BulkLoader.CmdLineOptions options)
+        {
+            String usage = String.format("%s [options] <sstable>", TOOL_NAME);
+            StringBuilder header = new StringBuilder();
+            header.append("--\n");
+            header.append("Mark sstables as repaired or unrepaired. The sstable argument is optional, if -f option is provided." );
+            header.append("\n--\n");
+            header.append("Options are:");
+            new HelpFormatter().printHelp(usage, header.toString(), options, "");
         }
     }
 }

@@ -51,11 +51,14 @@ import org.apache.cassandra.utils.FBUtilities;
 public class SSTableExport
 {
 
+    private static final String TOOL_NAME = "sstableexport";
+
     private static final String KEY_OPTION = "k";
     private static final String DEBUG_OUTPUT_OPTION = "d";
     private static final String EXCLUDE_KEY_OPTION = "x";
     private static final String ENUMERATE_KEYS_OPTION = "e";
     private static final String RAW_TIMESTAMPS = "t";
+    private static final String FORCE_RUN_OPTION  = "run-even-if-cassandra-is-running";
 
     private static final Options options = new Options();
     private static CommandLine cmd;
@@ -82,6 +85,8 @@ public class SSTableExport
 
         Option rawTimestamps = new Option(RAW_TIMESTAMPS, false, "Print raw timestamps instead of iso8601 date strings");
         options.addOption(rawTimestamps);
+
+        options.addOption(null, FORCE_RUN_OPTION, false, "run even if Cassandra is running, which is really not recommended");
     }
 
     /**
@@ -154,6 +159,9 @@ public class SSTableExport
             printUsage();
             System.exit(1);
         }
+
+        if (!options.hasOption(FORCE_RUN_OPTION))
+            Util.cassandraDaemonCheckAndExit(TOOL_NAME);
 
         String[] keys = cmd.getOptionValues(KEY_OPTION);
         HashSet<String> excludes = new HashSet<>(Arrays.asList(

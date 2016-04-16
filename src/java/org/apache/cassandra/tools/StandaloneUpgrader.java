@@ -45,11 +45,15 @@ public class StandaloneUpgrader
     private static final String DEBUG_OPTION  = "debug";
     private static final String HELP_OPTION  = "help";
     private static final String KEEP_SOURCE = "keep-source";
+    private static final String FORCE_RUN_OPTION  = "run-even-if-cassandra-is-running";
 
     public static void main(String args[])
     {
         Options options = Options.parseArgs(args);
         Util.initDatabaseDescriptor();
+
+        if (!options.forceRun)
+            Util.cassandraDaemonCheckAndExit(TOOL_NAME, "Consider using 'nodetool upgradesstables'.");
 
         try
         {
@@ -142,6 +146,7 @@ public class StandaloneUpgrader
 
         public boolean debug;
         public boolean keepSource;
+        public boolean forceRun;
 
         private Options(String keyspace, String cf, String snapshot)
         {
@@ -182,6 +187,7 @@ public class StandaloneUpgrader
 
                 opts.debug = cmd.hasOption(DEBUG_OPTION);
                 opts.keepSource = cmd.hasOption(KEEP_SOURCE);
+                opts.forceRun = cmd.hasOption(FORCE_RUN_OPTION);
 
                 return opts;
             }
@@ -205,6 +211,7 @@ public class StandaloneUpgrader
             options.addOption(null, DEBUG_OPTION,          "display stack traces");
             options.addOption("h",  HELP_OPTION,           "display this help message");
             options.addOption("k",  KEEP_SOURCE,           "do not delete the source sstables");
+            options.addOption(null, FORCE_RUN_OPTION,      "run even if Cassandra is running, which is really not recommended");
             return options;
         }
 

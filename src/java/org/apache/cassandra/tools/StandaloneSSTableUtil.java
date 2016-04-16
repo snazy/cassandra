@@ -42,10 +42,15 @@ public class StandaloneSSTableUtil
     private static final String DEBUG_OPTION  = "debug";
     private static final String HELP_OPTION  = "help";
     private static final String CLEANUP_OPTION = "cleanup";
+    private static final String FORCE_RUN_OPTION  = "run-even-if-cassandra-is-running";
 
     public static void main(String args[])
     {
         Options options = Options.parseArgs(args);
+
+        if (!options.forceRun)
+            Util.cassandraDaemonCheckAndExit(TOOL_NAME, options.cleanup ? "Consider using 'nodetool cleanup'." : null);
+
         try
         {
             // load keyspace descriptions.
@@ -160,6 +165,7 @@ public class StandaloneSSTableUtil
         public boolean oplogs;
         public boolean cleanup;
         public FileType type;
+        public boolean forceRun;
 
         private Options(String keyspaceName, String cfName)
         {
@@ -200,6 +206,7 @@ public class StandaloneSSTableUtil
                 opts.type = FileType.fromOption(cmd.getOptionValue(TYPE_OPTION));
                 opts.oplogs = cmd.hasOption(OP_LOG_OPTION);
                 opts.cleanup = cmd.hasOption(CLEANUP_OPTION);
+                opts.forceRun = cmd.hasOption(FORCE_RUN_OPTION);
 
                 return opts;
             }
@@ -226,6 +233,7 @@ public class StandaloneSSTableUtil
             options.addOption("o", OP_LOG_OPTION, "include operation logs");
             options.addOption("t", TYPE_OPTION, true, FileType.descr());
             options.addOption("v", VERBOSE_OPTION, "verbose output");
+            options.addOption(null, FORCE_RUN_OPTION,      "run even if Cassandra is running, which is really not recommended");
 
             return options;
         }

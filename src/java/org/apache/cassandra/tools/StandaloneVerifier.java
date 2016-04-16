@@ -43,11 +43,15 @@ public class StandaloneVerifier
     private static final String EXTENDED_OPTION = "extended";
     private static final String DEBUG_OPTION  = "debug";
     private static final String HELP_OPTION  = "help";
+    private static final String FORCE_RUN_OPTION  = "run-even-if-cassandra-is-running";
 
     public static void main(String args[])
     {
         Options options = Options.parseArgs(args);
         Util.initDatabaseDescriptor();
+
+        if (!options.forceRun)
+            Util.cassandraDaemonCheckAndExit(TOOL_NAME);
 
         try
         {
@@ -136,6 +140,7 @@ public class StandaloneVerifier
         public boolean debug;
         public boolean verbose;
         public boolean extended;
+        public boolean forceRun;
 
         private Options(String keyspaceName, String cfName)
         {
@@ -174,6 +179,7 @@ public class StandaloneVerifier
                 opts.debug = cmd.hasOption(DEBUG_OPTION);
                 opts.verbose = cmd.hasOption(VERBOSE_OPTION);
                 opts.extended = cmd.hasOption(EXTENDED_OPTION);
+                opts.forceRun = cmd.hasOption(FORCE_RUN_OPTION);
 
                 return opts;
             }
@@ -198,6 +204,7 @@ public class StandaloneVerifier
             options.addOption("e",  EXTENDED_OPTION,       "extended verification");
             options.addOption("v",  VERBOSE_OPTION,        "verbose output");
             options.addOption("h",  HELP_OPTION,           "display this help message");
+            options.addOption(null, FORCE_RUN_OPTION,      "run even if Cassandra is running, which is really not recommended");
             return options;
         }
 

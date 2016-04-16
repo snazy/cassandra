@@ -72,6 +72,8 @@ import org.apache.cassandra.io.sstable.format.SSTableReader;
  */
 public class SSTableOfflineRelevel
 {
+    private static final String TOOL_NAME = "sstableofflinerelevel";
+
     /**
      * @param args a list of sstables whose metadata we are changing
      */
@@ -88,6 +90,10 @@ public class SSTableOfflineRelevel
         Util.initDatabaseDescriptor();
 
         boolean dryRun = args[0].equals("--dry-run");
+
+        if (!dryRun)
+            Util.cassandraDaemonCheckAndExit(TOOL_NAME);
+
         String keyspace = args[args.length - 2];
         String columnfamily = args[args.length - 1];
         Schema.instance.loadFromDisk(false);

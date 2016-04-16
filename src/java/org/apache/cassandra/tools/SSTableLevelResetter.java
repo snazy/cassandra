@@ -21,6 +21,12 @@ import java.io.PrintStream;
 import java.util.Map;
 import java.util.Set;
 
+import org.apache.commons.cli.CommandLine;
+import org.apache.commons.cli.CommandLineParser;
+import org.apache.commons.cli.GnuParser;
+import org.apache.commons.cli.HelpFormatter;
+import org.apache.commons.cli.ParseException;
+
 import org.apache.cassandra.config.Schema;
 import org.apache.cassandra.db.ColumnFamilyStore;
 import org.apache.cassandra.db.Directories;
@@ -36,28 +42,23 @@ import org.apache.cassandra.utils.JVMStabilityInspector;
  */
 public class SSTableLevelResetter
 {
+    private static final String TOOL_NAME = "sstablelevelreset";
+    private static final String HELP_OPTION  = "help";
+    private static final String FORCE_RUN_OPTION  = "really-reset";
+
     /**
      * @param args a list of sstables whose metadata we are changing
      */
     public static void main(String[] args)
     {
         PrintStream out = System.out;
-        if (args.length == 0)
-        {
-            out.println("This command should be run with Cassandra stopped!");
-            out.println("Usage: sstablelevelreset <keyspace> <table>");
-            System.exit(1);
-        }
 
-        if (!args[0].equals("--really-reset") || args.length != 3)
-        {
-            out.println("This command should be run with Cassandra stopped, otherwise you will get very strange behavior");
-            out.println("Verify that Cassandra is not running and then execute the command like this:");
-            out.println("Usage: sstablelevelreset --really-reset <keyspace> <table>");
-            System.exit(1);
-        }
+        Options options = Options.parseArgs(args);
 
         Util.initDatabaseDescriptor();
+
+        if (!options.forceRun)
+            Util.cassandraDaemonCheckAndExit(TOOL_NAME);
 
         // TODO several daemon threads will run from here.
         // So we have to explicitly call System.exit.
@@ -109,5 +110,84 @@ public class SSTableLevelResetter
             System.exit(1);
         }
         System.exit(0);
+    }
+
+    private static class Options
+    {
+        public final String keyspaceName;
+        public final String cfName;
+
+        public boolean debug;
+        public boolean forceRun;
+
+        private Options(String keyspaceName, String cfName)
+        {
+            this.keyspaceName = keyspaceName;
+            this.cfName = cfName;
+        }
+
+        public static Options parseArgs(String cmdArgs[])
+        {
+            CommandLineParser parser = new GnuParser();
+            BulkLoader.CmdLineOptions options = getCmdLineOptions();
+            try
+            {
+                CommandLine cmd = parser.parse(options, cmdArgs, false);
+
+                if (cmd.hasOption(HELP_OPTION))
+                {
+                    printUsage(options);
+                    System.exit(0);
+                }
+
+                String[] args = cmd.getArgs();
+                if (args.length != 2)
+                {
+                    String msg = args.length < 2 ? "Missing arguments" : "Too many arguments";
+                    System.err.println(msg);
+                    printUsage(options);
+                    System.exit(1);
+                }
+
+                String keyspaceName = args[0];
+                String cfName = args[1];
+
+                Options opts = new Options(keyspaceName, cfName);
+
+                opts.forceRun = cmd.hasOption(FORCE_RUN_OPTION);
+
+                return opts;
+            }
+            catch (ParseException e)
+            {
+                errorMsg(e.getMessage(), options);
+                return null;
+            }
+        }
+
+        private static void errorMsg(String msg, BulkLoader.CmdLineOptions options)
+        {
+            System.err.println(msg);
+            printUsage(options);
+            System.exit(1);
+        }
+
+        private static BulkLoader.CmdLineOptions getCmdLineOptions()
+        {
+            BulkLoader.CmdLineOptions options = new BulkLoader.CmdLineOptions();
+            options.addOption(null, FORCE_RUN_OPTION,      "run even if Cassandra is running, which is really not recommended");
+            return options;
+        }
+
+        public static void printUsage(BulkLoader.CmdLineOptions options)
+        {
+            String usage = String.format("%s [options] <keyspace> <column_family>", TOOL_NAME);
+            StringBuilder header = new StringBuilder();
+            header.append("--\n");
+            header.append("Reset the level of the sstables for the provided table." );
+            header.append("\n--\n");
+            header.append("Options are:");
+            new HelpFormatter().printHelp(usage, header.toString(), options, "");
+        }
     }
 }

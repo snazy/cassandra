@@ -25,6 +25,12 @@ import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
 
+import org.apache.commons.cli.CommandLine;
+import org.apache.commons.cli.CommandLineParser;
+import org.apache.commons.cli.GnuParser;
+import org.apache.commons.cli.HelpFormatter;
+import org.apache.commons.cli.ParseException;
+
 import org.apache.cassandra.db.DecoratedKey;
 import org.apache.cassandra.db.SerializationHeader;
 import org.apache.cassandra.db.marshal.AbstractType;
@@ -44,21 +50,24 @@ import org.apache.cassandra.utils.Pair;
  */
 public class SSTableMetadataViewer
 {
+    private static final String TOOL_NAME = "sstablemetadata";
+    private static final String HELP_OPTION  = "help";
+    private static final String FORCE_RUN_OPTION  = "run-even-if-cassandra-is-running";
+
     /**
      * @param args a list of sstables whose metadata we're interested in
      */
     public static void main(String[] args) throws IOException
     {
+        Options options = Options.parseArgs(args);
         PrintStream out = System.out;
-        if (args.length == 0)
-        {
-            out.println("Usage: sstablemetadata <sstable filenames>");
-            System.exit(1);
-        }
 
         Util.initDatabaseDescriptor();
 
-        for (String fname : args)
+        if (!options.forceRun)
+            Util.cassandraDaemonCheckAndExit(TOOL_NAME);
+
+        for (String fname : options.files)
         {
             if (new File(fname).exists())
             {
@@ -191,4 +200,79 @@ public class SSTableMetadataViewer
         }
     }
 
+    private static class Options
+    {
+        public final String[] files;
+
+        public boolean debug;
+        public boolean verbose;
+        public boolean extended;
+        public boolean forceRun;
+
+        private Options(String[] files)
+        {
+            this.files = files;
+        }
+
+        public static Options parseArgs(String cmdArgs[])
+        {
+            CommandLineParser parser = new GnuParser();
+            BulkLoader.CmdLineOptions options = getCmdLineOptions();
+            try
+            {
+                CommandLine cmd = parser.parse(options, cmdArgs, false);
+
+                if (cmd.hasOption(HELP_OPTION))
+                {
+                    printUsage(options);
+                    System.exit(0);
+                }
+
+                String[] args = cmd.getArgs();
+                if (args.length == 0)
+                {
+                    System.err.println("Usage: sstablemetadata <sstable filenames>");
+                    printUsage(options);
+                    System.exit(1);
+                }
+
+                Options opts = new Options(args);
+
+                opts.forceRun = cmd.hasOption(FORCE_RUN_OPTION);
+
+                return opts;
+            }
+            catch (ParseException e)
+            {
+                errorMsg(e.getMessage(), options);
+                return null;
+            }
+        }
+
+        private static void errorMsg(String msg, BulkLoader.CmdLineOptions options)
+        {
+            System.err.println(msg);
+            printUsage(options);
+            System.exit(1);
+        }
+
+        private static BulkLoader.CmdLineOptions getCmdLineOptions()
+        {
+            BulkLoader.CmdLineOptions options = new BulkLoader.CmdLineOptions();
+            options.addOption("h",  HELP_OPTION,           "display this help message");
+            options.addOption(null, FORCE_RUN_OPTION,      "run even if Cassandra is running, which is really not recommended");
+            return options;
+        }
+
+        public static void printUsage(BulkLoader.CmdLineOptions options)
+        {
+            String usage = String.format("%s [options] <sstable filenames>", TOOL_NAME);
+            StringBuilder header = new StringBuilder();
+            header.append("--\n");
+            header.append("Verify the sstable for the provided table." );
+            header.append("\n--\n");
+            header.append("Options are:");
+            new HelpFormatter().printHelp(usage, header.toString(), options, "");
+        }
+    }
 }
