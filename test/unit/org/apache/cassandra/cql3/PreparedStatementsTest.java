@@ -17,63 +17,42 @@
  */
 package org.apache.cassandra.cql3;
 
-import org.junit.AfterClass;
-import org.junit.BeforeClass;
+import java.util.Iterator;
+
+import org.junit.Before;
 import org.junit.Test;
 
 import com.datastax.driver.core.Cluster;
 import com.datastax.driver.core.PreparedStatement;
+import com.datastax.driver.core.Row;
 import com.datastax.driver.core.Session;
 import com.datastax.driver.core.exceptions.SyntaxError;
-import org.apache.cassandra.SchemaLoader;
-import org.apache.cassandra.config.DatabaseDescriptor;
-import org.apache.cassandra.schema.Schema;
 import org.apache.cassandra.index.StubIndex;
-import org.apache.cassandra.service.EmbeddedCassandraService;
+import org.apache.cassandra.transport.ProtocolVersion;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.fail;
 
-public class PreparedStatementsTest extends SchemaLoader
+public class PreparedStatementsTest extends CQLTester
 {
-    private static Cluster cluster;
-    private static Session session;
-
     private static final String KEYSPACE = "prepared_stmt_cleanup";
     private static final String createKsStatement = "CREATE KEYSPACE " + KEYSPACE +
                                                     " WITH REPLICATION = { 'class' : 'SimpleStrategy', 'replication_factor' : 1 };";
     private static final String dropKsStatement = "DROP KEYSPACE IF EXISTS " + KEYSPACE;
 
-    @BeforeClass
-    public static void setup() throws Exception
+    @Before
+    public void setup()
     {
-        Schema.instance.clear();
-
-        EmbeddedCassandraService cassandra = new EmbeddedCassandraService();
-        cassandra.start();
-
-        // Currently the native server start method return before the server is fully binded to the socket, so we need
-        // to wait slightly before trying to connect to it. We should fix this but in the meantime using a sleep.
-        Thread.sleep(500);
-
-        cluster = Cluster.builder().addContactPoint("127.0.0.1")
-                                   .withPort(DatabaseDescriptor.getNativeTransportPort())
-                                   .build();
-        session = cluster.connect();
-
-        session.execute(dropKsStatement);
-        session.execute(createKsStatement);
-    }
-
-    @AfterClass
-    public static void tearDown() throws Exception
-    {
-        cluster.close();
+        requireNetwork();
     }
 
     @Test
     public void testInvalidatePreparedStatementsOnDrop()
     {
+        Session session = sessions.get(ProtocolVersion.V5);
+        session.execute(dropKsStatement);
+        session.execute(createKsStatement);
+
         String createTableStatement = "CREATE TABLE IF NOT EXISTS " + KEYSPACE + ".qp_cleanup (id int PRIMARY KEY, cid int, val text);";
         String dropTableStatement = "DROP TABLE IF EXISTS " + KEYSPACE + ".qp_cleanup;";
 
@@ -101,8 +80,139 @@ public class PreparedStatementsTest extends SchemaLoader
     }
 
     @Test
+    public void testInvalidatePreparedStatementOnAlterV5()
+    {
+        testInvalidatePreparedStatementOnAlter(ProtocolVersion.V5, true);
+    }
+
+    @Test
+    public void testInvalidatePreparedStatementOnAlterV4()
+    {
+        testInvalidatePreparedStatementOnAlter(ProtocolVersion.V4, false);
+    }
+
+    private void testInvalidatePreparedStatementOnAlter(ProtocolVersion version, boolean supportsMetadataChange)
+    {
+        requireNetwork();
+        Session session = sessions.get(version);
+        String createTableStatement = "CREATE TABLE IF NOT EXISTS " + KEYSPACE + ".qp_cleanup (a int PRIMARY KEY, b int, c int);";
+        String alterTableStatement = "ALTER TABLE " + KEYSPACE + ".qp_cleanup ADD d int;";
+
+        session.execute(dropKsStatement);
+        session.execute(createKsStatement);
+        session.execute(createTableStatement);
+
+        PreparedStatement preparedSelect = session.prepare("SELECT * FROM " + KEYSPACE + ".qp_cleanup");
+        session.execute("INSERT INTO " + KEYSPACE + ".qp_cleanup (a, b, c) VALUES (?, ?, ?);",
+                        1, 2, 3);
+        session.execute("INSERT INTO " + KEYSPACE + ".qp_cleanup (a, b, c) VALUES (?, ?, ?);",
+                        2, 3, 4);
+
+        Iterator<Row> resultSet = session.execute(preparedSelect.bind()).all().iterator();
+        Row row1 = resultSet.next();
+        assertEquals(1, row1.getInt("a"));
+        assertEquals(2, row1.getInt("b"));
+        assertEquals(3, row1.getInt("c"));
+
+        Row row2 = resultSet.next();
+        assertEquals(2, row2.getInt("a"));
+        assertEquals(3, row2.getInt("b"));
+        assertEquals(4, row2.getInt("c"));
+
+        session.execute(alterTableStatement);
+        session.execute("INSERT INTO " + KEYSPACE + ".qp_cleanup (a, b, c, d) VALUES (?, ?, ?, ?);",
+                        3, 4, 5, 6);
+        resultSet = session.execute(preparedSelect.bind()).all().iterator();
+
+        row1 = resultSet.next();
+        assertEquals(1, row1.getInt("a"));
+        assertEquals(2, row1.getInt("b"));
+        assertEquals(3, row1.getInt("c"));
+        if (supportsMetadataChange)
+            assertEquals(0, row1.getInt("d"));
+
+        row2 = resultSet.next();
+        assertEquals(2, row2.getInt("a"));
+        assertEquals(3, row2.getInt("b"));
+        assertEquals(4, row2.getInt("c"));
+        if (supportsMetadataChange)
+            assertEquals(0, row2.getInt("d"));
+
+        Row row3 = resultSet.next();
+        assertEquals(3, row3.getInt("a"));
+        assertEquals(4, row3.getInt("b"));
+        assertEquals(5, row3.getInt("c"));
+        if (supportsMetadataChange)
+            assertEquals(6, row3.getInt("d"));
+        session.execute(dropKsStatement);
+    }
+
+    @Test
+    public void testInvalidatePreparedStatementOnAlterUnchangedMetadataV4()
+    {
+        testInvalidatePreparedStatementOnAlterUnchangedMetadata(ProtocolVersion.V4);
+    }
+
+    @Test
+    public void testInvalidatePreparedStatementOnAlterUnchangedMetadataV5()
+    {
+        testInvalidatePreparedStatementOnAlterUnchangedMetadata(ProtocolVersion.V5);
+    }
+
+    private void testInvalidatePreparedStatementOnAlterUnchangedMetadata(ProtocolVersion version)
+    {
+        Session session = sessions.get(version);
+        String createTableStatement = "CREATE TABLE IF NOT EXISTS " + KEYSPACE + ".qp_cleanup (a int PRIMARY KEY, b int, c int);";
+        String alterTableStatement = "ALTER TABLE " + KEYSPACE + ".qp_cleanup ADD d int;";
+
+        session.execute(dropKsStatement);
+        session.execute(createKsStatement);
+        session.execute(createTableStatement);
+
+        PreparedStatement preparedSelect = session.prepare("SELECT a, b, c FROM " + KEYSPACE + ".qp_cleanup");
+        session.execute("INSERT INTO " + KEYSPACE + ".qp_cleanup (a, b, c) VALUES (?, ?, ?);",
+                        1, 2, 3);
+        session.execute("INSERT INTO " + KEYSPACE + ".qp_cleanup (a, b, c) VALUES (?, ?, ?);",
+                        2, 3, 4);
+
+        Iterator<Row> resultSet = session.execute(preparedSelect.bind()).all().iterator();
+        Row row1 = resultSet.next();
+        assertEquals(1, row1.getInt("a"));
+        assertEquals(2, row1.getInt("b"));
+        assertEquals(3, row1.getInt("c"));
+
+        Row row2 = resultSet.next();
+        assertEquals(2, row2.getInt("a"));
+        assertEquals(3, row2.getInt("b"));
+        assertEquals(4, row2.getInt("c"));
+
+        session.execute(alterTableStatement);
+        session.execute("INSERT INTO " + KEYSPACE + ".qp_cleanup (a, b, c, d) VALUES (?, ?, ?, ?);",
+                        3, 4, 5, 6);
+        resultSet = session.execute(preparedSelect.bind()).all().iterator();
+
+        row1 = resultSet.next();
+        assertEquals(1, row1.getInt("a"));
+        assertEquals(2, row1.getInt("b"));
+        assertEquals(3, row1.getInt("c"));
+
+        row2 = resultSet.next();
+        assertEquals(2, row2.getInt("a"));
+        assertEquals(3, row2.getInt("b"));
+        assertEquals(4, row2.getInt("c"));
+
+        Row row3 = resultSet.next();
+        assertEquals(3, row3.getInt("a"));
+        assertEquals(4, row3.getInt("b"));
+        assertEquals(5, row3.getInt("c"));
+        session.execute(dropKsStatement);
+    }
+
+    @Test
     public void testStatementRePreparationOnReconnect()
     {
+        Session session = sessions.get(ProtocolVersion.V5);
+
         session.execute(dropKsStatement);
         session.execute(createKsStatement);
 
@@ -117,23 +227,30 @@ public class PreparedStatementsTest extends SchemaLoader
         session.execute(preparedInsert.bind(1, 1, "value"));
         assertEquals(1, session.execute(preparedSelect.bind(1)).all().size());
 
-        cluster.close();
+        try (Cluster cluster = Cluster.builder()
+                                 .addContactPoints(nativeAddr)
+                                 .withClusterName("Test Cluster")
+                                 .withPort(nativePort)
+                                 .withoutJMXReporting()
+                                 .allowBetaProtocolVersion()
+                                 .build())
+        {
+            try(Session newSession = cluster.connect())
+            {
+                preparedInsert = newSession.prepare(insertCQL);
+                preparedSelect = newSession.prepare(selectCQL);
+                session.execute(preparedInsert.bind(1, 1, "value"));
 
-        cluster = Cluster.builder().addContactPoint("127.0.0.1")
-                                   .withPort(DatabaseDescriptor.getNativeTransportPort())
-                                   .build();
-        session = cluster.connect();
-
-        preparedInsert = session.prepare(insertCQL);
-        preparedSelect = session.prepare(selectCQL);
-        session.execute(preparedInsert.bind(1, 1, "value"));
-
-        assertEquals(1, session.execute(preparedSelect.bind(1)).all().size());
+                assertEquals(1, session.execute(preparedSelect.bind(1)).all().size());
+            }
+        }
     }
 
     @Test
     public void prepareAndExecuteWithCustomExpressions() throws Throwable
     {
+        Session session = sessions.get(ProtocolVersion.V5);
+
         session.execute(dropKsStatement);
         session.execute(createKsStatement);
         String table = "custom_expr_test";

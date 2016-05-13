@@ -42,13 +42,22 @@ public class ExecuteMessage extends Message.Request
     {
         public ExecuteMessage decode(ByteBuf body, ProtocolVersion version)
         {
-            byte[] id = CBUtil.readBytes(body);
-            return new ExecuteMessage(MD5Digest.wrap(id), QueryOptions.codec.decode(body, version));
+            MD5Digest statementId = MD5Digest.wrap(CBUtil.readBytes(body));
+
+            MD5Digest resultMetadataId = null;
+            if (version.isGreaterOrEqualTo(ProtocolVersion.V5))
+                resultMetadataId = MD5Digest.wrap(CBUtil.readBytes(body));
+
+            return new ExecuteMessage(statementId, resultMetadataId, QueryOptions.codec.decode(body, version));
         }
 
         public void encode(ExecuteMessage msg, ByteBuf dest, ProtocolVersion version)
         {
             CBUtil.writeBytes(msg.statementId.bytes, dest);
+
+            if (version.isGreaterOrEqualTo(ProtocolVersion.V5))
+                CBUtil.writeBytes(msg.resultMetadataId.bytes, dest);
+
             if (version == ProtocolVersion.V1)
             {
                 CBUtil.writeValueList(msg.options.getValues(), dest);
@@ -64,6 +73,10 @@ public class ExecuteMessage extends Message.Request
         {
             int size = 0;
             size += CBUtil.sizeOfBytes(msg.statementId.bytes);
+
+            if (version.isGreaterOrEqualTo(ProtocolVersion.V5))
+                size += CBUtil.sizeOfBytes(msg.resultMetadataId.bytes);
+
             if (version == ProtocolVersion.V1)
             {
                 size += CBUtil.sizeOfValueList(msg.options.getValues());
@@ -78,13 +91,15 @@ public class ExecuteMessage extends Message.Request
     };
 
     public final MD5Digest statementId;
+    public final MD5Digest resultMetadataId;
     public final QueryOptions options;
 
-    public ExecuteMessage(MD5Digest statementId, QueryOptions options)
+    public ExecuteMessage(MD5Digest statementId, MD5Digest resultMetadataId, QueryOptions options)
     {
         super(Message.Type.EXECUTE);
         this.statementId = statementId;
         this.options = options;
+        this.resultMetadataId = resultMetadataId;
     }
 
     public Message.Response execute(QueryState state, long queryStartNanoTime)
@@ -144,8 +159,16 @@ public class ExecuteMessage extends Message.Request
             // by wrapping the QueryOptions.
             QueryOptions queryOptions = QueryOptions.addColumnSpecifications(options, prepared.boundNames);
             Message.Response response = handler.processPrepared(statement, state, queryOptions, getCustomPayload(), queryStartNanoTime);
-            if (options.skipMetadata() && response instanceof ResultMessage.Rows)
-                ((ResultMessage.Rows)response).result.metadata.setSkipMetadata();
+
+            if (response instanceof ResultMessage.Rows)
+            {
+                ResultMessage.Rows rows = (ResultMessage.Rows) response;
+
+                if (!prepared.resultMetadataId.equals(resultMetadataId))
+                    rows.result.metadata.setMetadataChanged();
+                else if (options.skipMetadata())
+                    rows.result.metadata.setSkipMetadata();
+            }
 
             if (tracingId != null)
                 response.setTracingId(tracingId);
