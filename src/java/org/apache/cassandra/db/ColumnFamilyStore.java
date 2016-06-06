@@ -1484,7 +1484,7 @@ public class ColumnFamilyStore implements ColumnFamilyStoreMBean
     }
 
     public CompactionManager.AllSSTableOpStatus forceCleanup(int jobs) throws ExecutionException, InterruptedException
-    {
+    {      
         return CompactionManager.instance.performCleanup(ColumnFamilyStore.this, jobs);
     }
 

@@ -185,7 +185,7 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
 {
     private static final Logger logger = LoggerFactory.getLogger(StorageService.class);
     
-    public static final int RING_DELAY = getRingDelay(); // delay after which we assume ring has stablized
+    public static final int RING_DELAY = getRingDelay(); // delay after which we assume ring has stabilized
 
     private final JMXProgressSupport progressSupport = new JMXProgressSupport(this);
 
@@ -1185,6 +1185,7 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
 
     public void rebuild(String sourceDc, String keyspace, String tokens)
     {
+        throwIfNotInitialized();
         // check on going rebuild
         if (!isRebuilding.compareAndSet(false, true))
         {
@@ -2815,14 +2816,21 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
 
     public int forceKeyspaceCleanup(String keyspaceName, String... tables) throws IOException, ExecutionException, InterruptedException
     {
+        throwIfNotInitialized();
         return forceKeyspaceCleanup(0, keyspaceName, tables);
     }
 
+    private void throwIfNotInitialized()
+    {
+        if (!initialized)
+            throw new IllegalStateException("Can not execute command because startup is not complete.");
+    }
+    
     public int forceKeyspaceCleanup(int jobs, String keyspaceName, String... tables) throws IOException, ExecutionException, InterruptedException
     {
         if (Schema.isSystemKeyspace(keyspaceName))
             throw new RuntimeException("Cleanup of the system keyspace is neither necessary nor wise");
-
+        throwIfNotInitialized();
         CompactionManager.AllSSTableOpStatus status = CompactionManager.AllSSTableOpStatus.SUCCESSFUL;
         for (ColumnFamilyStore cfStore : getValidColumnFamilies(false, false, keyspaceName, tables))
         {
@@ -2835,16 +2843,19 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
 
     public int scrub(boolean disableSnapshot, boolean skipCorrupted, String keyspaceName, String... tables) throws IOException, ExecutionException, InterruptedException
     {
+        throwIfNotInitialized();
         return scrub(disableSnapshot, skipCorrupted, true, 0, keyspaceName, tables);
     }
 
     public int scrub(boolean disableSnapshot, boolean skipCorrupted, boolean checkData, String keyspaceName, String... tables) throws IOException, ExecutionException, InterruptedException
     {
+        throwIfNotInitialized();
         return scrub(disableSnapshot, skipCorrupted, checkData, 0, keyspaceName, tables);
     }
 
     public int scrub(boolean disableSnapshot, boolean skipCorrupted, boolean checkData, int jobs, String keyspaceName, String... tables) throws IOException, ExecutionException, InterruptedException
     {
+        throwIfNotInitialized();
         CompactionManager.AllSSTableOpStatus status = CompactionManager.AllSSTableOpStatus.SUCCESSFUL;
         for (ColumnFamilyStore cfStore : getValidColumnFamilies(true, false, keyspaceName, tables))
         {
@@ -2869,11 +2880,13 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
 
     public int upgradeSSTables(String keyspaceName, boolean excludeCurrentVersion, String... tableNames) throws IOException, ExecutionException, InterruptedException
     {
+        throwIfNotInitialized();
         return upgradeSSTables(keyspaceName, excludeCurrentVersion, 0, tableNames);
     }
 
     public int upgradeSSTables(String keyspaceName, boolean excludeCurrentVersion, int jobs, String... tableNames) throws IOException, ExecutionException, InterruptedException
     {
+        throwIfNotInitialized();
         CompactionManager.AllSSTableOpStatus status = CompactionManager.AllSSTableOpStatus.SUCCESSFUL;
         for (ColumnFamilyStore cfStore : getValidColumnFamilies(true, true, keyspaceName, tableNames))
         {
@@ -2886,6 +2899,7 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
 
     public void forceKeyspaceCompaction(boolean splitOutput, String keyspaceName, String... tableNames) throws IOException, ExecutionException, InterruptedException
     {
+        throwIfNotInitialized();
         for (ColumnFamilyStore cfStore : getValidColumnFamilies(true, false, keyspaceName, tableNames))
         {
             cfStore.forceMajorCompaction(splitOutput);
@@ -2894,11 +2908,13 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
 
     public int relocateSSTables(String keyspaceName, String ... columnFamilies) throws IOException, ExecutionException, InterruptedException
     {
+        throwIfNotInitialized();
         return relocateSSTables(0, keyspaceName, columnFamilies);
     }
 
     public int relocateSSTables(int jobs, String keyspaceName, String ... columnFamilies) throws IOException, ExecutionException, InterruptedException
     {
+        throwIfNotInitialized();
         CompactionManager.AllSSTableOpStatus status = CompactionManager.AllSSTableOpStatus.SUCCESSFUL;
         for (ColumnFamilyStore cfs : getValidColumnFamilies(false, false, keyspaceName, columnFamilies))
         {
@@ -3183,6 +3199,7 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
      */
     public void forceKeyspaceFlush(String keyspaceName, String... tableNames) throws IOException
     {
+        throwIfNotInitialized();
         for (ColumnFamilyStore cfStore : getValidColumnFamilies(true, false, keyspaceName, tableNames))
         {
             logger.debug("Forcing flush on keyspace {}, CF {}", keyspaceName, cfStore.name);
@@ -3876,6 +3893,7 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
 
     public void move(String newToken) throws IOException
     {
+        throwIfNotInitialized();
         try
         {
             getTokenFactory().validate(newToken);

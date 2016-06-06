@@ -213,8 +213,11 @@ public class NodeTool
     private static void err(Throwable e)
     {
         System.err.println("error: " + e.getMessage());
-        System.err.println("-- StackTrace --");
-        System.err.println(getStackTraceAsString(e));
+        if (!(e instanceof IllegalStateException))
+        {
+            System.err.println("-- StackTrace --");
+            System.err.println(getStackTraceAsString(e));
+        }
     }
 
     public static abstract class NodeToolCmd implements Runnable
