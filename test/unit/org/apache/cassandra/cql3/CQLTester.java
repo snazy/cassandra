@@ -59,6 +59,7 @@ import org.apache.cassandra.io.util.FileUtils;
 import org.apache.cassandra.serializers.TypeSerializer;
 import org.apache.cassandra.service.ClientState;
 import org.apache.cassandra.service.QueryState;
+import org.apache.cassandra.service.StorageProxy;
 import org.apache.cassandra.service.StorageService;
 import org.apache.cassandra.transport.Event;
 import org.apache.cassandra.transport.Server;
@@ -168,6 +169,7 @@ public abstract class CQLTester
         ThreadAwareSecurityManager.install();
 
         Keyspace.setInitialized();
+        StorageService.instance.unsafeInitialize();
         isServerPrepared = true;
     }
 

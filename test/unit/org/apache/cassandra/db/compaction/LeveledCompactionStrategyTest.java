@@ -54,6 +54,7 @@ import org.apache.cassandra.repair.Validator;
 import org.apache.cassandra.schema.CompactionParams;
 import org.apache.cassandra.schema.KeyspaceParams;
 import org.apache.cassandra.service.ActiveRepairService;
+import org.apache.cassandra.service.StorageService;
 import org.apache.cassandra.utils.FBUtilities;
 
 import static java.util.Collections.singleton;
@@ -79,7 +80,8 @@ public class LeveledCompactionStrategyTest
                                     KeyspaceParams.simple(1),
                                     SchemaLoader.standardCFMD(KEYSPACE1, CF_STANDARDDLEVELED)
                                                 .compaction(CompactionParams.lcs(Collections.singletonMap("sstable_size_in_mb", "1"))));
-        }
+        StorageService.instance.unsafeInitialize();
+    }
 
     @Before
     public void enableCompaction()
@@ -93,7 +95,7 @@ public class LeveledCompactionStrategyTest
      * Since we use StandardLeveled CF for every test, we want to clean up after the test.
      */
     @After
-    public void truncateSTandardLeveled()
+    public void truncateStandardLeveled()
     {
         cfs.truncateBlocking();
     }
