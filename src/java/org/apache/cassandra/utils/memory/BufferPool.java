@@ -106,7 +106,7 @@ public class BufferPool
     {
         return onHeap
                ? ByteBuffer.allocate(size)
-               : ByteBuffer.allocateDirect(size);
+               : DirectMemory.allocateDirect(size);
     }
 
     private static ByteBuffer takeFromPool(int size, boolean allocateOnHeapWhenExhausted)
@@ -282,7 +282,7 @@ public class BufferPool
             {
                 noSpamLogger.error("Buffer pool failed to allocate chunk of {}, current size {} ({}). " +
                                    "Attempting to continue; buffers will be allocated in on-heap memory which can degrade performance. " +
-                                   "Make sure direct memory size (-XX:MaxDirectMemorySize) is large enough to accommodate off-heap memtables and caches.",
+                                   "Make sure direct memory size (max_direct_memory_in_mb in cassandra.yaml) is large enough to accommodate off-heap memtables and caches.",
                                    FBUtilities.prettyPrintMemory(MACRO_CHUNK_SIZE),
                                    FBUtilities.prettyPrintMemory(sizeInBytes()),
                                    oom.toString());
@@ -531,7 +531,7 @@ public class BufferPool
         if (Integer.bitCount(align) != 1)
             throw new IllegalArgumentException("Alignment must be a power of 2");
 
-        ByteBuffer buffer = ByteBuffer.allocateDirect(capacity + align);
+        ByteBuffer buffer = DirectMemory.allocateDirect(capacity + align);
         long address = MemoryUtil.getAddress(buffer);
         long offset = address & (align -1); // (address % align)
 

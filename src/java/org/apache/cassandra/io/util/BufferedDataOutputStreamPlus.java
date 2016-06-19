@@ -30,6 +30,7 @@ import com.google.common.base.Preconditions;
 import net.nicoulaj.compilecommand.annotations.DontInline;
 
 import org.apache.cassandra.config.Config;
+import org.apache.cassandra.utils.memory.DirectMemory;
 import org.apache.cassandra.utils.memory.MemoryUtil;
 import org.apache.cassandra.utils.vint.VIntCoding;
 
@@ -81,7 +82,7 @@ public class BufferedDataOutputStreamPlus extends DataOutputStreamPlus
 
     public BufferedDataOutputStreamPlus(WritableByteChannel wbc, int bufferSize)
     {
-        this(wbc, ByteBuffer.allocateDirect(bufferSize));
+        this(wbc, DirectMemory.allocateDirect(bufferSize));
         Preconditions.checkNotNull(wbc);
         Preconditions.checkArgument(bufferSize >= 8, "Buffer size must be large enough to accommodate a long/double");
     }

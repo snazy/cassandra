@@ -94,7 +94,7 @@ public class SlabAllocator extends MemtableBufferAllocator
             unslabbedSize.addAndGet(size);
             if (allocateOnHeapOnly)
                 return ByteBuffer.allocate(size);
-            Region region = new Region(ByteBuffer.allocateDirect(size));
+            Region region = new Region(DirectMemory.allocateDirect(size));
             offHeapRegions.add(region);
             return region.allocate(size);
         }
@@ -141,7 +141,7 @@ public class SlabAllocator extends MemtableBufferAllocator
             // against other allocators to CAS in a Region, and if we fail we stash the region for re-use
             region = RACE_ALLOCATED.poll();
             if (region == null)
-                region = new Region(allocateOnHeapOnly ? ByteBuffer.allocate(REGION_SIZE) : ByteBuffer.allocateDirect(REGION_SIZE));
+                region = new Region(allocateOnHeapOnly ? ByteBuffer.allocate(REGION_SIZE) : DirectMemory.allocateDirect(REGION_SIZE));
             if (currentRegion.compareAndSet(null, region))
             {
                 if (!allocateOnHeapOnly)

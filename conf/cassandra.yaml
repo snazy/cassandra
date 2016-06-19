@@ -552,6 +552,15 @@ memtable_allocation_type: heap_buffers
 # new space for cdc-tracked tables has been made available. Default to 250ms
 # cdc_free_space_check_interval_ms: 250
 
+# Maximum amount of direct memory that C* is allowed to allocate.
+# This includes hints buffers, off-heap memtable and more.
+# Network I/O buffers used by the native protocol are managed by the system
+# property io.netty.maxDirectMemory - see cassandra-env.sh.
+#
+# Defaults to min(1024, min(max-heap-in-mb / 2, machine_phys_mem - heap_max))
+#
+# max_direct_memory_in_mb:
+
 # A fixed memory pool size in MB for for SSTable index summaries. If left
 # empty, this will default to 5% of the heap size. If the memory usage of
 # all index summaries exceeds this limit, SSTables with low read rates will

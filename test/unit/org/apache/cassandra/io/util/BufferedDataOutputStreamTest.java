@@ -37,7 +37,10 @@ import java.nio.channels.WritableByteChannel;
 import java.util.Arrays;
 import java.util.Random;
 
+import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.utils.vint.VIntCoding;
+
+import org.junit.BeforeClass;
 import org.junit.Test;
 
 import com.google.common.primitives.UnsignedBytes;
@@ -48,6 +51,11 @@ import static org.junit.Assert.*;
 
 public class BufferedDataOutputStreamTest
 {
+    @BeforeClass
+    public static void initTest()
+    {
+        DatabaseDescriptor.clientInitialization();
+    }
 
     @Test(expected = BufferOverflowException.class)
     public void testDataOutputBufferFixedByes() throws Exception

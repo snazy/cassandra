@@ -111,6 +111,7 @@ public abstract class CompressedChunkReader extends AbstractReaderFileProxy impl
 
                 if (compressed.capacity() < chunk.length)
                 {
+                    FileUtils.clean(compressed);
                     compressed = allocateBuffer(chunk.length);
                     compressedHolder.set(compressed);
                 }

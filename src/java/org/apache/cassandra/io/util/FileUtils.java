@@ -33,6 +33,8 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
+import org.apache.cassandra.utils.memory.DirectMemory;
 import sun.nio.ch.DirectBuffer;
 
 import org.apache.cassandra.concurrent.ScheduledExecutors;
@@ -336,9 +338,9 @@ public final class FileUtils
 
     public static void clean(ByteBuffer buffer)
     {
-        if (buffer == null)
+        if (buffer == null || !buffer.isDirect())
             return;
-        if (isCleanerAvailable && buffer.isDirect())
+        if (!DirectMemory.freeDirect(buffer) && isCleanerAvailable)
         {
             DirectBuffer db = (DirectBuffer) buffer;
             if (db.cleaner() != null)

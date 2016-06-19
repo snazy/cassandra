@@ -32,6 +32,7 @@ import org.apache.cassandra.io.util.FileUtils;
 import org.apache.cassandra.net.MessagingService;
 import org.apache.cassandra.utils.AbstractIterator;
 import org.apache.cassandra.utils.concurrent.OpOrder;
+import org.apache.cassandra.utils.memory.DirectMemory;
 
 import static org.apache.cassandra.utils.FBUtilities.updateChecksum;
 import static org.apache.cassandra.utils.FBUtilities.updateChecksumInt;
@@ -71,7 +72,7 @@ final class HintsBuffer
 
     static HintsBuffer create(int slabSize)
     {
-        return new HintsBuffer(ByteBuffer.allocateDirect(slabSize));
+        return new HintsBuffer(DirectMemory.allocateDirect(slabSize));
     }
 
     boolean isClosed()

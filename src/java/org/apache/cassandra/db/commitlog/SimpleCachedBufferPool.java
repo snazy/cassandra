@@ -104,7 +104,9 @@ public class SimpleCachedBufferPool
 
     public void shutdown()
     {
-        bufferPool.clear();
+        ByteBuffer buf;
+        while ((buf = bufferPool.poll()) != null)
+            FileUtils.clean(buf);
     }
 
     public boolean atLimit()

@@ -34,6 +34,7 @@ import java.util.ArrayDeque;
 import java.util.Queue;
 import java.util.Random;
 
+import org.junit.BeforeClass;
 import org.junit.Test;
 
 import com.google.common.base.Charsets;
@@ -41,10 +42,17 @@ import com.google.common.primitives.UnsignedBytes;
 import com.google.common.primitives.UnsignedInteger;
 import com.google.common.primitives.UnsignedLong;
 
+import org.apache.cassandra.config.DatabaseDescriptor;
+
 import static org.junit.Assert.*;
 
 public class NIODataInputStreamTest
 {
+    @BeforeClass
+    public static void initTest()
+    {
+        DatabaseDescriptor.clientInitialization();
+    }
 
     Random r;
     ByteBuffer corpus = ByteBuffer.allocate(1024 * 1024 * 8);

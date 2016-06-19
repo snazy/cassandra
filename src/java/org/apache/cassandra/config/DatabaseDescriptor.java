@@ -19,6 +19,7 @@ package org.apache.cassandra.config;
 
 import java.io.File;
 import java.io.IOException;
+import java.lang.management.ManagementFactory;
 import java.net.*;
 import java.nio.file.FileStore;
 import java.nio.file.Files;
@@ -31,15 +32,12 @@ import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.primitives.Ints;
 import com.google.common.primitives.Longs;
+import com.sun.management.OperatingSystemMXBean;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import org.apache.cassandra.auth.AuthConfig;
-import org.apache.cassandra.auth.IAuthenticator;
-import org.apache.cassandra.auth.IAuthorizer;
-import org.apache.cassandra.auth.IInternodeAuthenticator;
-import org.apache.cassandra.auth.IRoleManager;
+import org.apache.cassandra.auth.*;
 import org.apache.cassandra.config.Config.CommitLogSync;
 import org.apache.cassandra.config.Config.RequestSchedulerId;
 import org.apache.cassandra.dht.IPartitioner;
@@ -247,6 +245,18 @@ public class DatabaseDescriptor
 
     private static void applySimpleConfig()
     {
+
+        if (conf.max_direct_memory_in_mb == 0L)
+        {
+            long physMem = ((OperatingSystemMXBean) ManagementFactory.getOperatingSystemMXBean()).getTotalPhysicalMemorySize();
+            long heapMax = Runtime.getRuntime().maxMemory();
+            long heapReserved = heapMax - Runtime.getRuntime().totalMemory();
+            long free = physMem - heapReserved;
+
+            conf.max_direct_memory_in_mb = Math.min(1024L, Math.min(heapMax / 2, free) / 1024L / 1024L);
+
+            logger.info("Using max {} bytes of direct memory", conf.max_direct_memory_in_mb);
+        }
 
         if (conf.commitlog_sync == null)
         {
@@ -2259,5 +2269,15 @@ public class DatabaseDescriptor
     public static int searchConcurrencyFactor()
     {
         return Integer.parseInt(System.getProperty("cassandra.search_concurrency_factor", "1"));
+    }
+
+    public static long getMaxDirectMemory()
+    {
+        return conf.max_direct_memory_in_mb * 1024L * 1024L;
+    }
+
+    public static void setMaxDirectMemory(long maxDirectMemory)
+    {
+        conf.max_direct_memory_in_mb = maxDirectMemory / 1024L / 1024L;
     }
 }

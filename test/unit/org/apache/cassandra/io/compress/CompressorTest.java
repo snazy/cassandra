@@ -29,13 +29,21 @@ import java.util.Random;
 import com.google.common.io.Files;
 import static org.junit.Assert.*;
 import org.junit.Assert;
+import org.junit.BeforeClass;
 import org.junit.Test;
 
+import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.io.util.RandomAccessReader;
 import org.apache.cassandra.utils.ByteBufferUtil;
 
 public class CompressorTest
 {
+    @BeforeClass
+    public static void initTest()
+    {
+        DatabaseDescriptor.clientInitialization();
+    }
+
     ICompressor compressor;
 
     ICompressor[] compressors = new ICompressor[] {

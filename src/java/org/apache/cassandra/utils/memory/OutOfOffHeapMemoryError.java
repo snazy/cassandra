@@ -15,33 +15,13 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.apache.cassandra.io.compress;
 
-import java.nio.ByteBuffer;
+package org.apache.cassandra.utils.memory;
 
-import org.apache.cassandra.utils.memory.DirectMemory;
-
-public enum BufferType
+public class OutOfOffHeapMemoryError extends OutOfMemoryError
 {
-    ON_HEAP
+    public OutOfOffHeapMemoryError(String s)
     {
-        public ByteBuffer allocate(int size)
-        {
-            return ByteBuffer.allocate(size);
-        }
-    },
-    OFF_HEAP
-    {
-        public ByteBuffer allocate(int size)
-        {
-            return DirectMemory.allocateDirect(size);
-        }
-    };
-
-    public abstract ByteBuffer allocate(int size);
-
-    public static BufferType typeOf(ByteBuffer buffer)
-    {
-        return buffer.isDirect() ? OFF_HEAP : ON_HEAP;
+        super(s);
     }
 }

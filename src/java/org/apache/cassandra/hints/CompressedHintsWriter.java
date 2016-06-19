@@ -27,6 +27,7 @@ import java.util.zip.CRC32;
 import com.google.common.annotations.VisibleForTesting;
 
 import org.apache.cassandra.io.compress.ICompressor;
+import org.apache.cassandra.io.util.FileUtils;
 
 public class CompressedHintsWriter extends HintsWriter
 {
@@ -51,6 +52,10 @@ public class CompressedHintsWriter extends HintsWriter
 
         if (compressionBuffer == null || compressionBuffer.capacity() < estimatedSize)
         {
+            if (compressionBuffer != null)
+            {
+                FileUtils.clean(compressionBuffer);
+            }
             compressionBuffer = compressor.preferredBufferType().allocate(estimatedSize);
         }
         compressionBuffer.clear();
@@ -65,6 +70,13 @@ public class CompressedHintsWriter extends HintsWriter
         compressionBuffer.rewind();
         compressionBuffer.limit(compressedSize + METADATA_SIZE);
         super.writeBuffer(compressionBuffer);
+    }
+
+    public void close()
+    {
+        super.close();
+        FileUtils.clean(compressionBuffer);
+        compressionBuffer = null;
     }
 
     @VisibleForTesting

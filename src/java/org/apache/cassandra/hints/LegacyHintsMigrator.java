@@ -40,6 +40,7 @@ import org.apache.cassandra.io.util.DataInputBuffer;
 import org.apache.cassandra.io.util.FileUtils;
 import org.apache.cassandra.serializers.MarshalException;
 import org.apache.cassandra.utils.FBUtilities;
+import org.apache.cassandra.utils.memory.DirectMemory;
 
 /**
  * A migrator that goes through the legacy system.hints table and writes all the hints to the new hints storage format.
@@ -123,11 +124,17 @@ public final class LegacyHintsMigrator
 
     private void migrateLegacyHints()
     {
-        ByteBuffer buffer = ByteBuffer.allocateDirect(256 * 1024);
-        String query = String.format("SELECT DISTINCT target_id FROM %s.%s", SchemaConstants.SYSTEM_KEYSPACE_NAME, SystemKeyspace.LEGACY_HINTS);
-        //noinspection ConstantConditions
-        QueryProcessor.executeInternal(query).forEach(row -> migrateLegacyHints(row.getUUID("target_id"), buffer));
-        FileUtils.clean(buffer);
+        ByteBuffer buffer = DirectMemory.allocateDirect(256 * 1024);
+        try
+        {
+            String query = String.format("SELECT DISTINCT target_id FROM %s.%s", SchemaConstants.SYSTEM_KEYSPACE_NAME, SystemKeyspace.LEGACY_HINTS);
+            //noinspection ConstantConditions
+            QueryProcessor.executeInternal(query).forEach(row -> migrateLegacyHints(row.getUUID("target_id"), buffer));
+        }
+        finally
+        {
+            FileUtils.clean(buffer);
+        }
     }
 
     private void migrateLegacyHints(UUID hostId, ByteBuffer buffer)

@@ -24,6 +24,8 @@ import java.nio.channels.SeekableByteChannel;
 
 import com.google.common.base.Preconditions;
 
+import org.apache.cassandra.utils.memory.DirectMemory;
+
 /**
  * Rough equivalent of BufferedInputStream and DataInputStream wrapping the input stream of a File or Socket
  * Created to work around the fact that when BIS + DIS delegate to NIO for socket IO they will allocate large
@@ -42,7 +44,7 @@ public class NIODataInputStream extends RebufferingInputStream
 
     private static ByteBuffer makeBuffer(int bufferSize)
     {
-        ByteBuffer buffer = ByteBuffer.allocateDirect(bufferSize);
+        ByteBuffer buffer = DirectMemory.allocateDirect(bufferSize);
         buffer.position(0);
         buffer.limit(0);
 

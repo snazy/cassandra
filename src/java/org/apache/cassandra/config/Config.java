@@ -350,6 +350,8 @@ public class Config
      */
     public UserFunctionTimeoutPolicy user_function_timeout_policy = UserFunctionTimeoutPolicy.die;
 
+    public long max_direct_memory_in_mb;
+
     public static boolean getOutboundBindAny()
     {
         return outboundBindAny;

@@ -25,6 +25,8 @@ import java.util.concurrent.*;
 import org.apache.cassandra.concurrent.DebuggableThreadPoolExecutor;
 import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.io.FSWriteError;
+import org.apache.cassandra.io.util.FileUtils;
+import org.apache.cassandra.utils.memory.DirectMemory;
 
 /**
  * A single threaded executor that exclusively writes all the hints and otherwise manipulate the writers.
@@ -38,14 +40,14 @@ final class HintsWriteExecutor
     static final int WRITE_BUFFER_SIZE = 256 << 10;
 
     private final HintsCatalog catalog;
-    private final ByteBuffer writeBuffer;
+    private volatile ByteBuffer writeBuffer;
     private final ExecutorService executor;
 
     HintsWriteExecutor(HintsCatalog catalog)
     {
         this.catalog = catalog;
 
-        writeBuffer = ByteBuffer.allocateDirect(WRITE_BUFFER_SIZE);
+        writeBuffer = DirectMemory.allocateDirect(WRITE_BUFFER_SIZE);
         executor = DebuggableThreadPoolExecutor.createWithFixedPoolSize("HintsWriteExecutor", 1);
     }
 
@@ -62,6 +64,12 @@ final class HintsWriteExecutor
         catch (InterruptedException e)
         {
             throw new AssertionError(e);
+        }
+        finally
+        {
+            ByteBuffer wb = writeBuffer;
+            writeBuffer = null;
+            FileUtils.clean(wb);
         }
     }
 
