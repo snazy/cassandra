@@ -23,6 +23,7 @@ import java.util.EnumSet;
 import java.util.List;
 
 import io.netty.buffer.ByteBuf;
+import io.netty.buffer.Unpooled;
 import io.netty.channel.*;
 import io.netty.handler.codec.ByteToMessageDecoder;
 import io.netty.handler.codec.MessageToMessageDecoder;
@@ -72,29 +73,99 @@ public class Frame
         return new Frame(header, body);
     }
 
-    public static class Header
+    public static final class Header
     {
         // 9 bytes in protocol version 3 and later
         public static final int LENGTH = 9;
 
-        public static final int BODY_LENGTH_SIZE = 4;
+        private static final int OFFSET_DIR_AND_VERSION = 0;
+        private static final int OFFSET_FLAGS = 1;
+        private static final int OFFSET_STREAM_ID = 2;
+        private static final int OFFSET_TYPE = 4;
+        private static final int OFFSET_BODY_LENGTH = 5;
 
-        public final int version;
-        public final EnumSet<Flag> flags;
-        public final int streamId;
-        public final Message.Type type;
+        private final byte[] data = new byte[LENGTH];
 
         private Header(int version, int flags, int streamId, Message.Type type)
         {
-            this(version, Flag.deserialize(flags), streamId, type);
+            int off = 0;
+            data[off++] = (byte) type.direction.addToVersion(version);
+            data[off++] = (byte) flags;
+
+            if (version >= Server.VERSION_3)
+                data[off++] = (byte) (streamId >> 8);
+            data[off++] = (byte) streamId;
+
+            data[off++] = (byte) type.opcode;
+            data[off++] = 0;
+            data[off++] = 0;
+            data[off++] = 0;
+            data[off] = 0;
         }
 
         private Header(int version, EnumSet<Flag> flags, int streamId, Message.Type type)
         {
-            this.version = version;
-            this.flags = flags;
-            this.streamId = streamId;
-            this.type = type;
+            this(version, Flag.serialize(flags), streamId, type);
+        }
+
+        public Header(ByteBuf buffer, int idx)
+        {
+            buffer.getBytes(idx, data);
+        }
+
+        public boolean containsFlag(Flag flag)
+        {
+            return (data[OFFSET_FLAGS] & flag.ordinal()) != 0;
+        }
+
+        public void addFlag(Flag flag)
+        {
+            data[OFFSET_FLAGS] |= flag.ordinal();
+        }
+
+        public Message.Type type()
+        {
+            return Message.Type.fromOpcode(data[OFFSET_TYPE], direction());
+        }
+
+        public Message.Direction direction()
+        {
+            return Message.Direction.extractFromVersion(data[OFFSET_DIR_AND_VERSION]);
+        }
+
+        public int version()
+        {
+            return data[OFFSET_DIR_AND_VERSION] & PROTOCOL_VERSION_MASK;
+        }
+
+        public int streamId()
+        {
+            return (data[OFFSET_STREAM_ID] & 0xff) << 8 | (data[OFFSET_STREAM_ID + 1] & 0xff);
+        }
+
+        public int bodyLength()
+        {
+            return ((data[OFFSET_BODY_LENGTH] << 24) & 0xff000000) |
+                   ((data[OFFSET_BODY_LENGTH + 1] << 16) & 0xff0000) |
+                   ((data[OFFSET_BODY_LENGTH + 2] << 8) & 0xff00) |
+                   ((data[OFFSET_BODY_LENGTH + 3]) & 0xff);
+        }
+
+        public void bodyLength(int bodyLength)
+        {
+            data[OFFSET_BODY_LENGTH] = (byte) (bodyLength >> 24);
+            data[OFFSET_BODY_LENGTH + 1] = (byte) (bodyLength >> 16);
+            data[OFFSET_BODY_LENGTH + 2] = (byte) (bodyLength >> 8);
+            data[OFFSET_BODY_LENGTH + 3] = (byte) bodyLength;
+        }
+
+        public String toString()
+        {
+            return "Header(direction=" + direction() +
+                   ", type=" + type() +
+                   ", flags=" + Flag.deserialize(data[OFFSET_FLAGS]) +
+                   ", streamId=" + streamId() +
+                   ", bodyLength=" + bodyLength();
         }
 
         public static enum Flag
@@ -170,8 +241,7 @@ public class Frame
 
             // Check the first byte for the protocol version before we wait for a complete header.  Protocol versions
             // 1 and 2 use a shorter header, so we may never have a complete header's worth of bytes.
-            int firstByte = buffer.getByte(idx++);
-            Message.Direction direction = Message.Direction.extractFromVersion(firstByte);
+            int firstByte = buffer.getByte(idx);
             int version = firstByte & PROTOCOL_VERSION_MASK;
             if (version < Server.MIN_SUPPORTED_VERSION || version > Server.CURRENT_VERSION)
                 throw new ProtocolException(String.format("Invalid or unsupported protocol version (%d); the lowest supported version is %d and the greatest is %d",
@@ -181,24 +251,21 @@ public class Frame
             if (readableBytes < Header.LENGTH)
                 return;
 
-            int flags = buffer.getByte(idx++);
-
-            int streamId = buffer.getShort(idx);
-            idx += 2;
+            Header header = new Header(buffer, idx);
+            idx += Header.LENGTH;
 
             // This throws a protocol exceptions if the opcode is unknown
-            Message.Type type;
             try
             {
-                type = Message.Type.fromOpcode(buffer.getByte(idx++), direction);
+                header.type();
             }
             catch (ProtocolException e)
             {
-                throw ErrorMessage.wrap(e, streamId);
+                throw ErrorMessage.wrap(e, header.streamId());
             }
 
-            long bodyLength = buffer.getUnsignedInt(idx);
-            idx += Header.BODY_LENGTH_SIZE;
+            int bodyLength = header.bodyLength();
+            int streamId = header.streamId();
 
             long frameLength = bodyLength + Header.LENGTH;
             if (frameLength > MAX_FRAME_LENGTH)
@@ -217,8 +284,17 @@ public class Frame
                 return;
 
             // extract body
-            ByteBuf body = buffer.slice(idx, (int) bodyLength);
-            body.retain();
+            ByteBuf body;
+            if (bodyLength > 0)
+            {
+                body = buffer.slice(idx, bodyLength);
+                body.retain();
+            }
+            else
+            {
+                // empty buffer for empty request body
+                body = Unpooled.EMPTY_BUFFER;
+            }
             
             idx += bodyLength;
             buffer.readerIndex(idx);
@@ -239,7 +315,7 @@ public class Frame
                         streamId);
             }
 
-            results.add(new Frame(new Header(version, flags, streamId, type), body));
+            results.add(new Frame(header, body));
         }
 
         private void fail()
@@ -267,21 +343,8 @@ public class Frame
         public void encode(ChannelHandlerContext ctx, Frame frame, List<Object> results)
         throws IOException
         {
-            ByteBuf header = CBUtil.allocator.buffer(Header.LENGTH);
-
-            Message.Type type = frame.header.type;
-            header.writeByte(type.direction.addToVersion(frame.header.version));
-            header.writeByte(Header.Flag.serialize(frame.header.flags));
-
-            if (frame.header.version >= Server.VERSION_3)
-                header.writeShort(frame.header.streamId);
-            else
-                header.writeByte(frame.header.streamId);
-
-            header.writeByte(type.opcode);
-            header.writeInt(frame.body.readableBytes());
-
-            results.add(header);
+            frame.header.bodyLength(frame.body.readableBytes());
+            results.add(Unpooled.wrappedBuffer(frame.header.data));
             results.add(frame.body);
         }
     }
@@ -294,7 +357,7 @@ public class Frame
         {
             Connection connection = ctx.channel().attr(Connection.attributeKey).get();
 
-            if (!frame.header.flags.contains(Header.Flag.COMPRESSED) || connection == null)
+            if (!frame.header.containsFlag(Header.Flag.COMPRESSED) || connection == null)
             {
                 results.add(frame);
                 return;
@@ -320,7 +383,7 @@ public class Frame
             Connection connection = ctx.channel().attr(Connection.attributeKey).get();
 
             // Never compress STARTUP messages
-            if (frame.header.type == Message.Type.STARTUP || connection == null)
+            if (frame.header.type() == Message.Type.STARTUP || connection == null)
             {
                 results.add(frame);
                 return;
@@ -333,7 +396,7 @@ public class Frame
                 return;
             }
 
-            frame.header.flags.add(Header.Flag.COMPRESSED);
+            frame.header.addFlag(Header.Flag.COMPRESSED);
             results.add(compressor.compress(frame));
         }
     }

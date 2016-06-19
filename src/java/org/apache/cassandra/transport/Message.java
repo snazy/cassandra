@@ -263,10 +263,10 @@ public abstract class Message
     {
         public void decode(ChannelHandlerContext ctx, Frame frame, List results)
         {
-            boolean isRequest = frame.header.type.direction == Direction.REQUEST;
-            boolean isTracing = frame.header.flags.contains(Frame.Header.Flag.TRACING);
-            boolean isCustomPayload = frame.header.flags.contains(Frame.Header.Flag.CUSTOM_PAYLOAD);
-            boolean hasWarning = frame.header.flags.contains(Frame.Header.Flag.WARNING);
+            boolean isRequest = frame.header.type().direction == Direction.REQUEST;
+            boolean isTracing = frame.header.containsFlag(Frame.Header.Flag.TRACING);
+            boolean isCustomPayload = frame.header.containsFlag(Frame.Header.Flag.CUSTOM_PAYLOAD);
+            boolean hasWarning = frame.header.containsFlag(Frame.Header.Flag.WARNING);
 
             UUID tracingId = isRequest || !isTracing ? null : CBUtil.readUUID(frame.body);
             List<String> warnings = isRequest || !hasWarning ? null : CBUtil.readStringList(frame.body);
@@ -274,11 +274,11 @@ public abstract class Message
 
             try
             {
-                if (isCustomPayload && frame.header.version < Server.VERSION_4)
+                if (isCustomPayload && frame.header.version() < Server.VERSION_4)
                     throw new ProtocolException("Received frame with CUSTOM_PAYLOAD flag for native protocol version < 4");
 
-                Message message = frame.header.type.codec.decode(frame.body, frame.header.version);
-                message.setStreamId(frame.header.streamId);
+                Message message = frame.header.type().codec.decode(frame.body, frame.header.version());
+                message.setStreamId(frame.header.streamId());
                 message.setSourceFrame(frame);
                 message.setCustomPayload(customPayload);
 
@@ -306,7 +306,7 @@ public abstract class Message
             {
                 frame.release();
                 // Remember the streamId
-                throw ErrorMessage.wrap(ex, frame.header.streamId);
+                throw ErrorMessage.wrap(ex, frame.header.streamId());
             }
         }
     }
