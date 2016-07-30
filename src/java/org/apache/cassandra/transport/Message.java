@@ -278,13 +278,20 @@ public abstract class Message
                 if (isCustomPayload && frame.header.version < Server.VERSION_4)
                     throw new ProtocolException("Received frame with CUSTOM_PAYLOAD flag for native protocol version < 4");
 
+                int lastReadable = frame.body.readableBytes();
                 Message message = frame.header.type.codec.decode(frame.body, frame.header.version);
+                int messageLen = lastReadable - frame.body.readableBytes();
                 message.setStreamId(frame.header.streamId);
                 message.setSourceFrame(frame);
                 message.setCustomPayload(customPayload);
 
                 if (isRequest)
                 {
+                    TransportMetrics.instance.requestMessageSize.update(messageLen);
+                    TransportMetrics.instance.messages.get(message.type).mark();
+                    TransportMetrics.instance.inFlightRequests.incrementAndGet();
+                    TransportMetrics.instance.requestCount.incrementAndGet();
+
                     assert message instanceof Request;
                     Request req = (Request)message;
                     Connection connection = ctx.channel().attr(Connection.attributeKey).get();
@@ -332,6 +339,8 @@ public abstract class Message
                 ByteBuf body;
                 if (message instanceof Response)
                 {
+                    TransportMetrics.instance.inFlightRequests.decrementAndGet();
+
                     UUID tracingId = ((Response)message).getTracingId();
                     Map<String, ByteBuffer> customPayload = message.getCustomPayload();
                     if (tracingId != null)
@@ -349,7 +358,14 @@ public abstract class Message
                             throw new ProtocolException("Must not send frame with CUSTOM_PAYLOAD flag for native protocol version < 4");
                         messageSize += CBUtil.sizeOfBytesMap(customPayload);
                     }
+
+                    TransportMetrics.instance.responseMessageSize.update(messageSize);
+                    TransportMetrics.instance.messages.get(message.type).mark();
+                    if (message.type == Type.ERROR)
+                        TransportMetrics.instance.errors.get(((ErrorMessage)message).error.code()).mark();
+
                     body = CBUtil.allocator.buffer(messageSize);
+
                     if (tracingId != null)
                     {
                         CBUtil.writeUUID(tracingId, body);

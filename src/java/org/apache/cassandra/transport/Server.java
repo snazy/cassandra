@@ -108,6 +108,8 @@ public class Server implements CassandraDaemon.Server
         EventNotifier notifier = new EventNotifier(this);
         StorageService.instance.register(notifier);
         MigrationManager.instance.register(notifier);
+
+        TransportMetrics.init();
     }
 
     public void stop()

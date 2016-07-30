@@ -21,6 +21,7 @@ package org.apache.cassandra.metrics;
 import java.util.concurrent.Callable;
 
 import com.codahale.metrics.Gauge;
+import com.codahale.metrics.Histogram;
 import com.codahale.metrics.Meter;
 
 import static org.apache.cassandra.metrics.CassandraMetricsRegistry.Metrics;
@@ -36,7 +37,7 @@ public class ClientMetrics
     {
     }
 
-    public void addCounter(String name, final Callable<Integer> provider)
+    public void addCounter(String name, Callable<Integer> provider)
     {
         Metrics.register(factory.createMetricName(name), (Gauge<Integer>) () -> {
             try
@@ -52,5 +53,17 @@ public class ClientMetrics
     public Meter addMeter(String name)
     {
         return Metrics.meter(factory.createMetricName(name));
+    }
+
+    public Histogram addHistogram(String name, Histogram histogram)
+    {
+        Metrics.register(factory.createMetricName(name), histogram);
+        return histogram;
+    }
+
+    public Meter addMeter(String name, Meter meter)
+    {
+        Metrics.register(factory.createMetricName(name), meter);
+        return meter;
     }
 }
