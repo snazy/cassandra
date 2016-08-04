@@ -109,7 +109,7 @@ public class PureJavaCrc32 implements Checksum {
 
     public void update(ByteBuffer b, int off, int len)
     {
-        if (b.hasArray())
+        if (!b.isDirect())
         {
             update(b.array(), b.arrayOffset() + off, len);
         }
