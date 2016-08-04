@@ -249,7 +249,7 @@ public class FBUtilities
         MessageDigest messageDigest = localMD5Digest.get();
         for (ByteBuffer block : data)
         {
-            if (block.hasArray())
+            if (!block.isDirect())
                 messageDigest.update(block.array(), block.arrayOffset() + block.position(), block.remaining());
             else
                 messageDigest.update(block.duplicate());

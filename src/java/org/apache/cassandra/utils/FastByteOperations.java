@@ -192,7 +192,7 @@ public class FastByteOperations
         {
             Object obj1;
             long offset1;
-            if (buffer1.hasArray())
+            if (!buffer1.isDirect())
             {
                 obj1 = buffer1.array();
                 offset1 = BYTE_ARRAY_BASE_OFFSET + buffer1.arrayOffset();
@@ -219,7 +219,7 @@ public class FastByteOperations
 
         public void copy(ByteBuffer src, int srcPosition, byte[] trg, int trgPosition, int length)
         {
-            if (src.hasArray())
+            if (!src.isDirect())
                 System.arraycopy(src.array(), src.arrayOffset() + srcPosition, trg, trgPosition, length);
             else
                 copy(null, srcPosition + theUnsafe.getLong(src, DIRECT_BUFFER_ADDRESS_OFFSET), trg, trgPosition, length);
@@ -229,7 +229,7 @@ public class FastByteOperations
         {
             Object src;
             long srcOffset;
-            if (srcBuf.hasArray())
+            if (!srcBuf.isDirect())
             {
                 src = srcBuf.array();
                 srcOffset = BYTE_ARRAY_BASE_OFFSET + srcBuf.arrayOffset();
@@ -244,7 +244,7 @@ public class FastByteOperations
 
         public static void copy(Object src, long srcOffset, ByteBuffer trgBuf, int trgPosition, int length)
         {
-            if (trgBuf.hasArray())
+            if (!trgBuf.isDirect())
                 copy(src, srcOffset, trgBuf.array(), trgBuf.arrayOffset() + trgPosition, length);
             else
                 copy(src, srcOffset, null, trgPosition + theUnsafe.getLong(trgBuf, DIRECT_BUFFER_ADDRESS_OFFSET), length);
@@ -285,7 +285,7 @@ public class FastByteOperations
             Object obj1;
             long offset1;
             int length1;
-            if (buffer1.hasArray())
+            if (!buffer1.isDirect())
             {
                 obj1 = buffer1.array();
                 offset1 = BYTE_ARRAY_BASE_OFFSET + buffer1.arrayOffset();
@@ -308,7 +308,7 @@ public class FastByteOperations
 
             int position = buffer.position();
             int limit = buffer.limit();
-            if (buffer.hasArray())
+            if (!buffer.isDirect())
             {
                 obj2 = buffer.array();
                 offset2 = BYTE_ARRAY_BASE_OFFSET + buffer.arrayOffset();
@@ -401,7 +401,7 @@ public class FastByteOperations
 
         public int compare(ByteBuffer buffer1, byte[] buffer2, int offset2, int length2)
         {
-            if (buffer1.hasArray())
+            if (!buffer1.isDirect())
                 return compare(buffer1.array(), buffer1.arrayOffset() + buffer1.position(), buffer1.remaining(),
                                buffer2, offset2, length2);
             return compare(buffer1, ByteBuffer.wrap(buffer2, offset2, length2));
@@ -425,7 +425,7 @@ public class FastByteOperations
 
         public void copy(ByteBuffer src, int srcPosition, byte[] trg, int trgPosition, int length)
         {
-            if (src.hasArray())
+            if (!src.isDirect())
             {
                 System.arraycopy(src.array(), src.arrayOffset() + srcPosition, trg, trgPosition, length);
                 return;
@@ -437,7 +437,7 @@ public class FastByteOperations
 
         public void copy(ByteBuffer src, int srcPosition, ByteBuffer trg, int trgPosition, int length)
         {
-            if (src.hasArray() && trg.hasArray())
+            if (!src.isDirect() && !trg.isDirect())
             {
                 System.arraycopy(src.array(), src.arrayOffset() + srcPosition, trg.array(), trg.arrayOffset() + trgPosition, length);
                 return;
