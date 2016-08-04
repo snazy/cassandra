@@ -358,7 +358,7 @@ public abstract class UnbufferedDataOutputStreamPlus extends DataOutputStreamPlu
     @Override
     public void write(ByteBuffer buf) throws IOException
     {
-        if (buf.hasArray())
+        if (!buf.isDirect())
         {
             write(buf.array(), buf.arrayOffset() + buf.position(), buf.remaining());
         }

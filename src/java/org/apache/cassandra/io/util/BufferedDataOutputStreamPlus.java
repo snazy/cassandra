@@ -135,7 +135,7 @@ public class BufferedDataOutputStreamPlus extends DataOutputStreamPlus
     @Override
     public void write(ByteBuffer toWrite) throws IOException
     {
-        if (toWrite.hasArray())
+        if (!toWrite.isDirect())
         {
             write(toWrite.array(), toWrite.arrayOffset() + toWrite.position(), toWrite.remaining());
         }

@@ -266,7 +266,7 @@ public class OHCProvider implements CacheProvider<RowCacheKey, IRowCacheEntry>
 
         public void write(ByteBuffer buffer) throws IOException
         {
-            if (buffer.hasArray())
+            if (!buffer.isDirect())
                 out.write(buffer.array(), buffer.arrayOffset() + buffer.position(), buffer.remaining());
             else
                 throw new UnsupportedOperationException("IMPLEMENT ME");
