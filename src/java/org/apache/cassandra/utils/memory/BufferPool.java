@@ -141,7 +141,7 @@ public class BufferPool
 
     public static void put(ByteBuffer buffer)
     {
-        if (!(DISABLED || buffer.hasArray()))
+        if (!(DISABLED || !buffer.isDirect()))
             localPool.get().put(buffer);
     }
 
@@ -576,7 +576,7 @@ public class BufferPool
 
         Chunk(ByteBuffer slab)
         {
-            assert !slab.hasArray();
+            assert slab.isDirect();
             this.slab = slab;
             this.baseAddress = MemoryUtil.getAddress(slab);
 
