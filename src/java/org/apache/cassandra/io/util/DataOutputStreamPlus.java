@@ -96,7 +96,7 @@ public abstract class DataOutputStreamPlus extends OutputStream implements DataO
             {
                 int toWrite = src.remaining();
 
-                if (src.hasArray())
+                if (!src.isDirect())
                 {
                     DataOutputStreamPlus.this.write(src.array(), src.arrayOffset() + src.position(), src.remaining());
                     src.position(src.limit());

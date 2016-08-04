@@ -134,7 +134,7 @@ public abstract class SSTable
      */
     public static DecoratedKey getMinimalKey(DecoratedKey key)
     {
-        return key.getKey().position() > 0 || key.getKey().hasRemaining() || !key.getKey().hasArray()
+        return key.getKey().position() > 0 || key.getKey().hasRemaining() || key.getKey().isDirect()
                                        ? new BufferDecoratedKey(key.getToken(), HeapAllocator.instance.clone(key.getKey()))
                                        : key;
     }
