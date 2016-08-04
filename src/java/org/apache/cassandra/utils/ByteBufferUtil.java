@@ -162,7 +162,7 @@ public class ByteBufferUtil
     public static byte[] getArray(ByteBuffer buffer)
     {
         int length = buffer.remaining();
-        if (buffer.hasArray())
+        if (!buffer.isDirect())
         {
             int boff = buffer.arrayOffset() + buffer.position();
             return Arrays.copyOfRange(buffer.array(), boff, boff + length);
@@ -242,7 +242,7 @@ public class ByteBufferUtil
 
         ByteBuffer clone = ByteBuffer.allocate(buffer.remaining());
 
-        if (buffer.hasArray())
+        if (!buffer.isDirect())
         {
             System.arraycopy(buffer.array(), buffer.arrayOffset() + buffer.position(), clone.array(), 0, buffer.remaining());
         }
@@ -588,7 +588,7 @@ public class ByteBufferUtil
     /** trims size of bytebuffer to exactly number of bytes in it, to do not hold too much memory */
     public static ByteBuffer minimalBufferFor(ByteBuffer buf)
     {
-        return buf.capacity() > buf.remaining() || !buf.hasArray() ? ByteBuffer.wrap(getArray(buf)) : buf;
+        return buf.isDirect() || buf.capacity() > buf.remaining() ? ByteBuffer.wrap(getArray(buf)) : buf;
     }
 
     // Doesn't change bb position

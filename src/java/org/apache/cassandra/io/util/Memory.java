@@ -215,7 +215,7 @@ public class Memory implements AutoCloseable
             return;
 
         checkBounds(memoryOffset, memoryOffset + buffer.remaining());
-        if (buffer.hasArray())
+        if (!buffer.isDirect())
         {
             setBytes(memoryOffset, buffer.array(), buffer.arrayOffset() + buffer.position(), buffer.remaining());
         }
