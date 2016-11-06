@@ -20,8 +20,9 @@ package org.apache.cassandra.metrics;
 import java.net.InetAddress;
 import java.util.Map.Entry;
 
+import com.google.common.util.concurrent.MoreExecutors;
+
 import com.codahale.metrics.Counter;
-import com.github.benmanes.caffeine.cache.CacheLoader;
 import com.github.benmanes.caffeine.cache.Caffeine;
 import com.github.benmanes.caffeine.cache.LoadingCache;
 
@@ -42,22 +43,14 @@ public class HintedHandoffMetrics
     private static final MetricNameFactory factory = new DefaultNameFactory("HintedHandOffManager");
 
     /** Total number of hints which are not stored, This is not a cache. */
-    private final LoadingCache<InetAddress, DifferencingCounter> notStored = Caffeine.newBuilder().build(new CacheLoader<InetAddress, DifferencingCounter>()
-    {
-        public DifferencingCounter load(InetAddress address)
-        {
-            return new DifferencingCounter(address);
-        }
-    });
+    private final LoadingCache<InetAddress, DifferencingCounter> notStored = Caffeine.newBuilder()
+         .executor(MoreExecutors.directExecutor())
+         .build(DifferencingCounter::new);
 
     /** Total number of hints that have been created, This is not a cache. */
-    private final LoadingCache<InetAddress, Counter> createdHintCounts = Caffeine.newBuilder().build(new CacheLoader<InetAddress, Counter>()
-    {
-        public Counter load(InetAddress address)
-        {
-            return Metrics.counter(factory.createMetricName("Hints_created-" + address.getHostAddress().replace(':', '.')));
-        }
-    });
+    private final LoadingCache<InetAddress, Counter> createdHintCounts = Caffeine.newBuilder()
+         .executor(MoreExecutors.directExecutor())
+         .build(address -> Metrics.counter(factory.createMetricName("Hints_created-" + address.getHostAddress().replace(':', '.'))));
 
     public void incrCreatedHints(InetAddress address)
     {

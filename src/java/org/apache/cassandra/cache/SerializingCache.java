@@ -32,6 +32,8 @@ import org.slf4j.LoggerFactory;
 import java.io.IOException;
 import java.util.Iterator;
 
+import com.google.common.util.concurrent.MoreExecutors;
+
 /**
  * Serializes cache values off-heap.
  */
@@ -49,6 +51,7 @@ public class SerializingCache<K, V> implements ICache<K, V>
         this.cache = Caffeine.newBuilder()
                    .weigher(weigher)
                    .maximumWeight(capacity)
+                   .executor(MoreExecutors.directExecutor())
                    .removalListener((key, mem, cause) -> {
                        if (cause.wasEvicted()) {
                            mem.unreference();

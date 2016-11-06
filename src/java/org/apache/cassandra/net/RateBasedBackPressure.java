@@ -26,6 +26,7 @@ import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.ImmutableMap;
+import com.google.common.util.concurrent.MoreExecutors;
 import com.google.common.util.concurrent.RateLimiter;
 
 import org.slf4j.Logger;
@@ -62,7 +63,10 @@ public class RateBasedBackPressure implements BackPressureStrategy<RateBasedBack
     protected final long windowSize;
 
     private final Cache<Set<RateBasedBackPressureState>, IntervalRateLimiter> rateLimiters =
-            Caffeine.newBuilder().expireAfterAccess(1, TimeUnit.HOURS).build();
+            Caffeine.newBuilder()
+                    .expireAfterAccess(1, TimeUnit.HOURS)
+                    .executor(MoreExecutors.directExecutor())
+                    .build();
 
     enum Flow
     {

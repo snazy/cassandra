@@ -21,6 +21,8 @@ import static com.google.common.base.Preconditions.checkState;
 
 import java.util.Iterator;
 
+import com.google.common.util.concurrent.MoreExecutors;
+
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
 import com.github.benmanes.caffeine.cache.Policy.Eviction;
@@ -52,6 +54,7 @@ public class CaffeineCache<K extends IMeasurableMemory, V extends IMeasurableMem
         Cache<K, V> cache = Caffeine.newBuilder()
                 .maximumWeight(weightedCapacity)
                 .weigher(weigher)
+                .executor(MoreExecutors.directExecutor())
                 .build();
         return new CaffeineCache<>(cache);
     }
