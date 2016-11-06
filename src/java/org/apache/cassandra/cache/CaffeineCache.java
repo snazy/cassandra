@@ -19,13 +19,10 @@ package org.apache.cassandra.cache;
 
 import static com.google.common.base.Preconditions.checkState;
 
-import java.util.Collections;
 import java.util.Iterator;
-import java.util.OptionalLong;
 
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
-import com.github.benmanes.caffeine.cache.Policy;
 import com.github.benmanes.caffeine.cache.Policy.Eviction;
 import com.github.benmanes.caffeine.cache.Weigher;
 
