@@ -28,7 +28,8 @@ import java.util.Locale;
 import java.util.Set;
 import java.util.concurrent.CompletionException;
 
-import com.github.benmanes.caffeine.cache.CacheLoader;
+import com.google.common.util.concurrent.MoreExecutors;
+
 import com.github.benmanes.caffeine.cache.Caffeine;
 import com.github.benmanes.caffeine.cache.LoadingCache;
 
@@ -50,13 +51,8 @@ public class StopWordFactory
             "pl","pt","ro","ru","sv"));
 
     private static final LoadingCache<String, Set<String>> STOP_WORDS_CACHE = Caffeine.newBuilder()
-            .build(new CacheLoader<String, Set<String>>()
-            {
-                public Set<String> load(String s)
-                {
-                    return getStopWordsFromResource(s);
-                }
-            });
+            .executor(MoreExecutors.directExecutor())
+            .build(StopWordFactory::getStopWordsFromResource);
 
     public static Set<String> getStopWordsForLanguage(Locale locale)
     {

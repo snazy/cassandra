@@ -28,6 +28,8 @@ import javax.management.MBeanServer;
 import javax.management.MalformedObjectNameException;
 import javax.management.ObjectName;
 
+import com.google.common.util.concurrent.MoreExecutors;
+
 import com.github.benmanes.caffeine.cache.Caffeine;
 import com.github.benmanes.caffeine.cache.LoadingCache;
 import org.slf4j.Logger;
@@ -169,6 +171,7 @@ public class AuthCache<K, V> implements AuthCacheMBean
               .refreshAfterWrite(getUpdateInterval(), TimeUnit.MILLISECONDS)
               .expireAfterWrite(getValidity(), TimeUnit.MILLISECONDS)
               .maximumSize(getMaxEntries())
+              .executor(MoreExecutors.directExecutor())
               .build(loadFunction::apply);
         }
   

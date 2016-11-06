@@ -32,6 +32,7 @@ import com.google.common.base.Predicate;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.Iterators;
 import com.google.common.primitives.Ints;
+import com.google.common.util.concurrent.MoreExecutors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -85,6 +86,7 @@ public class QueryProcessor implements QueryHandler
     static
     {
         preparedStatements = Caffeine.newBuilder()
+                             .executor(MoreExecutors.directExecutor())
                              .maximumWeight(capacityToBytes(DatabaseDescriptor.getPreparedStatementsCacheSizeMB()))
                              .weigher(QueryProcessor::measure)
                              .removalListener((md5Digest, prepared, cause) -> {
@@ -95,6 +97,7 @@ public class QueryProcessor implements QueryHandler
                              }).build();
 
         thriftPreparedStatements = Caffeine.newBuilder()
+                                   .executor(MoreExecutors.directExecutor())
                                    .maximumWeight(capacityToBytes(DatabaseDescriptor.getThriftPreparedStatementsCacheSizeMB()))
                                    .weigher(QueryProcessor::measure)
                                    .removalListener((integer, prepared, cause) -> {

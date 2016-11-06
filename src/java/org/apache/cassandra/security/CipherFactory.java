@@ -31,8 +31,8 @@ import javax.crypto.NoSuchPaddingException;
 import javax.crypto.spec.IvParameterSpec;
 
 import com.google.common.annotations.VisibleForTesting;
+import com.google.common.util.concurrent.MoreExecutors;
 
-import com.github.benmanes.caffeine.cache.CacheLoader;
 import com.github.benmanes.caffeine.cache.Caffeine;
 import com.github.benmanes.caffeine.cache.LoadingCache;
 
@@ -80,20 +80,17 @@ public class CipherFactory
 
         cache = Caffeine.newBuilder() // by default cache is unbounded
                 .maximumSize(64) // a value large enough that we should never even get close (so nothing gets evicted)
+                .executor(MoreExecutors.directExecutor())
                 .removalListener((key, value, cause) ->
                 {
                     // maybe reload the key? (to avoid the reload being on the user's dime)
                     logger.info("key {} removed from cipher key cache", key);
                 })
-                .build(new CacheLoader<String, Key>()
-                {
-                    @Override
-                    public Key load(String alias) throws Exception
-                    {
-                        logger.info("loading secret key for alias {}", alias);
-                        return keyProvider.getSecretKey(alias);
-                    }
-                });
+                .build(alias ->
+                       {
+                           logger.info("loading secret key for alias {}", alias);
+                           return keyProvider.getSecretKey(alias);
+                       });
     }
 
     public Cipher getEncryptor(String transformation, String keyAlias) throws IOException
