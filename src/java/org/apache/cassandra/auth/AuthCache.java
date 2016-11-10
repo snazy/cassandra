@@ -174,7 +174,8 @@ public class AuthCache<K, V> implements AuthCacheMBean
               .executor(MoreExecutors.directExecutor())
               .build(loadFunction::apply);
         }
-  
+
+        // Always set as manditory
         cache.policy().refreshAfterWrite().ifPresent(policy ->
             policy.setExpiresAfter(getUpdateInterval(), TimeUnit.MILLISECONDS));
         cache.policy().expireAfterWrite().ifPresent(policy ->
