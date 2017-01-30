@@ -126,9 +126,7 @@ public class OHCProvider implements CacheProvider<RowCacheKey, IRowCacheEntry>
         private static KeySerializer instance = new KeySerializer();
         public void serialize(RowCacheKey rowCacheKey, ByteBuffer buf)
         {
-            @SuppressWarnings("resource")
-            DataOutputBuffer dataOutput = new DataOutputBufferFixed(buf);
-            try
+            try (DataOutputBuffer dataOutput = new DataOutputBufferFixed(buf))
             {
                 rowCacheKey.tableId.serialize(dataOutput);
                 dataOutput.writeUTF(rowCacheKey.indexName != null ? rowCacheKey.indexName : "");
@@ -143,11 +141,9 @@ public class OHCProvider implements CacheProvider<RowCacheKey, IRowCacheEntry>
 
         public RowCacheKey deserialize(ByteBuffer buf)
         {
-            @SuppressWarnings("resource")
-            DataInputBuffer dataInput = new DataInputBuffer(buf, false);
             TableId tableId = null;
             String indexName = null;
-            try
+            try (DataInputBuffer dataInput = new DataInputBuffer(buf, false))
             {
                 tableId = TableId.deserialize(dataInput);
                 indexName = dataInput.readUTF();
