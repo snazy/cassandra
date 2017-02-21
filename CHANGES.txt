@@ -1,4 +1,5 @@
 4.0
+ * Remove config option index_interval (CASSANDRA-10671)
  * Don't flush sstables when streaming for incremental repair (CASSANDRA-13226)
  * Remove unused method (CASSANDRA-13227)
  * Fix minor bugs related to #9143 (CASSANDRA-13217)
