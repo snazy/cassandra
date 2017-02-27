@@ -888,9 +888,6 @@ public final class MessagingService implements MessagingServiceMBean
      */
     public int setVersion(InetAddress endpoint, int version)
     {
-        // We can't talk to someone from the future
-        version = Math.min(version, current_version);
-
         logger.trace("Setting version {} for {}", version, endpoint);
 
         if (version < VERSION_22)
@@ -911,7 +908,7 @@ public final class MessagingService implements MessagingServiceMBean
     {
         logger.trace("Resetting version for {}", endpoint);
         Integer removed = versions.remove(endpoint);
-        if (removed != null && removed <= VERSION_30)
+        if (removed != null && Math.min(removed, current_version) <= VERSION_30)
             refreshAllNodeMinVersions();
     }
 
@@ -936,6 +933,10 @@ public final class MessagingService implements MessagingServiceMBean
         allNodesAtLeast30 = !anyNodeLowerThan30;
     }
 
+    /**
+     * Returns the messaging-version as announced by the given node but capped
+     * to the min of the version as announced by the node and {@link #current_version}.
+     */
     public int getVersion(InetAddress endpoint)
     {
         Integer v = versions.get(endpoint);
@@ -954,6 +955,9 @@ public final class MessagingService implements MessagingServiceMBean
         return getVersion(InetAddress.getByName(endpoint));
     }
 
+    /**
+     * Returns the messaging-version exactly as announced by the given endpoint.
+     */
     public int getRawVersion(InetAddress endpoint)
     {
         Integer v = versions.get(endpoint);
