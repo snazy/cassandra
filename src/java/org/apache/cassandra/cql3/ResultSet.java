@@ -343,7 +343,7 @@ public class ResultSet
                 MD5Digest resultMetadataId = null;
                 if (flags.contains(Flag.METADATA_CHANGED))
                 {
-                    assert version.isGreaterOrEqualTo(ProtocolVersion.V5) : "MetadataChanged flag is supported starting from v5";
+                    assert version.isGreaterOrEqualTo(ProtocolVersion.V5) : "MetadataChanged flag is not supported before native protocol v5";
                     assert !flags.contains(Flag.NO_METADATA) : "MetadataChanged and NoMetadata are mutually exclusive flags";
 
                     resultMetadataId = MD5Digest.wrap(CBUtil.readBytes(body));
