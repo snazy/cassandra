@@ -88,18 +88,36 @@ public class PreparedStatementsTest extends CQLTester
     }
 
     @Test
-    public void testInvalidatePreparedStatementOnAlterV5() throws Throwable
+    public void testInvalidatePreparedStatementOnAlterV4() throws Throwable
     {
-        testInvalidatePreparedStatementOnAlter(ProtocolVersion.V5, true);
+        testInvalidatePreparedStatementOnAlter(ProtocolVersion.V4, false, true);
     }
 
     @Test
-    public void testInvalidatePreparedStatementOnAlterV4() throws Throwable
+    public void testInvalidatePreparedStatementOnAlterV5() throws Throwable
     {
-        testInvalidatePreparedStatementOnAlter(ProtocolVersion.V4, false);
+        testInvalidatePreparedStatementOnAlter(ProtocolVersion.V5, true, true);
     }
 
-    private void testInvalidatePreparedStatementOnAlter(ProtocolVersion version, boolean supportsMetadataChange) throws Throwable
+    @Test
+    public void testInvalidatePreparedStatementOnAlterUnchangedMetadataV4() throws Throwable
+    {
+        testInvalidatePreparedStatementOnAlter(ProtocolVersion.V4, false, false);
+    }
+
+    @Test
+    public void testInvalidatePreparedStatementOnAlterUnchangedMetadataV5() throws Throwable
+    {
+        testInvalidatePreparedStatementOnAlter(ProtocolVersion.V5, true, false);
+    }
+
+    /**
+     * @param supportsMetadataChange whether the protocol version supports metadata change
+     * @param selectStar whether a "SELECT * FROM ..." query is used - i.e. the resultset metadata must change and
+     *                   return the added column. If false, select just the columns a,b,c - resultset metadata
+     *                   must not change and not return the added column.
+     */
+    private void testInvalidatePreparedStatementOnAlter(ProtocolVersion version, boolean supportsMetadataChange, boolean selectStar) throws Throwable
     {
         requireNetwork();
         Session session = sessions.get(version);
@@ -110,7 +128,9 @@ public class PreparedStatementsTest extends CQLTester
         session.execute(createKsStatement);
         session.execute(createTableStatement);
 
-        PreparedStatement preparedSelect = session.prepare("SELECT * FROM " + KEYSPACE + ".qp_cleanup");
+        PreparedStatement preparedSelect = session.prepare("SELECT " +
+                                                           (selectStar ? "*" : "a, b, c") +
+                                                           " FROM " + KEYSPACE + ".qp_cleanup");
         session.execute("INSERT INTO " + KEYSPACE + ".qp_cleanup (a, b, c) VALUES (?, ?, ?);",
                         1, 2, 3);
         session.execute("INSERT INTO " + KEYSPACE + ".qp_cleanup (a, b, c) VALUES (?, ?, ?);",
@@ -161,7 +181,7 @@ public class PreparedStatementsTest extends CQLTester
         assertEquals(1, row1.getInt("a"));
         assertEquals(2, row1.getInt("b"));
         assertEquals(3, row1.getInt("c"));
-        if (supportsMetadataChange)
+        if (supportsMetadataChange && selectStar)
         {
             assertEquals(4, row1.getColumnDefinitions().size());
             assertEquals(0, row1.getInt("d"));
@@ -175,7 +195,7 @@ public class PreparedStatementsTest extends CQLTester
         assertEquals(2, row2.getInt("a"));
         assertEquals(3, row2.getInt("b"));
         assertEquals(4, row2.getInt("c"));
-        if (supportsMetadataChange)
+        if (supportsMetadataChange && selectStar)
         {
             assertEquals(4, row2.getColumnDefinitions().size());
             assertEquals(0, row2.getInt("d"));
@@ -189,7 +209,7 @@ public class PreparedStatementsTest extends CQLTester
         assertEquals(3, row3.getInt("a"));
         assertEquals(4, row3.getInt("b"));
         assertEquals(5, row3.getInt("c"));
-        if (supportsMetadataChange)
+        if (supportsMetadataChange && selectStar)
         {
             assertEquals(4, row3.getColumnDefinitions().size());
             assertEquals(6, row3.getInt("d"));
@@ -198,90 +218,6 @@ public class PreparedStatementsTest extends CQLTester
         {
             assertEquals(3, row3.getColumnDefinitions().size());
         }
-        session.execute(dropKsStatement);
-    }
-
-    @Test
-    public void testInvalidatePreparedStatementOnAlterUnchangedMetadataV4() throws Throwable
-    {
-        testInvalidatePreparedStatementOnAlterUnchangedMetadata(ProtocolVersion.V4);
-    }
-
-    @Test
-    public void testInvalidatePreparedStatementOnAlterUnchangedMetadataV5() throws Throwable
-    {
-        testInvalidatePreparedStatementOnAlterUnchangedMetadata(ProtocolVersion.V5);
-    }
-
-    private void testInvalidatePreparedStatementOnAlterUnchangedMetadata(ProtocolVersion version) throws Throwable
-    {
-        Session session = sessions.get(version);
-        String createTableStatement = "CREATE TABLE IF NOT EXISTS " + KEYSPACE + ".qp_cleanup (a int PRIMARY KEY, b int, c int);";
-        String alterTableStatement = "ALTER TABLE " + KEYSPACE + ".qp_cleanup ADD d int;";
-
-        session.execute(dropKsStatement);
-        session.execute(createKsStatement);
-        session.execute(createTableStatement);
-
-        PreparedStatement preparedSelect = session.prepare("SELECT a, b, c FROM " + KEYSPACE + ".qp_cleanup");
-        session.execute("INSERT INTO " + KEYSPACE + ".qp_cleanup (a, b, c) VALUES (?, ?, ?);",
-                        1, 2, 3);
-        session.execute("INSERT INTO " + KEYSPACE + ".qp_cleanup (a, b, c) VALUES (?, ?, ?);",
-                        2, 3, 4);
-
-        Iterator<Row> resultSet = session.execute(preparedSelect.bind()).all().iterator();
-        Row row1 = resultSet.next();
-        assertEquals(1, row1.getInt("a"));
-        assertEquals(2, row1.getInt("b"));
-        assertEquals(3, row1.getInt("c"));
-
-        Row row2 = resultSet.next();
-        assertEquals(2, row2.getInt("a"));
-        assertEquals(3, row2.getInt("b"));
-        assertEquals(4, row2.getInt("c"));
-
-        ExecutorService executor = Executors.newFixedThreadPool(8);
-        List<Future<Object>> futures = new ArrayList<>();
-        AtomicBoolean stopIt = new AtomicBoolean();
-        for (int i = 0; i < 8; i++)
-        {
-            futures.add(executor.submit(() -> {
-                while (!stopIt.get())
-                {
-                    session.execute(preparedSelect.bind()).all();
-                }
-                return null;
-            }));
-        }
-
-        session.execute(alterTableStatement);
-
-        Thread.sleep(500);
-        stopIt.set(true);
-        for (Future<Object> future : futures)
-        {
-            Uninterruptibles.getUninterruptibly(future, 500, TimeUnit.MILLISECONDS);
-        }
-        executor.shutdown();
-
-        session.execute("INSERT INTO " + KEYSPACE + ".qp_cleanup (a, b, c, d) VALUES (?, ?, ?, ?);",
-                        3, 4, 5, 6);
-        resultSet = session.execute(preparedSelect.bind()).all().iterator();
-
-        row1 = resultSet.next();
-        assertEquals(1, row1.getInt("a"));
-        assertEquals(2, row1.getInt("b"));
-        assertEquals(3, row1.getInt("c"));
-
-        row2 = resultSet.next();
-        assertEquals(2, row2.getInt("a"));
-        assertEquals(3, row2.getInt("b"));
-        assertEquals(4, row2.getInt("c"));
-
-        Row row3 = resultSet.next();
-        assertEquals(3, row3.getInt("a"));
-        assertEquals(4, row3.getInt("b"));
-        assertEquals(5, row3.getInt("c"));
         session.execute(dropKsStatement);
     }
 
