@@ -121,11 +121,13 @@ public class PreparedStatementsTest extends CQLTester
         assertEquals(1, row1.getInt("a"));
         assertEquals(2, row1.getInt("b"));
         assertEquals(3, row1.getInt("c"));
+        assertEquals(3, row1.getColumnDefinitions().size());
 
         Row row2 = resultSet.next();
         assertEquals(2, row2.getInt("a"));
         assertEquals(3, row2.getInt("b"));
         assertEquals(4, row2.getInt("c"));
+        assertEquals(3, row2.getColumnDefinitions().size());
 
         ExecutorService executor = Executors.newFixedThreadPool(8);
         List<Future<Object>> futures = new ArrayList<>();
@@ -160,21 +162,42 @@ public class PreparedStatementsTest extends CQLTester
         assertEquals(2, row1.getInt("b"));
         assertEquals(3, row1.getInt("c"));
         if (supportsMetadataChange)
+        {
+            assertEquals(4, row1.getColumnDefinitions().size());
             assertEquals(0, row1.getInt("d"));
+        }
+        else
+        {
+            assertEquals(3, row1.getColumnDefinitions().size());
+        }
 
         row2 = resultSet.next();
         assertEquals(2, row2.getInt("a"));
         assertEquals(3, row2.getInt("b"));
         assertEquals(4, row2.getInt("c"));
         if (supportsMetadataChange)
+        {
+            assertEquals(4, row2.getColumnDefinitions().size());
             assertEquals(0, row2.getInt("d"));
+        }
+        else
+        {
+            assertEquals(3, row2.getColumnDefinitions().size());
+        }
 
         Row row3 = resultSet.next();
         assertEquals(3, row3.getInt("a"));
         assertEquals(4, row3.getInt("b"));
         assertEquals(5, row3.getInt("c"));
         if (supportsMetadataChange)
+        {
+            assertEquals(4, row3.getColumnDefinitions().size());
             assertEquals(6, row3.getInt("d"));
+        }
+        else
+        {
+            assertEquals(3, row3.getColumnDefinitions().size());
+        }
         session.execute(dropKsStatement);
     }
 
