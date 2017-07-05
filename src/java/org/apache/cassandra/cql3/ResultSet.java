@@ -18,6 +18,8 @@
 package org.apache.cassandra.cql3;
 
 import java.nio.ByteBuffer;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.util.*;
 
 import io.netty.buffer.ByteBuf;
@@ -318,16 +320,19 @@ public class ResultSet
 
         public static MD5Digest computeResultMetadataId(List<ColumnSpecification> columnSpecifications)
         {
-            StringBuilder sb = new StringBuilder();
+            MessageDigest md = FBUtilities.threadLocalMD5Digest();
             if (columnSpecifications != null)
             {
                 for (ColumnSpecification cs : columnSpecifications)
                 {
-                    sb.append(cs.name.toString());
-                    sb.append(cs.type.toString());
+                    md.update(cs.name.bytes.duplicate());
+                    md.update((byte) 0);
+                    md.update(cs.type.toString().getBytes(StandardCharsets.UTF_8));
+                    md.update((byte) 0);
+                    md.update((byte) 0);
                 }
             }
-            return MD5Digest.compute(sb.toString());
+            return MD5Digest.wrap(md.digest());
         }
 
         private static class Codec implements CBCodec<ResultMetadata>
