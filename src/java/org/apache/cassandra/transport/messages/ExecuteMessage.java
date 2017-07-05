@@ -164,10 +164,26 @@ public class ExecuteMessage extends Message.Request
             {
                 ResultMessage.Rows rows = (ResultMessage.Rows) response;
 
-                if (!prepared.resultMetadataId.equals(resultMetadataId))
-                    rows.result.metadata.setMetadataChanged();
-                else if (options.skipMetadata())
-                    rows.result.metadata.setSkipMetadata();
+                if (options.getProtocolVersion().isGreaterOrEqualTo(ProtocolVersion.V5))
+                {
+                    if (!prepared.resultMetadataId.equals(resultMetadataId))
+                        // Need to check the prepared statement result-metadata ID against the one passed in via
+                        // the EXECUTE message (SelectStatement)
+                        rows.result.metadata.setMetadataChanged();
+                    else if (!rows.result.metadata.getResultMetadataId().equals(resultMetadataId))
+                        // Need to check the rows-result result-metadata ID against the one passed in via the
+                        // EXECUTE message (ModificationStatement/BatchStatement using CAS)
+                        rows.result.metadata.setDifferentMetadata();
+                    else if (options.skipMetadata())
+                        rows.result.metadata.setSkipMetadata();
+                }
+                else
+                {
+                    if (!rows.result.metadata.getResultMetadataId().equals(prepared.resultMetadataId))
+                        rows.result.metadata.setDifferentMetadata();
+                    else if (options.skipMetadata())
+                        rows.result.metadata.setSkipMetadata();
+                }
             }
 
             if (tracingId != null)

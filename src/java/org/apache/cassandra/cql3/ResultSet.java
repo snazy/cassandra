@@ -193,6 +193,7 @@ public class ResultSet
         private final int columnCount;
         private PagingState pagingState;
         private final MD5Digest resultMetadataId;
+        private boolean differentMetadata;
 
         public ResultMetadata(List<ColumnSpecification> names)
         {
@@ -260,6 +261,11 @@ public class ResultSet
         public void setMetadataChanged()
         {
             flags.add(Flag.METADATA_CHANGED);
+        }
+
+        public void setDifferentMetadata()
+        {
+            differentMetadata = true;
         }
 
         public MD5Digest getResultMetadataId()
@@ -387,11 +393,16 @@ public class ResultSet
             public void encode(ResultMetadata m, ByteBuf dest, ProtocolVersion version)
             {
                 // METADATA_CHANGED is available from v5, in previous versions it translates to NO_METADATA flag,
-                // as this flag can only be used when client supplies metadata.
-                if (version.isSmallerThan(ProtocolVersion.V5) && m.flags.contains(Flag.METADATA_CHANGED))
+                // as this flag can only be used when client supplies metadata, but only if the metadata doesn't
+                // vary (the CAS [applied]==false case with the affected columns).
+                if (version.isSmallerThan(ProtocolVersion.V5)
+                    && m.flags.contains(Flag.METADATA_CHANGED))
                 {
                     m.flags.remove(Flag.METADATA_CHANGED);
-                    m.flags.add(Flag.NO_METADATA);
+                    if (!m.differentMetadata)
+                    {
+                        m.flags.add(Flag.NO_METADATA);
+                    }
                 }
 
                 boolean noMetadata = m.flags.contains(Flag.NO_METADATA);

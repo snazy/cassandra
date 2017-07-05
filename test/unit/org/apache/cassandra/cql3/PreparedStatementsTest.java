@@ -88,27 +88,27 @@ public class PreparedStatementsTest extends CQLTester
     }
 
     @Test
-    public void testInvalidatePreparedStatementOnAlterV4() throws Throwable
+    public void testResultMetadataUpdateSelectStarOnAlterV4() throws Throwable
     {
-        testInvalidatePreparedStatementOnAlter(ProtocolVersion.V4, false, true);
+        testResultMetadataUpdate(ProtocolVersion.V4, false, true);
     }
 
     @Test
-    public void testInvalidatePreparedStatementOnAlterV5() throws Throwable
+    public void testResultMetadataUpdateSelectStarOnAlterV5() throws Throwable
     {
-        testInvalidatePreparedStatementOnAlter(ProtocolVersion.V5, true, true);
+        testResultMetadataUpdate(ProtocolVersion.V5, true, true);
     }
 
     @Test
-    public void testInvalidatePreparedStatementOnAlterUnchangedMetadataV4() throws Throwable
+    public void testNoResultMetadataUpdateSelectAbcOnAlterV4() throws Throwable
     {
-        testInvalidatePreparedStatementOnAlter(ProtocolVersion.V4, false, false);
+        testResultMetadataUpdate(ProtocolVersion.V4, false, false);
     }
 
     @Test
-    public void testInvalidatePreparedStatementOnAlterUnchangedMetadataV5() throws Throwable
+    public void testNoResultMetadataUpdateSelectAbcOnAlterV5() throws Throwable
     {
-        testInvalidatePreparedStatementOnAlter(ProtocolVersion.V5, true, false);
+        testResultMetadataUpdate(ProtocolVersion.V5, true, false);
     }
 
     /**
@@ -117,7 +117,7 @@ public class PreparedStatementsTest extends CQLTester
      *                   return the added column. If false, select just the columns a,b,c - resultset metadata
      *                   must not change and not return the added column.
      */
-    private void testInvalidatePreparedStatementOnAlter(ProtocolVersion version, boolean supportsMetadataChange, boolean selectStar) throws Throwable
+    private void testResultMetadataUpdate(ProtocolVersion version, boolean supportsMetadataChange, boolean selectStar) throws Throwable
     {
         requireNetwork();
         Session session = sessions.get(version);

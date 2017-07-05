@@ -25,11 +25,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import org.apache.cassandra.auth.Permission;
-import org.apache.cassandra.schema.ColumnMetadata;
-import org.apache.cassandra.schema.Schema;
-import org.apache.cassandra.schema.TableMetadata;
-import org.apache.cassandra.schema.ColumnMetadata.Raw;
-import org.apache.cassandra.schema.ViewMetadata;
 import org.apache.cassandra.cql3.*;
 import org.apache.cassandra.cql3.conditions.ColumnCondition;
 import org.apache.cassandra.cql3.conditions.ColumnConditions;
@@ -46,6 +41,8 @@ import org.apache.cassandra.db.partitions.*;
 import org.apache.cassandra.db.rows.RowIterator;
 import org.apache.cassandra.db.view.View;
 import org.apache.cassandra.exceptions.*;
+import org.apache.cassandra.schema.*;
+import org.apache.cassandra.schema.ColumnMetadata.Raw;
 import org.apache.cassandra.service.ClientState;
 import org.apache.cassandra.service.QueryState;
 import org.apache.cassandra.service.StorageProxy;
@@ -416,6 +413,13 @@ public abstract class ModificationStatement implements CQLStatement
         return !conditions.isEmpty();
     }
 
+    public ResultSet.ResultMetadata getResultMetadata()
+    {
+        return hasConditions()
+               ? casSuccessResultMetadata()
+               : ResultSet.ResultMetadata.EMPTY;
+    }
+
     public ResultMessage execute(QueryState queryState, QueryOptions options, long queryStartNanoTime)
     throws RequestExecutionException, RequestValidationException
     {
@@ -495,17 +499,27 @@ public abstract class ModificationStatement implements CQLStatement
         return buildCasResultSet(keyspace(), columnFamily(), partition, getColumnsWithConditions(), false, options);
     }
 
+    private ResultSet.ResultMetadata casSuccessResultMetadata()
+    {
+        return casSuccessResultMetadata(keyspace(), columnFamily());
+    }
+
     public static ResultSet buildCasResultSet(String ksName, String tableName, RowIterator partition, Iterable<ColumnMetadata> columnsWithConditions, boolean isBatch, QueryOptions options)
     throws InvalidRequestException
     {
         boolean success = partition == null;
 
-        ColumnSpecification spec = new ColumnSpecification(ksName, tableName, CAS_RESULT_COLUMN, BooleanType.instance);
-        ResultSet.ResultMetadata metadata = new ResultSet.ResultMetadata(Collections.singletonList(spec));
+        ResultSet.ResultMetadata metadata = casSuccessResultMetadata(ksName, tableName);
         List<List<ByteBuffer>> rows = Collections.singletonList(Collections.singletonList(BooleanType.instance.decompose(success)));
 
         ResultSet rs = new ResultSet(metadata, rows);
         return success ? rs : merge(rs, buildCasFailureResultSet(partition, columnsWithConditions, isBatch, options));
+    }
+
+    static ResultSet.ResultMetadata casSuccessResultMetadata(String ksName, String tableName)
+    {
+        ColumnSpecification spec = new ColumnSpecification(ksName, tableName, CAS_RESULT_COLUMN, BooleanType.instance);
+        return new ResultSet.ResultMetadata(Collections.singletonList(spec));
     }
 
     private static ResultSet merge(ResultSet left, ResultSet right)

@@ -332,6 +332,18 @@ public class BatchStatement implements CQLStatement
         }
     }
 
+    public ResultSet.ResultMetadata getResultMetadata()
+    {
+        return hasConditions
+               ? casSuccessResultMetadata()
+               : ResultSet.ResultMetadata.EMPTY;
+    }
+
+    private ResultSet.ResultMetadata casSuccessResultMetadata()
+    {
+        TableMetadata table = statements.get(0).metadata();
+        return ModificationStatement.casSuccessResultMetadata(table.keyspace, table.name);
+    }
 
     public ResultMessage execute(QueryState queryState, QueryOptions options, long queryStartNanoTime) throws RequestExecutionException, RequestValidationException
     {
