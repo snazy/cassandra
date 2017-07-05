@@ -17,8 +17,16 @@
  */
 package org.apache.cassandra.cql3;
 
+import java.util.ArrayList;
 import java.util.Iterator;
+import java.util.List;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 
+import com.google.common.util.concurrent.Uninterruptibles;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -80,18 +88,18 @@ public class PreparedStatementsTest extends CQLTester
     }
 
     @Test
-    public void testInvalidatePreparedStatementOnAlterV5()
+    public void testInvalidatePreparedStatementOnAlterV5() throws Throwable
     {
         testInvalidatePreparedStatementOnAlter(ProtocolVersion.V5, true);
     }
 
     @Test
-    public void testInvalidatePreparedStatementOnAlterV4()
+    public void testInvalidatePreparedStatementOnAlterV4() throws Throwable
     {
         testInvalidatePreparedStatementOnAlter(ProtocolVersion.V4, false);
     }
 
-    private void testInvalidatePreparedStatementOnAlter(ProtocolVersion version, boolean supportsMetadataChange)
+    private void testInvalidatePreparedStatementOnAlter(ProtocolVersion version, boolean supportsMetadataChange) throws Throwable
     {
         requireNetwork();
         Session session = sessions.get(version);
@@ -119,7 +127,30 @@ public class PreparedStatementsTest extends CQLTester
         assertEquals(3, row2.getInt("b"));
         assertEquals(4, row2.getInt("c"));
 
+        ExecutorService executor = Executors.newFixedThreadPool(8);
+        List<Future<Object>> futures = new ArrayList<>();
+        AtomicBoolean stopIt = new AtomicBoolean();
+        for (int i = 0; i < 8; i++)
+        {
+            futures.add(executor.submit(() -> {
+                while (!stopIt.get())
+                {
+                    session.execute(preparedSelect.bind()).all();
+                }
+                return null;
+            }));
+        }
+
         session.execute(alterTableStatement);
+
+        Thread.sleep(500);
+        stopIt.set(true);
+        for (Future<Object> future : futures)
+        {
+            Uninterruptibles.getUninterruptibly(future, 500, TimeUnit.MILLISECONDS);
+        }
+        executor.shutdown();
+
         session.execute("INSERT INTO " + KEYSPACE + ".qp_cleanup (a, b, c, d) VALUES (?, ?, ?, ?);",
                         3, 4, 5, 6);
         resultSet = session.execute(preparedSelect.bind()).all().iterator();
@@ -148,18 +179,18 @@ public class PreparedStatementsTest extends CQLTester
     }
 
     @Test
-    public void testInvalidatePreparedStatementOnAlterUnchangedMetadataV4()
+    public void testInvalidatePreparedStatementOnAlterUnchangedMetadataV4() throws Throwable
     {
         testInvalidatePreparedStatementOnAlterUnchangedMetadata(ProtocolVersion.V4);
     }
 
     @Test
-    public void testInvalidatePreparedStatementOnAlterUnchangedMetadataV5()
+    public void testInvalidatePreparedStatementOnAlterUnchangedMetadataV5() throws Throwable
     {
         testInvalidatePreparedStatementOnAlterUnchangedMetadata(ProtocolVersion.V5);
     }
 
-    private void testInvalidatePreparedStatementOnAlterUnchangedMetadata(ProtocolVersion version)
+    private void testInvalidatePreparedStatementOnAlterUnchangedMetadata(ProtocolVersion version) throws Throwable
     {
         Session session = sessions.get(version);
         String createTableStatement = "CREATE TABLE IF NOT EXISTS " + KEYSPACE + ".qp_cleanup (a int PRIMARY KEY, b int, c int);";
@@ -186,7 +217,30 @@ public class PreparedStatementsTest extends CQLTester
         assertEquals(3, row2.getInt("b"));
         assertEquals(4, row2.getInt("c"));
 
+        ExecutorService executor = Executors.newFixedThreadPool(8);
+        List<Future<Object>> futures = new ArrayList<>();
+        AtomicBoolean stopIt = new AtomicBoolean();
+        for (int i = 0; i < 8; i++)
+        {
+            futures.add(executor.submit(() -> {
+                while (!stopIt.get())
+                {
+                    session.execute(preparedSelect.bind()).all();
+                }
+                return null;
+            }));
+        }
+
         session.execute(alterTableStatement);
+
+        Thread.sleep(500);
+        stopIt.set(true);
+        for (Future<Object> future : futures)
+        {
+            Uninterruptibles.getUninterruptibly(future, 500, TimeUnit.MILLISECONDS);
+        }
+        executor.shutdown();
+
         session.execute("INSERT INTO " + KEYSPACE + ".qp_cleanup (a, b, c, d) VALUES (?, ?, ?, ?);",
                         3, 4, 5, 6);
         resultSet = session.execute(preparedSelect.bind()).all().iterator();

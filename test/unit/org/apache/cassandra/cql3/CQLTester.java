@@ -75,7 +75,7 @@ import static junit.framework.Assert.assertNotNull;
 /**
  * Base class for CQL tests.
  */
-public abstract class CQLTester
+public class CQLTester
 {
     protected static final Logger logger = LoggerFactory.getLogger(CQLTester.class);
 
@@ -118,33 +118,10 @@ public abstract class CQLTester
                ? ProtocolVersion.CURRENT
                : PROTOCOL_VERSIONS.get(PROTOCOL_VERSIONS.size() - 1);
     }
+
     static
     {
-        DatabaseDescriptor.daemonInitialization();
-
-        // The latest versions might not be supported yet by the java driver
-        for (ProtocolVersion version : ProtocolVersion.SUPPORTED)
-        {
-            try
-            {
-                com.datastax.driver.core.ProtocolVersion.fromInt(version.asInt());
-                PROTOCOL_VERSIONS.add(version);
-            }
-            catch (IllegalArgumentException e)
-            {
-                logger.warn("Protocol Version {} not supported by java driver", version);
-            }
-        }
-
         nativeAddr = InetAddress.getLoopbackAddress();
-
-        // Register an EndpointSnitch which returns fixed values for test.
-        DatabaseDescriptor.setEndpointSnitch(new AbstractEndpointSnitch()
-        {
-            @Override public String getRack(InetAddress endpoint) { return RACK1; }
-            @Override public String getDatacenter(InetAddress endpoint) { return DATA_CENTER; }
-            @Override public int compareEndpoints(InetAddress target, InetAddress a1, InetAddress a2) { return 0; }
-        });
 
         try
         {
@@ -182,8 +159,6 @@ public abstract class CQLTester
     {
         if (isServerPrepared)
             return;
-
-        DatabaseDescriptor.daemonInitialization();
 
         // Cleanup first
         try
@@ -267,6 +242,30 @@ public abstract class CQLTester
     @BeforeClass
     public static void setUpClass()
     {
+        DatabaseDescriptor.daemonInitialization();
+
+        // The latest versions might not be supported yet by the java driver
+        for (ProtocolVersion version : ProtocolVersion.SUPPORTED)
+        {
+            try
+            {
+                com.datastax.driver.core.ProtocolVersion.fromInt(version.asInt());
+                PROTOCOL_VERSIONS.add(version);
+            }
+            catch (IllegalArgumentException e)
+            {
+                logger.warn("Protocol Version {} not supported by java driver", version);
+            }
+        }
+
+        // Register an EndpointSnitch which returns fixed values for test.
+        DatabaseDescriptor.setEndpointSnitch(new AbstractEndpointSnitch()
+        {
+            @Override public String getRack(InetAddress endpoint) { return RACK1; }
+            @Override public String getDatacenter(InetAddress endpoint) { return DATA_CENTER; }
+            @Override public int compareEndpoints(InetAddress target, InetAddress a1, InetAddress a2) { return 0; }
+        });
+
         if (ROW_CACHE_SIZE_IN_MB > 0)
             DatabaseDescriptor.setRowCacheSizeInMB(ROW_CACHE_SIZE_IN_MB);
 
@@ -367,8 +366,7 @@ public abstract class CQLTester
         });
     }
 
-    // lazy initialization for all tests that require Java Driver
-    protected static void requireNetwork() throws ConfigurationException
+    public static void startNetworking()
     {
         if (server != null)
             return;
@@ -379,6 +377,12 @@ public abstract class CQLTester
 
         server = new Server.Builder().withHost(nativeAddr).withPort(nativePort).build();
         server.start();
+    }
+
+    // lazy initialization for all tests that require Java Driver
+    protected static void requireNetwork() throws ConfigurationException
+    {
+        startNetworking();
 
         for (ProtocolVersion version : PROTOCOL_VERSIONS)
         {

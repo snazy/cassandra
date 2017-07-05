@@ -56,4 +56,9 @@ public class ListUsersStatement extends ListRolesStatement
         }
         return new ResultMessage.Rows(result);
     }
+
+    public ResultSet.ResultMetadata getResultMetadata()
+    {
+        return new ResultSet.ResultMetadata(metadata);
+    }
 }

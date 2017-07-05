@@ -128,4 +128,9 @@ public class ListPermissionsStatement extends AuthorizationStatement
         }
         return new ResultMessage.Rows(result);
     }
+
+    public ResultSet.ResultMetadata getResultMetadata()
+    {
+        return new ResultSet.ResultMetadata(metadata);
+    }
 }

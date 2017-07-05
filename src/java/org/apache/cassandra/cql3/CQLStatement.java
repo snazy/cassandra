@@ -67,4 +67,9 @@ public interface CQLStatement
      * @return functions all functions found (may contain duplicates)
      */
     public Iterable<Function> getFunctions();
+
+    public default ResultSet.ResultMetadata getResultMetadata()
+    {
+        return ResultSet.ResultMetadata.EMPTY;
+    }
 }

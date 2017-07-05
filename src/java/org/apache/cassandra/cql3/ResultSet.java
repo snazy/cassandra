@@ -20,7 +20,6 @@ package org.apache.cassandra.cql3;
 import java.nio.ByteBuffer;
 import java.util.*;
 
-import com.datastax.driver.core.ProtocolOptions;
 import io.netty.buffer.ByteBuf;
 
 import org.apache.cassandra.cql3.statements.*;
@@ -268,12 +267,7 @@ public class ResultSet
 
         public static ResultMetadata fromPrepared(ParsedStatement.Prepared prepared)
         {
-            CQLStatement statement = prepared.statement;
-
-            if (!(statement instanceof SelectStatement))
-                return ResultSet.ResultMetadata.EMPTY;
-
-            return ((SelectStatement)statement).getResultMetadata();
+            return prepared.statement.getResultMetadata();
         }
 
         @Override
