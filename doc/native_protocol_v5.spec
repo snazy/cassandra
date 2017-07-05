@@ -410,10 +410,12 @@ Table of Contents
     <id><result_metadata_id><query_parameters>
   where
     - <id> is the prepared query ID. It's the [short bytes] returned as a
-  response to a PREPARE message. As for <query_parameters>, it has the exact
-  same definition as in QUERY (see Section 4.1.4).
+      response to a PREPARE message. As for <query_parameters>, it has the exact
+      same definition as in QUERY (see Section 4.1.4).
     - <result_metadata_id> is the ID of the resultset metadata that was sent
-  along with response to PREPARE message.
+      along with response to PREPARE message. If a RESULT/Rows message reports
+      changed resultset metadata with the Metadata_changed flag, the reported new
+      resultset metadata must be used in subsequent executions.
 
 4.1.7. BATCH
 
@@ -612,7 +614,8 @@ Table of Contents
           by the query that produced this result. It defines the number of <col_spec_i>
           elements in and the number of elements for each row in <rows_content>.
         - <new_metadata_id> is [short bytes] representing the new, changed resultset
-           metadata.
+          metadata. The new metadata ID must also be used in subsequent executions of
+          the corresponding prepared statement, if any.
         - <global_table_spec> is present if the Global_tables_spec is set in
           <flags>. It is composed of two [string] representing the
           (unique) keyspace name and table name the columns belong to.
