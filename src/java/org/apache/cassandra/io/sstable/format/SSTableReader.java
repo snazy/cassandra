@@ -162,6 +162,14 @@ public abstract class SSTableReader extends SSTable implements SelfRefCounted<SS
         }
     };
 
+    public static final Comparator<SSTableReader> generationComparator = new Comparator<SSTableReader>()
+    {
+        public int compare(SSTableReader o1, SSTableReader o2)
+        {
+            return Integer.compare(o1.descriptor.generation, o2.descriptor.generation);
+        }
+    };
+
     public static final Ordering<SSTableReader> sstableOrdering = Ordering.from(sstableComparator);
 
     /**
