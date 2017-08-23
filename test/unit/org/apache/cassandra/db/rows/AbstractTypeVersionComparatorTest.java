@@ -17,6 +17,8 @@
  */
 package org.apache.cassandra.db.rows;
 
+import java.math.BigInteger;
+import java.net.InetAddress;
 import java.nio.ByteBuffer;
 import java.util.Set;
 
@@ -29,12 +31,27 @@ import org.apache.cassandra.db.marshal.*;
 import static java.util.Arrays.asList;
 import static org.apache.cassandra.utils.ByteBufferUtil.bytes;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.fail;
 
 public class AbstractTypeVersionComparatorTest
 {
     private UserType udtWith2Fields;
-
     private UserType udtWith3Fields;
+
+    private TupleType tupleWith2Fields;
+    private TupleType tupleWith3Fields;
+
+    private SetType<String> set1;
+    private SetType<InetAddress> set2;
+
+    private ListType<String> list1;
+    private ListType<InetAddress> list2;
+
+    private MapType<String, BigInteger> map1;
+    private MapType<InetAddress, BigInteger> map2;
+
+    private MapType<BigInteger, String> map3;
+    private MapType<BigInteger, InetAddress> map4;
 
     @Before
     public void setUp()
@@ -43,11 +60,25 @@ public class AbstractTypeVersionComparatorTest
                                       bytes("myType"),
                                       asList(bytes("a"), bytes("b")),
                                       asList(Int32Type.instance, Int32Type.instance));
-
         udtWith3Fields = new UserType("ks",
                                       bytes("myType"),
                                       asList(bytes("a"), bytes("b"), bytes("c")),
                                       asList(Int32Type.instance, Int32Type.instance, Int32Type.instance));
+
+        tupleWith2Fields = new TupleType(asList(Int32Type.instance, Int32Type.instance));
+        tupleWith3Fields = new TupleType(asList(Int32Type.instance, Int32Type.instance, Int32Type.instance));
+
+        set1 = SetType.getInstance(UTF8Type.instance, true);
+        set2 = SetType.getInstance(InetAddressType.instance, true);
+
+        list1 = ListType.getInstance(UTF8Type.instance, true);
+        list2 = ListType.getInstance(InetAddressType.instance, true);
+
+        map1 = MapType.getInstance(UTF8Type.instance, IntegerType.instance, true);
+        map2 = MapType.getInstance(InetAddressType.instance, IntegerType.instance, true);
+
+        map3 = MapType.getInstance(IntegerType.instance, UTF8Type.instance, true);
+        map4 = MapType.getInstance(IntegerType.instance, InetAddressType.instance, true);
     }
 
     @After
@@ -55,6 +86,38 @@ public class AbstractTypeVersionComparatorTest
     {
         udtWith2Fields = null;
         udtWith3Fields = null;
+        tupleWith2Fields = null;
+        tupleWith3Fields = null;
+    }
+
+    @Test
+    public void testWithSets()
+    {
+        checkComparisonResults(set1, set2, "Trying to compare 2 different types: org.apache.cassandra.db.marshal.UTF8Type and org.apache.cassandra.db.marshal.InetAddressType");
+    }
+
+    @Test
+    public void testWithLists()
+    {
+        checkComparisonResults(list1, list2, "Trying to compare 2 different types: org.apache.cassandra.db.marshal.UTF8Type and org.apache.cassandra.db.marshal.InetAddressType");
+    }
+
+    @Test
+    public void testWithMaps12()
+    {
+        checkComparisonResults(map1, map2, "Trying to compare 2 different types: org.apache.cassandra.db.marshal.UTF8Type and org.apache.cassandra.db.marshal.InetAddressType");
+    }
+
+    @Test
+    public void testWithMaps34()
+    {
+        checkComparisonResults(map3, map4, "Trying to compare 2 different types: org.apache.cassandra.db.marshal.UTF8Type and org.apache.cassandra.db.marshal.InetAddressType");
+    }
+
+    @Test
+    public void testWithTuples()
+    {
+        checkComparisonResults(tupleWith2Fields, tupleWith3Fields);
     }
 
     @Test
@@ -73,7 +136,6 @@ public class AbstractTypeVersionComparatorTest
             checkComparisonResults(set1, set2);
         }
     }
-
 
     @Test
     public void testWithUDTsNestedWithinList()
@@ -131,10 +193,23 @@ public class AbstractTypeVersionComparatorTest
         }
     }
 
-    @Test(expected=IllegalArgumentException.class)
+    @Test
     public void testInvalidComparison()
     {
-        checkComparisonResults(udtWith2Fields, Int32Type.instance);
+        checkComparisonResults(udtWith2Fields, Int32Type.instance, "Trying to compare 2 different types: org.apache.cassandra.db.marshal.UserType(ks,6d7954797065,61:org.apache.cassandra.db.marshal.Int32Type,62:org.apache.cassandra.db.marshal.Int32Type) and org.apache.cassandra.db.marshal.Int32Type");
+    }
+
+    private void checkComparisonResults(AbstractType<?> oldVersion, AbstractType<?> newVersion, String expectedMessage)
+    {
+        try
+        {
+            checkComparisonResults(oldVersion, newVersion);
+            fail("comparison doesn't throw expected IllegalArgumentException: " + expectedMessage);
+        }
+        catch (IllegalArgumentException e)
+        {
+            assertEquals(e.getMessage(), expectedMessage);
+        }
     }
 
     private void checkComparisonResults(AbstractType<?> oldVersion, AbstractType<?> newVersion)
