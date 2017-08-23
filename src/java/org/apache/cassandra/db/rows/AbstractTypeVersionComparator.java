@@ -69,6 +69,10 @@ final class AbstractTypeVersionComparator implements Comparator<AbstractType<?>>
     {
         List<AbstractType<?>> types = type.getComponents();
         List<AbstractType<?>> otherTypes = otherType.getComponents();
+
+        if (types.size() != otherTypes.size())
+            return Integer.compare(types.size(), otherTypes.size());
+
         for (int i = 0, m = type.componentsCount(); i < m ; i++)
         {
             int test = compare(types.get(i), otherTypes.get(i));
@@ -97,21 +101,14 @@ final class AbstractTypeVersionComparator implements Comparator<AbstractType<?>>
 
     private int compareUserType(UserType type, UserType otherType)
     {
-        if (type.size() != otherType.size())
-            return Integer.compare(type.size(), otherType.size());
-
-        int test = 0;
-        int i = 0;
-        while (test == 0 && i < type.size())
-        {
-            test = compare(type.type(i), otherType.type(i));
-            i++;
-        }
-        return test;
+        return compareTuple(type, otherType);
     }
 
     private int compareTuple(TupleType type, TupleType otherType)
     {
+        if (type.size() != otherType.size())
+            return Integer.compare(type.size(), otherType.size());
+
         int test = 0;
         int i = 0;
         while (test == 0 && i < type.size())
