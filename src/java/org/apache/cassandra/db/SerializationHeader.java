@@ -124,9 +124,12 @@ public class SerializationHeader
 
     private static Collection<SSTableReader> orderByDescendingGeneration(Collection<SSTableReader> sstables)
     {
-        Set<SSTableReader> set = new TreeSet<>(Collections.reverseOrder(SSTableReader.generationComparator));
-        set.addAll(sstables);
-        return set;
+        if (sstables.size() < 2)
+            return sstables;
+
+        List<SSTableReader> readers = new ArrayList<>(sstables);
+        readers.sort(SSTableReader.generationReverseComparator);
+        return readers;
     }
 
     public SerializationHeader(boolean isForSSTable,
