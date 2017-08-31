@@ -36,6 +36,7 @@ import com.datastax.driver.core.policies.LoggingRetryPolicy;
 import com.datastax.driver.core.policies.Policies;
 import com.datastax.driver.core.utils.Bytes;
 import org.apache.cassandra.SchemaLoader;
+import org.apache.cassandra.concurrent.NamedThreadFactory;
 import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.schema.Schema;
 import org.apache.cassandra.exceptions.ConfigurationException;
@@ -109,7 +110,7 @@ public class CorruptionTest extends SchemaLoader
         final CountDownLatch failure = new CountDownLatch(1);
 
 
-        ExecutorService executor = Executors.newFixedThreadPool(THREADPOOL_SIZE);
+        ExecutorService executor = Executors.newFixedThreadPool(THREADPOOL_SIZE, new NamedThreadFactory());
         for (int i = 0; i < THREADPOOL_SIZE; i++)
         {
             executor.execute(new Runnable()

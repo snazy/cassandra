@@ -14,6 +14,7 @@ import com.google.common.util.concurrent.Futures;
 
 import org.junit.Test;
 
+import org.apache.cassandra.concurrent.NamedThreadFactory;
 import org.apache.cassandra.utils.IntegerInterval.Set;
 
 public class IntegerIntervalsTest
@@ -106,7 +107,7 @@ public class IntegerIntervalsTest
             min = Math.min(min, new Random(seed).ints(streamSize).min().getAsInt());
             max = Math.max(max, new Random(seed).ints(streamSize).max().getAsInt());
         }
-        for (Future<?> f : Executors.newFixedThreadPool(threads).invokeAll(tasks))
+        for (Future<?> f : Executors.newFixedThreadPool(threads, new NamedThreadFactory()).invokeAll(tasks))
             Futures.getUnchecked(f);
         assertEquals(min, interval.lower());
         assertEquals(max, interval.upper());
@@ -233,7 +234,7 @@ public class IntegerIntervalsTest
                 .ints(streamSize)
                 .forEach(v -> st.add(v, v + 5));
         }
-        for (Future<?> f : Executors.newFixedThreadPool(threads).invokeAll(tasks))
+        for (Future<?> f : Executors.newFixedThreadPool(threads, new NamedThreadFactory()).invokeAll(tasks))
             Futures.getUnchecked(f);
         assertEquals(st, mt);
     }

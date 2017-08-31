@@ -33,6 +33,7 @@ import org.junit.Test;
 import org.apache.cassandra.cql3.ColumnIdentifier;
 import org.apache.cassandra.schema.Indexes;
 import org.apache.cassandra.schema.TableMetadata;
+import org.apache.cassandra.concurrent.NamedThreadFactory;
 import org.apache.cassandra.config.Config.DiskFailurePolicy;
 import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.cql3.statements.IndexTarget;
@@ -361,7 +362,7 @@ public class DirectoriesTest
                     return Directories.getSnapshotDirectory(desc, n);
                 }
             };
-            List<Future<File>> invoked = Executors.newFixedThreadPool(2).invokeAll(Arrays.asList(directoryGetter, directoryGetter));
+            List<Future<File>> invoked = Executors.newFixedThreadPool(2, new NamedThreadFactory()).invokeAll(Arrays.asList(directoryGetter, directoryGetter));
             for(Future<File> fut:invoked) {
                 assertTrue(fut.get().exists());
             }

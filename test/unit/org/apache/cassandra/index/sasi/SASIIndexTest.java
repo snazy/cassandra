@@ -36,6 +36,7 @@ import org.apache.cassandra.cql3.CQLTester;
 import org.apache.cassandra.cql3.Operator;
 import org.apache.cassandra.cql3.QueryProcessor;
 import org.apache.cassandra.cql3.UntypedResultSet;
+import org.apache.cassandra.concurrent.NamedThreadFactory;
 import org.apache.cassandra.index.Index;
 import org.apache.cassandra.schema.ColumnMetadata;
 import org.apache.cassandra.schema.TableMetadata;
@@ -984,7 +985,7 @@ public class SASIIndexTest
     {
         final ColumnFamilyStore store = Keyspace.open(KS_NAME).getColumnFamilyStore(CF_NAME);
 
-        ExecutorService scheduler = Executors.newFixedThreadPool(Runtime.getRuntime().availableProcessors());
+        ExecutorService scheduler = Executors.newFixedThreadPool(Runtime.getRuntime().availableProcessors(), new NamedThreadFactory());
 
         final int writeCount = 10000;
         final AtomicInteger updates = new AtomicInteger(0);

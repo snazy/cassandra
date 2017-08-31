@@ -33,6 +33,7 @@ import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.ListeningExecutorService;
 import com.google.common.util.concurrent.MoreExecutors;
 
+import org.apache.cassandra.concurrent.NamedThreadFactory;
 import org.apache.cassandra.concurrent.ScheduledExecutors;
 import org.apache.cassandra.schema.TableId;
 import org.apache.cassandra.schema.TableMetadata;
@@ -156,7 +157,7 @@ public class AutoSavingCache<K extends CacheKey, V> extends InstrumentingCache<K
 
     public ListenableFuture<Integer> loadSavedAsync()
     {
-        final ListeningExecutorService es = MoreExecutors.listeningDecorator(Executors.newSingleThreadExecutor());
+        final ListeningExecutorService es = MoreExecutors.listeningDecorator(Executors.newSingleThreadExecutor(new NamedThreadFactory("AutoSavingCache")));
         final long start = System.nanoTime();
 
         ListenableFuture<Integer> cacheLoad = es.submit(new Callable<Integer>()

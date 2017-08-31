@@ -39,6 +39,11 @@ public class NamedThreadFactory implements ThreadFactory
     private final ThreadGroup threadGroup;
     protected final AtomicInteger n = new AtomicInteger(1);
 
+    public NamedThreadFactory()
+    {
+        this(anonymousName());
+    }
+
     public NamedThreadFactory(String id)
     {
         this(id, Thread.NORM_PRIORITY);
@@ -89,10 +94,15 @@ public class NamedThreadFactory implements ThreadFactory
 
     private static final AtomicInteger threadCounter = new AtomicInteger();
 
+    private static String anonymousName()
+    {
+        return "anonymous-" + threadCounter.incrementAndGet();
+    }
+
     @VisibleForTesting
     public static Thread createThread(Runnable runnable)
     {
-        return createThread(null, runnable, "anonymous-" + threadCounter.incrementAndGet());
+        return createThread(null, runnable, anonymousName());
     }
 
     public static Thread createThread(Runnable runnable, String name)

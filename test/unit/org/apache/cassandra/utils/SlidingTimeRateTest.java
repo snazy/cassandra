@@ -24,6 +24,8 @@ import java.util.concurrent.TimeUnit;
 import org.junit.Assert;
 import org.junit.Test;
 
+import org.apache.cassandra.concurrent.NamedThreadFactory;
+
 public class SlidingTimeRateTest
 {
     @Test
@@ -126,7 +128,7 @@ public class SlidingTimeRateTest
     @Test
     public void testConcurrentUpdateAndGet() throws InterruptedException
     {
-        final ExecutorService executor = Executors.newFixedThreadPool(FBUtilities.getAvailableProcessors());
+        final ExecutorService executor = Executors.newFixedThreadPool(FBUtilities.getAvailableProcessors(), new NamedThreadFactory());
         final TestTimeSource time = new TestTimeSource();
         final SlidingTimeRate rate = new SlidingTimeRate(time, 5, 1, TimeUnit.SECONDS);
         int updates = 100000;

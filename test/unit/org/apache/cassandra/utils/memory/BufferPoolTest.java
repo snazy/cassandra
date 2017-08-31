@@ -29,6 +29,7 @@ import org.junit.BeforeClass;
 import org.junit.Ignore;
 import org.junit.Test;
 
+import org.apache.cassandra.concurrent.NamedThreadFactory;
 import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.io.compress.BufferType;
 import org.apache.cassandra.io.util.RandomAccessReader;
@@ -699,7 +700,7 @@ public class BufferPoolTest
 
     private void checkMultipleThreads(int threadCount, int numBuffersPerThread, final boolean returnImmediately, final int ... sizes) throws InterruptedException
     {
-        ExecutorService executorService = Executors.newFixedThreadPool(threadCount);
+        ExecutorService executorService = Executors.newFixedThreadPool(threadCount, new NamedThreadFactory());
         final CountDownLatch finished = new CountDownLatch(threadCount);
 
         for (int i = 0; i < threadCount; i++)
@@ -804,7 +805,7 @@ public class BufferPoolTest
         // if we use multiple chunks the test will fail, adjust sizes accordingly
         assertTrue(sum < BufferPool.GlobalPool.MACRO_CHUNK_SIZE);
 
-        ExecutorService executorService = Executors.newFixedThreadPool(threadCount);
+        ExecutorService executorService = Executors.newFixedThreadPool(threadCount, new NamedThreadFactory());
         final CountDownLatch finished = new CountDownLatch(threadCount);
 
         for (int i = 0; i < threadCount; i++)

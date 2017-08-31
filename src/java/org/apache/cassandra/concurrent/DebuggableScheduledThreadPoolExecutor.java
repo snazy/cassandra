@@ -69,12 +69,6 @@ public class DebuggableScheduledThreadPoolExecutor extends ScheduledThreadPoolEx
         setRejectedExecutionHandler(rejectedExecutionHandler);
     }
 
-    public DebuggableScheduledThreadPoolExecutor(int corePoolSize, ThreadFactory threadFactory)
-    {
-        super(corePoolSize, threadFactory);
-        setRejectedExecutionHandler(rejectedExecutionHandler);
-    }
-
     public DebuggableScheduledThreadPoolExecutor(String threadPoolName)
     {
         this(1, threadPoolName, Thread.NORM_PRIORITY);

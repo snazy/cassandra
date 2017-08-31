@@ -32,6 +32,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import io.netty.util.concurrent.FastThreadLocalThread;
+import org.apache.cassandra.concurrent.NamedThreadFactory;
 import org.apache.cassandra.io.compress.CompressionMetadata;
 import org.apache.cassandra.io.util.DataInputPlus;
 import org.apache.cassandra.io.util.FileUtils;
@@ -94,7 +95,7 @@ public class CompressedInputStream extends RebufferingInputStream
         this.crcCheckChanceSupplier = crcCheckChanceSupplier;
         this.checksumType = checksumType;
 
-        new FastThreadLocalThread(new Reader(source, info, dataBuffer)).start();
+        NamedThreadFactory.createThread(new Reader(source, info, dataBuffer)).start();
     }
 
     /**

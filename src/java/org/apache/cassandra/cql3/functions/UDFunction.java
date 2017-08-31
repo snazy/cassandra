@@ -42,6 +42,7 @@ import org.slf4j.LoggerFactory;
 
 import com.datastax.driver.core.DataType;
 import com.datastax.driver.core.TypeCodec;
+import org.apache.cassandra.concurrent.NamedThreadFactory;
 import org.apache.cassandra.config.Config;
 import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.schema.Schema;
@@ -255,7 +256,7 @@ public abstract class UDFunction extends AbstractFunction implements ScalarFunct
         {
             protected ExecutorService executor()
             {
-                return Executors.newSingleThreadExecutor();
+                return Executors.newSingleThreadExecutor(new NamedThreadFactory("Broken-UDF-" + this));
             }
 
             protected Object executeAggregateUserDefined(ProtocolVersion protocolVersion, Object firstParam, List<ByteBuffer> parameters)
@@ -399,7 +400,7 @@ public abstract class UDFunction extends AbstractFunction implements ScalarFunct
     }
 
     /**
-     * Like {@link #executeAsync(int, List)} but the first parameter is already in non-serialized form.
+     * Like {@link #executeAsync(ProtocolVersion, List)} but the first parameter is already in non-serialized form.
      * Remaining parameters (2nd paramters and all others) are in {@code parameters}.
      * This is used to prevent superfluous (de)serialization of the state of aggregates.
      * Means: scalar functions of aggregates are called using this variant.

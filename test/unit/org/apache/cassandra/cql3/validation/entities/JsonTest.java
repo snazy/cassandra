@@ -17,6 +17,7 @@
  */
 package org.apache.cassandra.cql3.validation.entities;
 
+import org.apache.cassandra.concurrent.NamedThreadFactory;
 import org.apache.cassandra.cql3.Json;
 import org.apache.cassandra.cql3.CQLTester;
 import org.apache.cassandra.cql3.Duration;
@@ -1312,7 +1313,7 @@ public class JsonTest extends CQLTester
             }
         };
 
-        ExecutorService executor = Executors.newFixedThreadPool(numThreads);
+        ExecutorService executor = Executors.newFixedThreadPool(numThreads, new NamedThreadFactory());
         List<Future> futures = new ArrayList<>();
         for (int i = 0; i < numThreads; i++)
             futures.add(executor.submit(worker));
