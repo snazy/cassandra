@@ -17,6 +17,7 @@
  */
 package org.apache.cassandra.utils;
 
+import org.apache.cassandra.concurrent.NamedThreadFactory;
 import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.utils.CoalescingStrategies.Clock;
 import org.apache.cassandra.utils.CoalescingStrategies.Coalescable;
@@ -46,7 +47,7 @@ import static org.junit.Assert.*;
 public class CoalescingStrategiesTest
 {
 
-    static final ExecutorService ex = Executors.newSingleThreadExecutor();
+    static final ExecutorService ex = Executors.newSingleThreadExecutor(new NamedThreadFactory());
 
     private static final Logger logger = LoggerFactory.getLogger(CoalescingStrategiesTest.class);
 

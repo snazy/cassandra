@@ -33,6 +33,7 @@ import org.junit.Test;
 
 import com.google.common.collect.Sets;
 
+import org.apache.cassandra.concurrent.NamedThreadFactory;
 import org.apache.cassandra.db.marshal.TimeUUIDType;
 import org.apache.cassandra.utils.UUIDGen;
 import org.cliffc.high_scale_lib.NonBlockingHashMap;
@@ -106,7 +107,7 @@ public class UUIDTests
     {
         long iterations = 250000;
         int threads = 4;
-        ExecutorService es = Executors.newFixedThreadPool(threads);
+        ExecutorService es = Executors.newFixedThreadPool(threads, new NamedThreadFactory());
         try
         {
             AtomicBoolean failedOrdering = new AtomicBoolean(false);

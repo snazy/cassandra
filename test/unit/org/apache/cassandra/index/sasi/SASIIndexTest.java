@@ -32,6 +32,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import org.apache.cassandra.SchemaLoader;
+import org.apache.cassandra.concurrent.NamedThreadFactory;
 import org.apache.cassandra.config.CFMetaData;
 import org.apache.cassandra.config.ColumnDefinition;
 import org.apache.cassandra.index.Index;
@@ -987,7 +988,7 @@ public class SASIIndexTest
     {
         final ColumnFamilyStore store = Keyspace.open(KS_NAME).getColumnFamilyStore(CF_NAME);
 
-        ExecutorService scheduler = Executors.newFixedThreadPool(Runtime.getRuntime().availableProcessors());
+        ExecutorService scheduler = Executors.newFixedThreadPool(Runtime.getRuntime().availableProcessors(), new NamedThreadFactory());
 
         final int writeCount = 10000;
         final AtomicInteger updates = new AtomicInteger(0);

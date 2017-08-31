@@ -37,6 +37,7 @@ import com.google.common.collect.MapMaker;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import org.apache.cassandra.concurrent.NamedThreadFactory;
 import org.apache.cassandra.db.ColumnFamilyStore;
 import org.apache.cassandra.io.sstable.format.SSTableReader;
 import org.apache.cassandra.utils.NoSpamLogger;
@@ -295,7 +296,7 @@ public class CompactionLogger
     private static class CompactionLogSerializer implements Writer
     {
         private static final String logDirectory = System.getProperty("cassandra.logdir", ".");
-        private final ExecutorService loggerService = Executors.newFixedThreadPool(1);
+        private final ExecutorService loggerService = Executors.newSingleThreadExecutor(new NamedThreadFactory("CompactionLog"));
         // This is only accessed on the logger service thread, so it does not need to be thread safe
         private final Set<Object> rolled = new HashSet<>();
         private OutputStreamWriter stream;

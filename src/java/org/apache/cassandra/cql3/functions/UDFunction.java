@@ -43,6 +43,7 @@ import org.slf4j.LoggerFactory;
 import com.datastax.driver.core.DataType;
 import com.datastax.driver.core.TypeCodec;
 import com.datastax.driver.core.UserType;
+import org.apache.cassandra.concurrent.NamedThreadFactory;
 import org.apache.cassandra.config.Config;
 import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.config.Schema;
@@ -258,7 +259,7 @@ public abstract class UDFunction extends AbstractFunction implements ScalarFunct
         {
             protected ExecutorService executor()
             {
-                return Executors.newSingleThreadExecutor();
+                return Executors.newSingleThreadExecutor(new NamedThreadFactory("Broken-UDF-" + this));
             }
 
             protected Object executeAggregateUserDefined(ProtocolVersion protocolVersion, Object firstParam, List<ByteBuffer> parameters)

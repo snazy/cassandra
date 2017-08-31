@@ -44,6 +44,7 @@ import org.slf4j.LoggerFactory;
 
 import static org.junit.Assert.*;
 
+import org.apache.cassandra.concurrent.NamedThreadFactory;
 import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.io.compress.BufferType;
 import org.apache.cassandra.utils.ByteBufferUtil;
@@ -489,7 +490,7 @@ public class RandomAccessReaderTest
             }
             else
             {
-                ExecutorService executor = Executors.newFixedThreadPool(numThreads);
+                ExecutorService executor = Executors.newFixedThreadPool(numThreads, new NamedThreadFactory());
                 for (int i = 0; i < numThreads; i++)
                     executor.submit(worker);
 

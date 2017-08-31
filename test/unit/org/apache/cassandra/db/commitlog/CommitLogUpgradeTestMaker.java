@@ -37,6 +37,7 @@ import com.google.common.util.concurrent.RateLimiter;
 import org.apache.cassandra.SchemaLoader;
 import org.apache.cassandra.Util;
 import org.apache.cassandra.UpdateBuilder;
+import org.apache.cassandra.concurrent.NamedThreadFactory;
 import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.config.Schema;
 import org.apache.cassandra.db.Mutation;
@@ -185,7 +186,7 @@ public class CommitLogUpgradeTestMaker
                 lastUpdate = temp;
             }
         };
-        ScheduledExecutorService scheduled = Executors.newScheduledThreadPool(1);
+        ScheduledExecutorService scheduled = Executors.newScheduledThreadPool(1, new NamedThreadFactory());
         scheduled.scheduleAtFixedRate(printRunnable, 1, 1, TimeUnit.SECONDS);
         return scheduled;
     }

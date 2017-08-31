@@ -30,6 +30,7 @@ import com.google.common.collect.Lists;
 import com.google.common.util.concurrent.Uninterruptibles;
 
 import io.airlift.command.*;
+import org.apache.cassandra.concurrent.NamedThreadFactory;
 import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.cql3.statements.CreateTableStatement;
 import org.apache.cassandra.db.ColumnFamilyStore;
@@ -291,7 +292,7 @@ public abstract class CompactionStress implements Runnable
             PartitionGenerator generator = stressProfile.getOfflineGenerator();
             WorkManager workManager = new WorkManager.FixedWorkManager(Long.MAX_VALUE);
 
-            ExecutorService executorService = Executors.newFixedThreadPool(threads);
+            ExecutorService executorService = Executors.newFixedThreadPool(threads, new NamedThreadFactory("CompactionStress"));
             CountDownLatch finished = new CountDownLatch(threads);
 
             for (int i = 0; i < threads; i++)

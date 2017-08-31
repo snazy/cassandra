@@ -32,6 +32,7 @@ import org.junit.Test;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import org.apache.cassandra.concurrent.NamedThreadFactory;
 import org.apache.cassandra.utils.DynamicList;
 
 import static org.junit.Assert.*;
@@ -94,7 +95,7 @@ public class LongBufferPoolTest
             makingProgress[i] = new AtomicBoolean(true);
         }
 
-        ExecutorService executorService = Executors.newFixedThreadPool(threadCount + 2);
+        ExecutorService executorService = Executors.newFixedThreadPool(threadCount + 2, new NamedThreadFactory());
         List<Future<Boolean>> ret = new ArrayList<>(threadCount);
         long prevPoolSize = BufferPool.MEMORY_USAGE_THRESHOLD;
         BufferPool.MEMORY_USAGE_THRESHOLD = poolSize;

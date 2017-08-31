@@ -47,8 +47,7 @@ final class SEPWorker extends AtomicReference<SEPWorker.Work> implements Runnabl
     {
         this.pool = pool;
         this.workerId = workerId;
-        thread = new FastThreadLocalThread(this, pool.poolName + "-Worker-" + workerId);
-        thread.setDaemon(true);
+        thread = NamedThreadFactory.createThread(this, pool.poolName + "-Worker-" + workerId, true);
         set(initialState);
         thread.start();
     }

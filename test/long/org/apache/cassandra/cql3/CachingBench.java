@@ -34,6 +34,7 @@ import org.junit.BeforeClass;
 import org.junit.Test;
 
 import junit.framework.Assert;
+import org.apache.cassandra.concurrent.NamedThreadFactory;
 import org.apache.cassandra.config.Config.CommitLogSync;
 import org.apache.cassandra.config.Config.DiskAccessMode;
 import org.apache.cassandra.cache.ChunkCache;
@@ -202,7 +203,7 @@ public class CachingBench extends CQLTester
         cfs.disableAutoCompaction();
 
         long onStartTime = System.currentTimeMillis();
-        ExecutorService es = Executors.newFixedThreadPool(Runtime.getRuntime().availableProcessors());
+        ExecutorService es = Executors.newFixedThreadPool(Runtime.getRuntime().availableProcessors(), new NamedThreadFactory());
         List<Future<?>> tasks = new ArrayList<>();
         for (int ti = 0; ti < 1; ++ti)
         {

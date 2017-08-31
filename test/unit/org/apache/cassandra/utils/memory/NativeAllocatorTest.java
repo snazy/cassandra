@@ -25,6 +25,7 @@ import com.google.common.util.concurrent.Uninterruptibles;
 import org.junit.Test;
 
 import junit.framework.Assert;
+import org.apache.cassandra.concurrent.NamedThreadFactory;
 import org.apache.cassandra.utils.concurrent.OpOrder;
 
 public class NativeAllocatorTest
@@ -34,7 +35,7 @@ public class NativeAllocatorTest
     public void testBookKeeping() throws ExecutionException, InterruptedException
     {
         {
-            final ScheduledExecutorService exec = Executors.newScheduledThreadPool(2);
+            final ScheduledExecutorService exec = Executors.newScheduledThreadPool(2, new NamedThreadFactory());
             final OpOrder order = new OpOrder();
             final OpOrder.Group group = order.start();
             final CountDownLatch canClean = new CountDownLatch(1);

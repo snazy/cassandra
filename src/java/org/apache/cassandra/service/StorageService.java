@@ -247,7 +247,7 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
     public StorageService()
     {
         // use dedicated executor for sending JMX notifications
-        super(Executors.newSingleThreadExecutor());
+        super(Executors.newSingleThreadExecutor(new NamedThreadFactory("StorageService")));
 
         MBeanServer mbs = ManagementFactory.getPlatformMBeanServer();
         try

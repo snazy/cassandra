@@ -32,6 +32,8 @@ import org.junit.After;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
+import org.apache.cassandra.concurrent.NamedThreadFactory;
+
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
@@ -260,7 +262,7 @@ public class MonitoringTaskTest
     public void testMultipleThreads() throws InterruptedException
     {
         final int opCount = 50;
-        final ExecutorService executorService = Executors.newFixedThreadPool(20);
+        final ExecutorService executorService = Executors.newFixedThreadPool(20, new NamedThreadFactory());
         final List<Monitorable> operations = Collections.synchronizedList(new ArrayList<>(opCount));
 
         for (int i = 0; i < opCount; i++)
@@ -298,7 +300,7 @@ public class MonitoringTaskTest
         MonitoringTask.instance = MonitoringTask.make(REPORT_INTERVAL_MS, maxTimedoutOperations);
         try
         {
-            ExecutorService executorService = Executors.newFixedThreadPool(numThreads);
+            ExecutorService executorService = Executors.newFixedThreadPool(numThreads, new NamedThreadFactory());
             final CountDownLatch finished = new CountDownLatch(numThreads);
 
             for (int i = 0; i < numThreads; i++)
@@ -357,7 +359,7 @@ public class MonitoringTaskTest
     {
         final int threadCount = 50;
         final List<Monitorable> operations = new ArrayList<>(threadCount);
-        ExecutorService executorService = Executors.newFixedThreadPool(threadCount);
+        ExecutorService executorService = Executors.newFixedThreadPool(threadCount, new NamedThreadFactory());
         final CountDownLatch finished = new CountDownLatch(threadCount);
 
         for (int i = 0; i < threadCount; i++)
@@ -391,7 +393,7 @@ public class MonitoringTaskTest
     {
         final int threadCount = 50;
         final List<Monitorable> operations = new ArrayList<>(threadCount);
-        ExecutorService executorService = Executors.newFixedThreadPool(threadCount);
+        ExecutorService executorService = Executors.newFixedThreadPool(threadCount, new NamedThreadFactory());
         final CountDownLatch finished = new CountDownLatch(threadCount);
 
         for (int i = 0; i < threadCount; i++)
@@ -427,7 +429,7 @@ public class MonitoringTaskTest
     {
         final int threadCount = 50;
         final List<Monitorable> operations = new ArrayList<>(threadCount);
-        ExecutorService executorService = Executors.newFixedThreadPool(threadCount);
+        ExecutorService executorService = Executors.newFixedThreadPool(threadCount, new NamedThreadFactory());
         final CountDownLatch finished = new CountDownLatch(threadCount);
 
         for (int i = 0; i < threadCount; i++)

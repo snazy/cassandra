@@ -39,6 +39,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import io.netty.util.concurrent.FastThreadLocalThread;
+import org.apache.cassandra.concurrent.NamedThreadFactory;
 import org.apache.cassandra.io.util.DataOutputStreamPlus;
 import org.apache.cassandra.io.util.BufferedDataOutputStreamPlus;
 import org.apache.cassandra.io.util.WrappedDataOutputStreamPlus;
@@ -218,7 +219,7 @@ public class ConnectionHandler
             if (initiator)
                 sendInitMessage();
 
-            new FastThreadLocalThread(this, name() + "-" + socket.getRemoteSocketAddress()).start();
+            NamedThreadFactory.createThread(this, name() + "-" + socket.getRemoteSocketAddress()).start();
         }
 
         public ListenableFuture<?> close()

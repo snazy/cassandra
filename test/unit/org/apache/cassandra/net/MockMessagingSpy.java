@@ -32,6 +32,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import junit.framework.AssertionFailedError;
+import org.apache.cassandra.concurrent.NamedThreadFactory;
 
 /**
  * Allows inspecting the behavior of mocked messaging by observing {@link MatcherResponse}.
@@ -46,7 +47,7 @@ public class MockMessagingSpy
     private final BlockingQueue<MessageOut<?>> interceptedMessages = new LinkedBlockingQueue<>();
     private final BlockingQueue<MessageIn<?>> deliveredResponses = new LinkedBlockingQueue<>();
 
-    private static final Executor executor = Executors.newSingleThreadExecutor();
+    private static final Executor executor = Executors.newSingleThreadExecutor(new NamedThreadFactory());
 
     /**
      * Returns a future with the first mocked incoming message that has been created and delivered.
