@@ -25,6 +25,7 @@ import java.util.concurrent.ThreadLocalRandom;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.primitives.Ints;
 
+import io.netty.util.concurrent.FastThreadLocal;
 import org.apache.cassandra.io.compress.BufferType;
 import org.apache.cassandra.io.compress.CompressionMetadata;
 import org.apache.cassandra.io.compress.CorruptBlockException;
@@ -79,12 +80,17 @@ public abstract class CompressedChunkReader extends AbstractReaderFileProxy impl
     public static class Standard extends CompressedChunkReader
     {
         // we read the raw compressed bytes into this buffer, then uncompressed them into the provided one.
-        private final ThreadLocal<ByteBuffer> compressedHolder;
+        private final FastThreadLocal<ByteBuffer> compressedHolder;
 
         public Standard(ChannelProxy channel, CompressionMetadata metadata)
         {
             super(channel, metadata);
-            compressedHolder = ThreadLocal.withInitial(this::allocateBuffer);
+            compressedHolder = new FastThreadLocal<ByteBuffer>() {
+                protected ByteBuffer initialValue() throws Exception
+                {
+                    return allocateBuffer();
+                }
+            };
         }
 
         public ByteBuffer allocateBuffer()

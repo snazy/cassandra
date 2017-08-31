@@ -22,6 +22,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.ConcurrentSkipListSet;
 
+import io.netty.util.concurrent.FastThreadLocal;
 import org.apache.cassandra.config.ColumnDefinition;
 import org.apache.cassandra.db.DecoratedKey;
 import org.apache.cassandra.index.sasi.conf.ColumnIndex;
@@ -243,7 +244,13 @@ public class TrieMemIndex extends MemIndex
     // but it's still better comparing to underestimate since it gives more breathing room for other memory users.
     private static class SizeEstimatingNodeFactory extends SmartArrayBasedNodeFactory
     {
-        private final ThreadLocal<Long> updateSize = ThreadLocal.withInitial(() -> 0L);
+        private final FastThreadLocal<Long> updateSize = new FastThreadLocal<Long>()
+        {
+            protected Long initialValue() throws Exception
+            {
+                return 0L;
+            }
+        };
 
         public Node createNode(CharSequence edgeCharacters, Object value, List<Node> childNodes, boolean isRoot)
         {
