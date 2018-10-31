@@ -107,7 +107,11 @@ public class TimeWindowCompactionStrategy extends AbstractCompactionStrategy
         if (Iterables.isEmpty(cfs.getSSTables(SSTableSet.LIVE)))
             return Collections.emptyList();
 
-        Set<SSTableReader> uncompacting = ImmutableSet.copyOf(filter(cfs.getUncompactingSSTables(), sstables::contains));
+        Set<SSTableReader> uncompacting;
+        synchronized (sstables)
+        {
+            uncompacting = ImmutableSet.copyOf(filter(cfs.getUncompactingSSTables(), sstables::contains));
+        }
 
         // Find fully expired SSTables. Those will be included no matter what.
         Set<SSTableReader> expired = Collections.emptySet();
@@ -180,13 +184,19 @@ public class TimeWindowCompactionStrategy extends AbstractCompactionStrategy
     @Override
     public void addSSTable(SSTableReader sstable)
     {
-        sstables.add(sstable);
+        synchronized (sstables)
+        {
+            sstables.add(sstable);
+        }
     }
 
     @Override
     public void removeSSTable(SSTableReader sstable)
     {
-        sstables.remove(sstable);
+        synchronized (sstables)
+        {
+            sstables.remove(sstable);
+        }
     }
 
     @Override
@@ -342,7 +352,11 @@ public class TimeWindowCompactionStrategy extends AbstractCompactionStrategy
     @SuppressWarnings("resource") // transaction is closed by AbstractCompactionTask::execute
     public synchronized Collection<AbstractCompactionTask> getMaximalTask(int gcBefore, boolean splitOutput)
     {
-        Iterable<SSTableReader> filteredSSTables = filterSuspectSSTables(sstables);
+        Iterable<SSTableReader> filteredSSTables;
+        synchronized (sstables)
+        {
+            filteredSSTables = filterSuspectSSTables(sstables);
+        }
         if (Iterables.isEmpty(filteredSSTables))
             return null;
         LifecycleTransaction txn = cfs.getTracker().tryModify(filteredSSTables, OperationType.COMPACTION);
