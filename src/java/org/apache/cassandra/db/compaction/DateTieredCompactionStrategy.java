@@ -105,10 +105,14 @@ public class DateTieredCompactionStrategy extends AbstractCompactionStrategy
      */
     private synchronized List<SSTableReader> getNextBackgroundSSTables(final int gcBefore)
     {
-        if (sstables.isEmpty())
-            return Collections.emptyList();
+        Set<SSTableReader> uncompacting;
+        synchronized (sstables)
+        {
+            if (sstables.isEmpty())
+                return Collections.emptyList();
 
-        Set<SSTableReader> uncompacting = ImmutableSet.copyOf(filter(cfs.getUncompactingSSTables(), sstables::contains));
+            uncompacting = ImmutableSet.copyOf(filter(cfs.getUncompactingSSTables(), sstables::contains));
+        }
 
         Set<SSTableReader> expired = Collections.emptySet();
         // we only check for expired sstables every 10 minutes (by default) due to it being an expensive operation
@@ -211,11 +215,6 @@ public class DateTieredCompactionStrategy extends AbstractCompactionStrategy
         });
     }
 
-    /**
-     *
-     * @param sstables
-     * @return
-     */
     public static List<Pair<SSTableReader, Long>> createSSTableAndMinTimestampPairs(Iterable<SSTableReader> sstables)
     {
         List<Pair<SSTableReader, Long>> sstableMinTimestampPairs = Lists.newArrayListWithCapacity(Iterables.size(sstables));
@@ -223,16 +222,23 @@ public class DateTieredCompactionStrategy extends AbstractCompactionStrategy
             sstableMinTimestampPairs.add(Pair.create(sstable, sstable.getMinTimestamp()));
         return sstableMinTimestampPairs;
     }
+
     @Override
     public void addSSTable(SSTableReader sstable)
     {
-        sstables.add(sstable);
+        synchronized (sstables)
+        {
+            sstables.add(sstable);
+        }
     }
 
     @Override
     public void removeSSTable(SSTableReader sstable)
     {
-        sstables.remove(sstable);
+        synchronized (sstables)
+        {
+            sstables.remove(sstable);
+        }
     }
 
     /**
@@ -414,7 +420,11 @@ public class DateTieredCompactionStrategy extends AbstractCompactionStrategy
     @SuppressWarnings("resource")
     public synchronized Collection<AbstractCompactionTask> getMaximalTask(int gcBefore, boolean splitOutput)
     {
-        Iterable<SSTableReader> filteredSSTables = filterSuspectSSTables(sstables);
+        Iterable<SSTableReader> filteredSSTables;
+        synchronized (sstables)
+        {
+            filteredSSTables = filterSuspectSSTables(sstables);
+        }
         if (Iterables.isEmpty(filteredSSTables))
             return null;
         LifecycleTransaction txn = cfs.getTracker().tryModify(filteredSSTables, OperationType.COMPACTION);
