@@ -193,11 +193,6 @@ public class DateTieredCompactionStrategy extends AbstractCompactionStrategy
         });
     }
 
-    /**
-     *
-     * @param sstables
-     * @return
-     */
     public static List<Pair<SSTableReader, Long>> createSSTableAndMinTimestampPairs(Iterable<SSTableReader> sstables)
     {
         List<Pair<SSTableReader, Long>> sstableMinTimestampPairs = Lists.newArrayListWithCapacity(Iterables.size(sstables));
@@ -205,16 +200,23 @@ public class DateTieredCompactionStrategy extends AbstractCompactionStrategy
             sstableMinTimestampPairs.add(Pair.create(sstable, sstable.getMinTimestamp()));
         return sstableMinTimestampPairs;
     }
+
     @Override
     public void addSSTable(SSTableReader sstable)
     {
-        sstables.add(sstable);
+        synchronized (sstables)
+        {
+            sstables.add(sstable);
+        }
     }
 
     @Override
     public void removeSSTable(SSTableReader sstable)
     {
-        sstables.remove(sstable);
+        synchronized (sstables)
+        {
+            sstables.remove(sstable);
+        }
     }
     /**
      * A target time span used for bucketing SSTables based on timestamps.
@@ -394,7 +396,11 @@ public class DateTieredCompactionStrategy extends AbstractCompactionStrategy
     @SuppressWarnings("resource")
     public synchronized Collection<AbstractCompactionTask> getMaximalTask(int gcBefore, boolean splitOutput)
     {
-        Iterable<SSTableReader> filteredSSTables = filterSuspectSSTables(sstables);
+        Iterable<SSTableReader> filteredSSTables;
+        synchronized (sstables)
+        {
+            filteredSSTables = filterSuspectSSTables(sstables);
+        }
         if (Iterables.isEmpty(filteredSSTables))
             return null;
         LifecycleTransaction txn = cfs.getTracker().tryModify(filteredSSTables, OperationType.COMPACTION);

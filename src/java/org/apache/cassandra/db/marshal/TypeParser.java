@@ -37,7 +37,7 @@ public class TypeParser
     private int idx;
 
     // A cache of parsed string, specially useful for DynamicCompositeType
-    private static final Map<String, AbstractType<?>> cache = new HashMap<>();
+    private static volatile Map<String, AbstractType<?>> cache = new HashMap<>();
 
     public static final TypeParser EMPTY_PARSER = new TypeParser("", 0);
 
@@ -60,6 +60,7 @@ public class TypeParser
         if (str == null)
             return BytesType.instance;
 
+        // A single volatile read of 'cache' should not hurt.
         AbstractType<?> type = cache.get(str);
 
         if (type != null)
@@ -83,9 +84,27 @@ public class TypeParser
         else
             type = getAbstractType(name);
 
-        // We don't really care about concurrency here. Worst case scenario, we do some parsing unnecessarily
-        cache.put(str, type);
-        return type;
+        // Prevent concurrent modification to the map acting as the cache for TypeParser at the expense of
+        // more allocation when the cache needs to be updated, since updates to the cache are rare compared
+        // to the amount of reads.
+        //
+        // Copy the existing cache into a new map and add the parsed AbstractType instance and replace
+        // the cache, if the type is not already in the cache.
+        //
+        // The cache-update is done in a short synchronized block to prevent duplicate instances of AbstractType
+        // for the same string representation.
+        synchronized (TypeParser.class)
+        {
+            Map<String, AbstractType<?>> newCache = new HashMap<>(cache);
+            AbstractType<?> ex = newCache.put(str, type);
+            if (ex == null)
+            {
+                // probably the usual case
+                cache = newCache;
+                return type;
+            }
+            return ex;
+        }
     }
 
     public static AbstractType<?> parse(CharSequence compareWith) throws SyntaxException, ConfigurationException
