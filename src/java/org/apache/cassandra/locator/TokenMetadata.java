@@ -98,8 +98,8 @@ public class TokenMetadata
     private final ReadWriteLock lock = new ReentrantReadWriteLock(true);
     private volatile ArrayList<Token> sortedTokens; // safe to be read without a lock, as it's never mutated
 
-    @VisibleForTesting
     private Topology topology;
+
     public final IPartitioner partitioner;
 
     // signals replication strategies that nodes have joined or left the ring and they need to recompute ownership
@@ -109,7 +109,7 @@ public class TokenMetadata
     {
         this(SortedBiMultiValMap.<Token, InetAddressAndPort>create(),
              HashBiMap.create(),
-             new Topology(),
+             Topology.empty(),
              DatabaseDescriptor.getPartitioner());
     }
 
@@ -187,6 +187,7 @@ public class TokenMetadata
         try
         {
             boolean shouldSortTokens = false;
+            Topology.Builder topologyBuilder = topology.unbuild();
             for (InetAddressAndPort endpoint : endpointTokens.keySet())
             {
                 Collection<Token> tokens = endpointTokens.get(endpoint);
@@ -195,7 +196,7 @@ public class TokenMetadata
 
                 bootstrapTokens.removeValue(endpoint);
                 tokenToEndpointMap.removeValue(endpoint);
-                topology = topology.addEndpoint(endpoint);
+                topologyBuilder.addEndpoint(endpoint);
                 leavingEndpoints.remove(endpoint);
                 replacementToOriginal.remove(endpoint);
                 removeFromMoving(endpoint); // also removing this endpoint from moving
@@ -211,6 +212,7 @@ public class TokenMetadata
                     }
                 }
             }
+            topology = topologyBuilder.build();
 
             if (shouldSortTokens)
                 sortedTokens = sortTokens();
@@ -459,7 +461,7 @@ public class TokenMetadata
         {
             bootstrapTokens.removeValue(endpoint);
             tokenToEndpointMap.removeValue(endpoint);
-            topology = topology.removeEndpoint(endpoint);
+            topology = topology.unbuild().removeEndpoint(endpoint).build();
             leavingEndpoints.remove(endpoint);
             if (replacementToOriginal.remove(endpoint) != null)
             {
@@ -486,7 +488,7 @@ public class TokenMetadata
         try
         {
             logger.info("Updating topology for {}", endpoint);
-            topology = topology.updateEndpoint(endpoint);
+            topology = topology.unbuild().updateEndpoint(endpoint).build();
             invalidateCachedRings();
             return topology;
         }
@@ -506,7 +508,7 @@ public class TokenMetadata
         try
         {
             logger.info("Updating topology for all endpoints that have changed");
-            topology = topology.updateEndpoints();
+            topology = topology.unbuild().updateEndpoints().build();
             invalidateCachedRings();
             return topology;
         }
@@ -1175,7 +1177,7 @@ public class TokenMetadata
             pendingRanges.clear();
             movingEndpoints.clear();
             sortedTokens.clear();
-            topology = new Topology();
+            topology = Topology.empty();
             invalidateCachedRings();
         }
         finally
@@ -1320,7 +1322,15 @@ public class TokenMetadata
     public Topology getTopology()
     {
         assert this != StorageService.instance.getTokenMetadata();
-        return topology;
+        lock.readLock().lock();
+        try
+        {
+            return topology;
+        }
+        finally
+        {
+            lock.readLock().unlock();
+        }
     }
 
     public long getRingVersion()
@@ -1346,124 +1356,22 @@ public class TokenMetadata
     public static class Topology
     {
         /** multi-map of DC to endpoints in that DC */
-        private final Multimap<String, InetAddressAndPort> dcEndpoints;
+        private final ImmutableMultimap<String, InetAddressAndPort> dcEndpoints;
         /** map of DC to multi-map of rack to endpoints in that rack */
-        private final Map<String, Multimap<String, InetAddressAndPort>> dcRacks;
+        private final ImmutableMap<String, ImmutableMultimap<String, InetAddressAndPort>> dcRacks;
         /** reverse-lookup map for endpoint to current known dc/rack assignment */
-        private final Map<InetAddressAndPort, Pair<String, String>> currentLocations;
+        private final ImmutableMap<InetAddressAndPort, Pair<String, String>> currentLocations;
 
-        Topology()
+        private Topology(Builder builder)
         {
-            dcEndpoints = HashMultimap.create();
-            dcRacks = new HashMap<>();
-            currentLocations = new HashMap<>();
-        }
+            this.dcEndpoints = ImmutableMultimap.copyOf(builder.dcEndpoints);
 
-        /**
-         * construct deep-copy of other
-         */
-        Topology(Topology other)
-        {
-            dcEndpoints = HashMultimap.create(other.dcEndpoints);
-            dcRacks = new HashMap<>();
-            for (String dc : other.dcRacks.keySet())
-                dcRacks.put(dc, HashMultimap.create(other.dcRacks.get(dc)));
-            currentLocations = new HashMap<>(other.currentLocations);
-        }
+            ImmutableMap.Builder<String, ImmutableMultimap<String, InetAddressAndPort>> dcRackBuilder = ImmutableMap.builder();
+            for (Map.Entry<String, Multimap<String, InetAddressAndPort>> entry : builder.dcRacks.entrySet())
+                dcRackBuilder.put(entry.getKey(), ImmutableMultimap.copyOf(entry.getValue()));
+            this.dcRacks = dcRackBuilder.build();
 
-        /**
-         * Stores current DC/rack assignment for ep
-         */
-        Topology addEndpoint(InetAddressAndPort ep)
-        {
-            Topology t;
-
-            IEndpointSnitch snitch = DatabaseDescriptor.getEndpointSnitch();
-            String dc = snitch.getDatacenter(ep);
-            String rack = snitch.getRack(ep);
-            Pair<String, String> current = currentLocations.get(ep);
-            if (current != null)
-            {
-                if (current.left.equals(dc) && current.right.equals(rack))
-                    return this;
-                t = new Topology(this);
-                t.doRemoveEndpoint(ep);
-            }
-            else
-            {
-                t = new Topology(this);
-            }
-
-            t.doAddEndpoint(ep, dc, rack);
-
-            return t;
-        }
-
-        private void doAddEndpoint(InetAddressAndPort ep, String dc, String rack)
-        {
-            dcEndpoints.put(dc, ep);
-
-            if (!dcRacks.containsKey(dc))
-                dcRacks.put(dc, HashMultimap.create());
-            dcRacks.get(dc).put(rack, ep);
-
-            currentLocations.put(ep, Pair.create(dc, rack));
-        }
-
-        /**
-         * Removes current DC/rack assignment for ep
-         */
-        Topology removeEndpoint(InetAddressAndPort ep)
-        {
-            if (!currentLocations.containsKey(ep))
-                return this;
-
-            Topology t = new Topology(this);
-            t.doRemoveEndpoint(ep);
-            return t;
-        }
-
-        private void doRemoveEndpoint(InetAddressAndPort ep)
-        {
-            Pair<String, String> current = currentLocations.remove(ep);
-            assert current != null : "No location for " + ep;
-            dcRacks.get(current.left).remove(current.right, ep);
-            dcEndpoints.remove(current.left, ep);
-        }
-
-        Topology updateEndpoint(InetAddressAndPort ep)
-        {
-            IEndpointSnitch snitch = DatabaseDescriptor.getEndpointSnitch();
-            if (snitch == null || !currentLocations.containsKey(ep))
-                return this;
-
-            Topology t = new Topology(this);
-            t.updateEndpoint(ep, snitch);
-            return t;
-        }
-
-        Topology updateEndpoints()
-        {
-            IEndpointSnitch snitch = DatabaseDescriptor.getEndpointSnitch();
-            if (snitch == null)
-                return this;
-
-            Topology t = new Topology(this);
-            for (InetAddressAndPort ep : currentLocations.keySet())
-                t.updateEndpoint(ep, snitch);
-            return t;
-        }
-
-        private void updateEndpoint(InetAddressAndPort ep, IEndpointSnitch snitch)
-        {
-            Pair<String, String> current = currentLocations.get(ep);
-            String dc = snitch.getDatacenter(ep);
-            String rack = snitch.getRack(ep);
-            if (dc.equals(current.left) && rack.equals(current.right))
-                return;
-
-            doRemoveEndpoint(ep);
-            doAddEndpoint(ep, dc, rack);
+            this.currentLocations = ImmutableMap.copyOf(builder.currentLocations);
         }
 
         /**
@@ -1477,7 +1385,7 @@ public class TokenMetadata
         /**
          * @return map of DC to multi-map of rack to endpoints in that rack
          */
-        public Map<String, Multimap<String, InetAddressAndPort>> getDatacenterRacks()
+        public ImmutableMap<String, ImmutableMultimap<String, InetAddressAndPort>> getDatacenterRacks()
         {
             return dcRacks;
         }
@@ -1490,5 +1398,135 @@ public class TokenMetadata
             return currentLocations.get(addr);
         }
 
+        Builder unbuild()
+        {
+            return new Builder(this);
+        }
+
+        static Builder builder()
+        {
+            return new Builder();
+        }
+
+        static Topology empty()
+        {
+            return builder().build();
+        }
+
+        private static class Builder
+        {
+            /** multi-map of DC to endpoints in that DC */
+            private final Multimap<String, InetAddressAndPort> dcEndpoints;
+            /** map of DC to multi-map of rack to endpoints in that rack */
+            private final Map<String, Multimap<String, InetAddressAndPort>> dcRacks;
+            /** reverse-lookup map for endpoint to current known dc/rack assignment */
+            private final Map<InetAddressAndPort, Pair<String, String>> currentLocations;
+
+            Builder()
+            {
+                this.dcEndpoints = HashMultimap.create();
+                this.dcRacks = new HashMap<>();
+                this.currentLocations = new HashMap<>();
+            }
+
+            Builder(Topology from)
+            {
+                this.dcEndpoints = HashMultimap.create(from.dcEndpoints);
+
+                this.dcRacks = Maps.newHashMapWithExpectedSize(from.dcRacks.size());
+                for (Map.Entry<String, ImmutableMultimap<String, InetAddressAndPort>> entry : from.dcRacks.entrySet())
+                    dcRacks.put(entry.getKey(), HashMultimap.create(entry.getValue()));
+
+                this.currentLocations = new HashMap<>(from.currentLocations);
+            }
+
+            /**
+             * Stores current DC/rack assignment for ep
+             */
+            Builder addEndpoint(InetAddressAndPort ep)
+            {
+                IEndpointSnitch snitch = DatabaseDescriptor.getEndpointSnitch();
+                String dc = snitch.getDatacenter(ep);
+                String rack = snitch.getRack(ep);
+                Pair<String, String> current = currentLocations.get(ep);
+                if (current != null)
+                {
+                    if (current.left.equals(dc) && current.right.equals(rack))
+                        return this;
+                    doRemoveEndpoint(ep, current);
+                }
+
+                doAddEndpoint(ep, dc, rack);
+                return this;
+            }
+
+            private void doAddEndpoint(InetAddressAndPort ep, String dc, String rack)
+            {
+                dcEndpoints.put(dc, ep);
+
+                if (!dcRacks.containsKey(dc))
+                    dcRacks.put(dc, HashMultimap.<String, InetAddressAndPort>create());
+                dcRacks.get(dc).put(rack, ep);
+
+                currentLocations.put(ep, Pair.create(dc, rack));
+            }
+
+            /**
+             * Removes current DC/rack assignment for ep
+             */
+            Builder removeEndpoint(InetAddressAndPort ep)
+            {
+                if (!currentLocations.containsKey(ep))
+                    return this;
+
+                doRemoveEndpoint(ep, currentLocations.remove(ep));
+                return this;
+            }
+
+            private void doRemoveEndpoint(InetAddressAndPort ep, Pair<String, String> current)
+            {
+                dcRacks.get(current.left).remove(current.right, ep);
+                dcEndpoints.remove(current.left, ep);
+            }
+
+            Builder updateEndpoint(InetAddressAndPort ep)
+            {
+                IEndpointSnitch snitch = DatabaseDescriptor.getEndpointSnitch();
+                if (snitch == null || !currentLocations.containsKey(ep))
+                    return this;
+
+                updateEndpoint(ep, snitch);
+                return this;
+            }
+
+            Builder updateEndpoints()
+            {
+                IEndpointSnitch snitch = DatabaseDescriptor.getEndpointSnitch();
+                if (snitch == null)
+                    return this;
+
+                for (InetAddressAndPort ep : currentLocations.keySet())
+                    updateEndpoint(ep, snitch);
+
+                return this;
+            }
+
+            private void updateEndpoint(InetAddressAndPort ep, IEndpointSnitch snitch)
+            {
+                Pair<String, String> current = currentLocations.get(ep);
+                String dc = snitch.getDatacenter(ep);
+                String rack = snitch.getRack(ep);
+                if (dc.equals(current.left) && rack.equals(current.right))
+                    return;
+
+                doRemoveEndpoint(ep, current);
+                doAddEndpoint(ep, dc, rack);
+            }
+
+            Topology build()
+            {
+                return new Topology(this);
+            }
+        }
     }
 }
