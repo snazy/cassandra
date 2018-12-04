@@ -23,6 +23,9 @@ import java.lang.reflect.Method;
 import java.nio.ByteBuffer;
 import java.util.*;
 
+import com.google.common.base.Verify;
+import com.google.common.collect.ImmutableMap;
+
 import org.apache.cassandra.cql3.FieldIdentifier;
 import org.apache.cassandra.exceptions.*;
 import org.apache.cassandra.utils.ByteBufferUtil;
@@ -38,7 +41,7 @@ public class TypeParser
     private int idx;
 
     // A cache of parsed string, specially useful for DynamicCompositeType
-    private static volatile Map<String, AbstractType<?>> cache = new HashMap<>();
+    private static volatile ImmutableMap<String, AbstractType<?>> cache = ImmutableMap.of();
 
     public static final TypeParser EMPTY_PARSER = new TypeParser("", 0);
 
@@ -96,15 +99,16 @@ public class TypeParser
         // for the same string representation.
         synchronized (TypeParser.class)
         {
-            Map<String, AbstractType<?>> newCache = new HashMap<>(cache);
-            AbstractType<?> ex = newCache.put(str, type);
-            if (ex == null)
+            if (!cache.containsKey(str))
             {
-                // probably the usual case
-                cache = newCache;
-                return type;
+                ImmutableMap.Builder<String, AbstractType<?>> builder = ImmutableMap.builder();
+                builder.putAll(cache).put(str, type);
+                cache = builder.build();
             }
-            return ex;
+
+            AbstractType<?> rtype = cache.get(str);
+            Verify.verify(rtype != null);
+            return rtype;
         }
     }
 
