@@ -224,21 +224,15 @@ public class DateTieredCompactionStrategy extends AbstractCompactionStrategy
     }
 
     @Override
-    public void addSSTable(SSTableReader sstable)
+    public synchronized void addSSTable(SSTableReader sstable)
     {
-        synchronized (sstables)
-        {
-            sstables.add(sstable);
-        }
+        sstables.add(sstable);
     }
 
     @Override
-    public void removeSSTable(SSTableReader sstable)
+    public synchronized void removeSSTable(SSTableReader sstable)
     {
-        synchronized (sstables)
-        {
-            sstables.remove(sstable);
-        }
+        sstables.remove(sstable);
     }
 
     @Override
@@ -426,11 +420,7 @@ public class DateTieredCompactionStrategy extends AbstractCompactionStrategy
     @SuppressWarnings("resource")
     public synchronized Collection<AbstractCompactionTask> getMaximalTask(int gcBefore, boolean splitOutput)
     {
-        Iterable<SSTableReader> filteredSSTables;
-        synchronized (sstables)
-        {
-            filteredSSTables = filterSuspectSSTables(sstables);
-        }
+        Iterable<SSTableReader> filteredSSTables = filterSuspectSSTables(sstables);
         if (Iterables.isEmpty(filteredSSTables))
             return null;
         LifecycleTransaction txn = cfs.getTracker().tryModify(filteredSSTables, OperationType.COMPACTION);
