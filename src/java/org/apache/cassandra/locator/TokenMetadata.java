@@ -97,7 +97,7 @@ public class TokenMetadata
     private final ReadWriteLock lock = new ReentrantReadWriteLock(true);
     private volatile ArrayList<Token> sortedTokens; // safe to be read without a lock, as it's never mutated
 
-    private Topology topology;
+    private volatile Topology topology;
 
     public final IPartitioner partitioner;
 
@@ -825,10 +825,9 @@ public class TokenMetadata
     public void calculatePendingRanges(AbstractReplicationStrategy strategy, String keyspaceName)
     {
         // avoid race between both branches - do not use a lock here as this will block any other unrelated operations!
+        long startedAt = System.currentTimeMillis();
         synchronized (pendingRanges)
         {
-            long startedAt = System.currentTimeMillis();
-
             // create clone of current state
             BiMultiValMap<Token, InetAddress> bootstrapTokensClone;
             Set<InetAddress> leavingEndpointsClone;
@@ -1277,15 +1276,7 @@ public class TokenMetadata
     public Topology getTopology()
     {
         assert this != StorageService.instance.getTokenMetadata();
-        lock.readLock().lock();
-        try
-        {
-            return topology;
-        }
-        finally
-        {
-            lock.readLock().unlock();
-        }
+        return topology;
     }
 
     public long getRingVersion()
