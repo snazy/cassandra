@@ -88,6 +88,8 @@ public class TypeParser
         else
             type = getAbstractType(name);
 
+        Verify.verify(type != null, "Parsing %s yielded null, which is a bug", str);
+
         // Prevent concurrent modification to the map acting as the cache for TypeParser at the expense of
         // more allocation when the cache needs to be updated, since updates to the cache are rare compared
         // to the amount of reads.
@@ -104,11 +106,9 @@ public class TypeParser
                 ImmutableMap.Builder<String, AbstractType<?>> builder = ImmutableMap.builder();
                 builder.putAll(cache).put(str, type);
                 cache = builder.build();
+                Verify.verify(cache.containsKey(str));
             }
-
-            AbstractType<?> rtype = cache.get(str);
-            Verify.verify(rtype != null);
-            return rtype;
+            return type;
         }
     }
 
