@@ -105,7 +105,6 @@ public class TypeParser
                 ImmutableMap.Builder<String, AbstractType<?>> builder = ImmutableMap.builder();
                 builder.putAll(cache).put(str, type);
                 cache = builder.build();
-                Verify.verify(cache.containsKey(str));
             }
             return type;
         }
