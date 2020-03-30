@@ -1,0 +1,41 @@
+
+
+  Apache Cassandra specific
+  =========================
+
+  Project properties:
+    -PtestRerun                --> rerun tests, even if the inputs (sources for example) did not change
+    -PtestRepetitions=N        --> run test tasks N times
+    -Pcodecoverage             --> enable codecoverage (jacoco)
+    -Prelease                  --> add some build-related information to the jar manifest
+    -Ptest.runners=N           --> use exactly N parallel test forks and don't rely on automatic calculation
+                                   based on memory & CPU.
+
+  Calculation of the test parallel forks:
+  - If the test task explicitly demands single execution (e.g. testDistribution task via noParallelTests=true),
+    use exactly one fork.
+  - If the test.runners property is specified, use that value
+  - Use the maximum(1, minimum(number-of-processors / 1.75, installed-memory / 4G)).
+    - number-of-processors defaults to java.lang.management.OperatingSystemMXBean.getAvailableProcessors
+      override with -Pcores.count=N
+    - installed-memory defaults to com.sun.management.OperatingSystemMXBean.getTotalPhysicalMemorySize
+      override with -Pmem.size=N (in bytes)
+
+
+  ant migration help
+  ==================
+
+  To run tests:
+    ./gradlew test --tests <test-pattern>
+  where test-pattern can be just a class name, a fully qualified classname, some wildcard expression, anything actually
+
+  Common tasks:
+    ./gradlew jar
+    ./gradlew dist
+    ./gradlew distTar
+
+
+  IDE help
+  ========
+
+  Don't run the "idea" task. Instead, just open the project in IDEA.

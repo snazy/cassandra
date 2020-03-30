@@ -143,6 +143,7 @@ public class DatabaseDescriptorRefTest
     "org.apache.cassandra.net.BackPressureStrategy",
     "org.apache.cassandra.security.EncryptionContext",
     "org.apache.cassandra.service.CacheService$CacheType",
+    "org.apache.cassandra.test.junitlog4j.PerSuiteRollingFileAppender",
     "org.apache.cassandra.utils.binlog.BinLogOptions",
     "org.apache.cassandra.utils.FBUtilities",
     "org.apache.cassandra.utils.FBUtilities$1",

@@ -43,6 +43,9 @@ cassandra_storagedir="$CASSANDRA_HOME/data"
 # JAVA_HOME can optionally be set here
 #JAVA_HOME=/usr/local/jdk6
 
+for jar in "$CASSANDRA_HOME"/build/tools/lib/*.jar; do
+    CLASSPATH="$CLASSPATH:$jar"
+done
 for jar in "$CASSANDRA_HOME"/tools/lib/*.jar; do
     CLASSPATH="$CLASSPATH:$jar"
 done

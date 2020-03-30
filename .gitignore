@@ -47,6 +47,9 @@ ide/nbproject/private
 nb-configuration.xml
 nbactions.xml
 
+# Gradle
+.gradle/
+
 # Maven, etc.
 out/
 target/
