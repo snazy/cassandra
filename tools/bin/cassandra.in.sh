@@ -30,9 +30,10 @@ CLASSPATH="$CASSANDRA_CONF"
 # compiled classes. NOTE: This isn't needed by the startup script,
 # it's just used here in constructing the classpath.
 if [ -d $CASSANDRA_HOME/build ] ; then
-    #cassandra_bin="$CASSANDRA_HOME/build/classes/main"
-    cassandra_bin=`ls -1 $CASSANDRA_HOME/build/apache-cassandra*.jar`
-    cassandra_bin="$cassandra_bin:$CASSANDRA_HOME/build/classes/stress:$CASSANDRA_HOME/build/classes/fqltool"
+    cassandra_bin="$CASSANDRA_HOME/build/classes/main:$CASSANDRA_HOME/build/classes/stress:$CASSANDRA_HOME/build/classes/fqltool"
+    if ls -1 $CASSANDRA_HOME/build/apache-cassandra*.jar > /dev/null 2>&1 ; then
+        cassandra_bin="`ls -1 $CASSANDRA_HOME/build/apache-cassandra*.jar | tail -1`:$cassandra_bin"
+    fi
     CLASSPATH="$CLASSPATH:$cassandra_bin"
 fi
 
@@ -43,6 +44,9 @@ cassandra_storagedir="$CASSANDRA_HOME/data"
 # JAVA_HOME can optionally be set here
 #JAVA_HOME=/usr/local/jdk6
 
+for jar in "$CASSANDRA_HOME"/build/tools/lib/*.jar; do
+    CLASSPATH="$CLASSPATH:$jar"
+done
 for jar in "$CASSANDRA_HOME"/tools/lib/*.jar; do
     CLASSPATH="$CLASSPATH:$jar"
 done

@@ -1,0 +1,52 @@
+
+
+  Apache Cassandra specific
+  =========================
+
+  Project properties:
+    -PtestRerun                --> rerun tests, even if the inputs (sources for example) did not change
+    -PtestRepetitions=N        --> run test tasks N times
+    -Pcodecoverage             --> enable codecoverage (jacoco)
+    -Prelease                  --> add some build-related information to the jar manifest
+    -Ptest.runners=N           --> use exactly N parallel test forks and don't rely on automatic calculation
+                                   based on memory & CPU.
+    -PwithSigning              --> Sign generated archives
+
+  Calculation of the test parallel forks:
+  - If the test task explicitly demands single execution (e.g. testDistribution task via noParallelTests=true),
+    use exactly one fork.
+  - If the test.runners property is specified, use that value
+  - Use the maximum(1, minimum(number-of-processors / 1.75, installed-memory / 4G)).
+    - number-of-processors defaults to java.lang.management.OperatingSystemMXBean.getAvailableProcessors
+      override with -Pcores.count=N
+    - installed-memory defaults to com.sun.management.OperatingSystemMXBean.getTotalPhysicalMemorySize
+      override with -Pmem.size=N (in bytes)
+
+  Other (project) properties:
+  - Signing build artifacts:
+        To sign build artifacts, you must specify the -PwithSigning option to ./gradlew (or have withSigning= in
+        your ~/.gradle/gradle.properties). Other options that affect signing are described in
+        https://docs.gradle.org/current/userguide/signing_plugin.html#sec:using_gpg_agent - most importantly:
+        signing.gnupg.executable=gpg and signing.gnupg.keyName=<your-gpg-key-id>
+  - Publishing to Sonatype:
+        Either add -PsonatypeUsername=username and -PsonatypePassword=password to each invocation of ./gradlew or
+        add entries for sonatypeUsername=username and sonatypePassword=password to your ~/.gradle/gradleproperties
+
+
+  ant migration help
+  ==================
+
+  To run tests:
+    ./gradlew test --tests <test-pattern>
+  where test-pattern can be just a class name, a fully qualified classname, some wildcard expression, anything actually
+
+  Common tasks:
+    ./gradlew jar
+    ./gradlew dist
+    ./gradlew distTar
+
+
+  IDE help
+  ========
+
+  Don't run the "idea" task. Instead, just open the project in IDEA.
