@@ -24,9 +24,9 @@
   <!-- Status listener is used to wrap stdout/stderr and tee to log file -->
   <statusListener class="org.apache.cassandra.LogbackStatusListener" />
 
-  <appender name="FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+  <appender name="FILE" class="org.apache.cassandra.test.junitlog4j.PerSuiteRollingFileAppender">
 
-    <file>./build/test/logs/${cassandra.testtag}/TEST-${suitename}.log</file>
+    <file>./build/test/logs/${cassandra.testtag}/TEST-%suitename%.log</file>
     <rollingPolicy class="ch.qos.logback.core.rolling.FixedWindowRollingPolicy">
       <fileNamePattern>./build/test/logs/${cassandra.testtag}/TEST-${suitename}.log.%i.gz</fileNamePattern>
       <minIndex>1</minIndex>
