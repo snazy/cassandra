@@ -21,6 +21,7 @@ package org.apache.cassandra.config;
 import java.util.function.Consumer;
 import java.util.function.Function;
 
+import org.apache.cassandra.OffsetAwareConfigurationLoader;
 import org.apache.cassandra.exceptions.ConfigurationException;
 
 /**
@@ -33,7 +34,7 @@ public class OverrideConfigurationLoader implements ConfigurationLoader
 
     public Config loadConfig() throws ConfigurationException
     {
-        YamlConfigurationLoader loader = new YamlConfigurationLoader();
+        YamlConfigurationLoader loader = new OffsetAwareConfigurationLoader();
         Config config = loader.loadConfig();
         configModifier.accept(config);
         return config;
