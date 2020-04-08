@@ -12,7 +12,32 @@
                                    based on memory & CPU.
     -PwithSigning              --> Sign generated archives
 
-  Calculation of the test parallel forks:
+  Gradle Enterprise Distributed Testing properties:
+    -PwithDistribution : presence of this property enables Gradle Enterprise Distributed testing
+    -PnoLocalExecutors : presence of this property disables running tests locally
+    -PremoteExecutors=N : number of test-agents for distributed testing (defaults to 20)"""
+
+  dtest project properties (pytest task):
+    -PdtestNoVnodes : presence of this property run dtests without vnodes (do NOT add the pytest --use-vnodes option)
+    -PdtestUpgrade : presence of this property include upgrade dtests (adds the pytest --execute-upgrade-tests option)
+    -PdtestLarge : presence of this property adds the pytest --force-resource-intensive-tests option
+    -PdtestNoLarge : presence of this property adds the pytest --skip-resource-intensive-tests option
+    -PdtestOptions : space separated list of options to pass to pytest
+    -PwithDistribution : presence of this property enables Gradle Enterprise Distributed testing
+    -PnoLocalDtests : presence of this property disables running dtests locally (or -PnoLocalExecutors)
+    -PremoteExecutors=N : number of test-agents for distributed testing (defaults to 20)
+
+  Project properties that affect the git branches for the dtest sources, ccm sources, cassandra-driver-sources:
+    To use a local directory:
+    - set the project property dtests.source.dtest
+    - set the project property dtests.source.ccm
+    - set the project property dtests.source.cassandraDriver
+    To use a different git repo:
+    - set the project property dtests.source.dtest.repo (similar for ccm + cassandraDriver)
+    - set the project property dtests.source.dtest.branch (similar for ccm + cassandraDriver)
+      the dtests.source.*.branch project property also supports git tags and SHAs
+
+  Calculation of the test parallel forks (local executors):
   - If the test task explicitly demands single execution (e.g. testDistribution task via noParallelTests=true),
     use exactly one fork.
   - If the test.runners property is specified, use that value
@@ -23,6 +48,14 @@
       override with -Pmem.size=N (in bytes)
 
   Other (project) properties:
+  - The URL for your Gradle Enterprise server (optional):
+        Add an entry for systemProp.gradle.enterprise.url=https://<gradle-enterprise-server-fqdn> to your
+        ~/.gradle/gradle.properties
+        (Alternatively add -Dgradle.enterprise.url=... to each invocation of ./gradlew)
+  - The URL for your Gradle Enterprise build cache node (optional):
+        Add an entry for systemProp.gradle.cache.url=https://<gradle-build-cache-node-fqdn> to your
+        ~/.gradle/gradle.properties
+        (Alternatively add -Dgradle.cache.url=... to each invocation of ./gradlew)
   - Signing build artifacts:
         To sign build artifacts, you must specify the -PwithSigning option to ./gradlew (or have withSigning= in
         your ~/.gradle/gradle.properties). Other options that affect signing are described in

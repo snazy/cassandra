@@ -42,6 +42,7 @@ import com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar
 import org.apache.cassandra.gradle.commonCassandraPom
 import org.apache.cassandra.gradle.configureEach
 import org.apache.cassandra.gradle.generateParentPom
+import org.apache.cassandra.gradle.property
 import org.apache.cassandra.gradle.withJUnitPlatform
 import org.apache.cassandra.gradle.testrunner.TestRunnerTaskExtension
 import org.apache.cassandra.gradle.util.JavaAgentArgumentProvider
@@ -58,6 +59,7 @@ plugins {
     eclipse
     idea
     id("org.jetbrains.gradle.plugin.idea-ext") version "0.9"
+    id("com.gradle.enterprise.test-distribution") version "1.1.2"
     id("org.caffinitas.gradle.aggregatetestresults") version "0.1"
     id("org.caffinitas.gradle.compilecommand") version "0.1.2"
     id("org.caffinitas.gradle.jflex") version "0.1.1"
@@ -480,6 +482,12 @@ tasks.configureEach<Test>("test", "testCdc", "testCompressionLZ4", "testCompress
 
 tasks.configureEach<Test>("testUnit", "test", "testLong", "testBurn", "testMemory", "testDistributed", "testFqltool", "testStress", "testCdc", "testCompressionLZ4", "testCompressionZst") {
     filter.isFailOnNoMatchingTests = false
+    distribution {
+        enabled.set(project.hasProperty("withDistribution"))
+        if (project.hasProperty("noLocalExecutors"))
+            maxLocalExecutors.set(0)
+        maxRemoteExecutors.set(project.property("remoteExecutors", "20").toString().toInt())
+    }
 }
 
 tasks.register<DefaultTask>("testAll") {
