@@ -23,6 +23,14 @@
       override with -Pmem.size=N (in bytes)
 
   Other (project) properties:
+  - The URL for your Gradle Enterprise server (optional):
+        Add an entry for systemProp.gradle.enterprise.url=https://<gradle-enterprise-server-fqdn> to your
+        ~/.gradle/gradleproperties
+        (Alternatively add -Dgradle.enterprise.url=... to each invocation of ./gradlew)
+  - The URL for your Gradle Enterprise build cache node (optional):
+        Add an entry for systemProp.gradle.cache.url=https://<gradle-build-cache-node-fqdn> to your
+        ~/.gradle/gradleproperties
+        (Alternatively add -Dgradle.cache.url=... to each invocation of ./gradlew)
   - Signing build artifacts:
         To sign build artifacts, you must specify the -PwithSigning option to ./gradlew (or have withSigning= in
         your ~/.gradle/gradleproperties). Other options that affect signing are described in
