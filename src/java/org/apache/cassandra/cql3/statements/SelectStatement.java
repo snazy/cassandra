@@ -205,24 +205,24 @@ public class SelectStatement implements CQLStatement
         return selection.getResultMetadata();
     }
 
-    public void authorize(ClientState state) throws InvalidRequestException, UnauthorizedException
+    public void authorize(QueryState state) throws InvalidRequestException, UnauthorizedException
     {
         if (table.isView())
         {
             TableMetadataRef baseTable = View.findBaseTable(keyspace(), columnFamily());
             if (baseTable != null)
-                state.ensureTablePermission(baseTable, Permission.SELECT);
+                state.ensureTablePermission(Permission.SELECT, baseTable);
         }
         else
         {
-            state.ensureTablePermission(table, Permission.SELECT);
+            state.ensureTablePermission(Permission.SELECT, table);
         }
 
         for (Function function : getFunctions())
-            state.ensurePermission(Permission.EXECUTE, function);
+            state.ensureFunctionPermission(Permission.EXECUTE, function);
     }
 
-    public void validate(ClientState state) throws InvalidRequestException
+    public void validate(QueryState state) throws InvalidRequestException
     {
         // Nothing to do, all validation has been done by RawStatement.prepare()
     }
@@ -943,7 +943,7 @@ public class SelectStatement implements CQLStatement
             this.perPartitionLimit = perPartitionLimit;
         }
 
-        public SelectStatement prepare(ClientState state)
+        public SelectStatement prepare(QueryState state)
         {
             return prepare(false);
         }

@@ -28,11 +28,11 @@ import org.apache.cassandra.db.marshal.AbstractType;
 import org.apache.cassandra.schema.*;
 import org.apache.cassandra.schema.Keyspaces.KeyspacesDiff;
 import org.apache.cassandra.service.ClientState;
+import org.apache.cassandra.service.QueryState;
 import org.apache.cassandra.service.reads.repair.ReadRepairStrategy;
 import org.apache.cassandra.transport.Event.SchemaChange;
 import org.apache.cassandra.transport.Event.SchemaChange.Change;
 import org.apache.cassandra.transport.Event.SchemaChange.Target;
-import org.apache.cassandra.utils.FBUtilities;
 
 import static java.lang.String.join;
 
@@ -71,9 +71,9 @@ public abstract class AlterTableStatement extends AlterSchemaStatement
         return new SchemaChange(Change.UPDATED, Target.TABLE, keyspaceName, tableName);
     }
 
-    public void authorize(ClientState client)
+    public void authorize(QueryState client)
     {
-        client.ensureTablePermission(keyspaceName, tableName, Permission.ALTER);
+        client.ensureTablePermission(Permission.ALTER, keyspaceName, tableName);
     }
 
     @Override
@@ -416,9 +416,9 @@ public abstract class AlterTableStatement extends AlterSchemaStatement
             this.name = name;
         }
 
-        public AlterTableStatement prepare(ClientState state)
+        public AlterTableStatement prepare(QueryState state)
         {
-            String keyspaceName = name.hasKeyspace() ? name.getKeyspace() : state.getKeyspace();
+            String keyspaceName = name.hasKeyspace() ? name.getKeyspace() : state.getClientState().getKeyspace();
             String tableName = name.getName();
 
             switch (kind)

@@ -18,9 +18,19 @@
 
 package org.apache.cassandra.auth;
 
+import java.util.Map;
+
 public interface AuthCacheMBean
 {
+    /**
+     * Re-initializes the cache.
+     */
     public void invalidate();
+
+    /**
+     * Clears the cache.
+     */
+    public void invalidateAll();
 
     public void setValidity(int validityPeriod);
 
@@ -33,4 +43,20 @@ public interface AuthCacheMBean
     public void setMaxEntries(int maxEntries);
 
     public int getMaxEntries();
+
+    public void setInitialCapacity(int initialCapacity);
+
+    public int getInitialCapacity();
+
+    /**
+     * Experimental: retrieve cache statistics.
+     *
+     * Cache stats are only available, if the system property {@value AuthCache#RECORD_CACHE_STATS} is set to {@¢ode true}.
+     *
+     * The entries in the returned map are implementation dependent and <em>currently</em> reflect most values in
+     * {@link com.github.benmanes.caffeine.cache.stats.CacheStats}. The presence and exact meaning of the returned
+     * entries may change both when another cache implementation will be used or the implementation (currently
+     * Caffeine) changes.
+     */
+    public Map<String, Number> getCacheStats();
 }

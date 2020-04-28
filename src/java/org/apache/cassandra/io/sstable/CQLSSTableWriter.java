@@ -50,7 +50,7 @@ import org.apache.cassandra.exceptions.InvalidRequestException;
 import org.apache.cassandra.exceptions.SyntaxException;
 import org.apache.cassandra.io.sstable.format.SSTableFormat;
 import org.apache.cassandra.schema.*;
-import org.apache.cassandra.service.ClientState;
+import org.apache.cassandra.service.QueryState;
 import org.apache.cassandra.transport.ProtocolVersion;
 import org.apache.cassandra.utils.ByteBufferUtil;
 
@@ -558,9 +558,9 @@ public class CQLSSTableWriter implements Closeable
          */
         private TableMetadata createTable(Types types)
         {
-            ClientState state = ClientState.forInternalCalls();
+            QueryState state = QueryState.forInternalCalls();
             CreateTableStatement statement = schemaStatement.prepare(state);
-            statement.validate(ClientState.forInternalCalls());
+            statement.validate(state);
 
             TableMetadata.Builder builder = statement.builder(types);
             if (partitioner != null)
@@ -576,7 +576,7 @@ public class CQLSSTableWriter implements Closeable
          */
         private UpdateStatement prepareInsert()
         {
-            ClientState state = ClientState.forInternalCalls();
+            QueryState state = QueryState.forInternalCalls();
             UpdateStatement insert = (UpdateStatement) insertStatement.prepare(state);
             insert.validate(state);
 

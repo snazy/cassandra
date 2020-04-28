@@ -26,7 +26,7 @@ import org.apache.cassandra.schema.Diff;
 import org.apache.cassandra.schema.*;
 import org.apache.cassandra.schema.KeyspaceMetadata.KeyspaceDiff;
 import org.apache.cassandra.schema.Keyspaces.KeyspacesDiff;
-import org.apache.cassandra.service.ClientState;
+import org.apache.cassandra.service.QueryState;
 import org.apache.cassandra.transport.Event.SchemaChange;
 import org.apache.cassandra.transport.Event.SchemaChange.Change;
 import org.apache.cassandra.transport.Event.SchemaChange.Target;
@@ -74,14 +74,14 @@ public final class DropIndexStatement extends AlterSchemaStatement
         return new SchemaChange(Change.UPDATED, Target.TABLE, keyspaceName, tableDiff.after.name);
     }
 
-    public void authorize(ClientState client)
+    public void authorize(QueryState client)
     {
         KeyspaceMetadata keyspace = Schema.instance.getKeyspaceMetadata(keyspaceName);
         if (null == keyspace)
             return;
 
         keyspace.findIndexedTable(indexName)
-                .ifPresent(t -> client.ensureTablePermission(keyspaceName, t.name, Permission.ALTER));
+                .ifPresent(t -> client.ensureTablePermission(Permission.ALTER, keyspaceName, t.name));
     }
 
     @Override
@@ -106,9 +106,9 @@ public final class DropIndexStatement extends AlterSchemaStatement
             this.ifExists = ifExists;
         }
 
-        public DropIndexStatement prepare(ClientState state)
+        public DropIndexStatement prepare(QueryState state)
         {
-            String keyspaceName = name.hasKeyspace() ? name.getKeyspace() : state.getKeyspace();
+            String keyspaceName = name.hasKeyspace() ? name.getKeyspace() : state.getClientState().getKeyspace();
             return new DropIndexStatement(keyspaceName, name.getName(), ifExists);
         }
     }

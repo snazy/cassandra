@@ -54,7 +54,7 @@ import org.apache.cassandra.schema.KeyspaceMetadata;
 import org.apache.cassandra.schema.KeyspaceParams;
 import org.apache.cassandra.schema.TableMetadataRef;
 import org.apache.cassandra.schema.Types;
-import org.apache.cassandra.service.ClientState;
+import org.apache.cassandra.service.QueryState;
 import org.apache.cassandra.transport.ProtocolVersion;
 import org.apache.cassandra.utils.ByteBufferUtil;
 
@@ -601,7 +601,7 @@ public class StressCQLSSTableWriter implements Closeable
             if (tableMetadata != null)
                 return Schema.instance.getColumnFamilyStoreInstance(tableMetadata.id);
 
-            ClientState state = ClientState.forInternalCalls();
+            QueryState state = QueryState.forInternalCalls();
             CreateTableStatement statement = schemaStatement.prepare(state);
             statement.validate(state);
 
@@ -634,7 +634,7 @@ public class StressCQLSSTableWriter implements Closeable
          */
         private UpdateStatement prepareInsert()
         {
-            ClientState state = ClientState.forInternalCalls();
+            QueryState state = QueryState.forInternalCalls();
             CQLStatement cqlStatement = insertStatement.prepare(state);
             UpdateStatement insert = (UpdateStatement) cqlStatement;
             insert.validate(state);

@@ -28,7 +28,6 @@ import org.junit.Test;
 import org.apache.cassandra.cql3.statements.BatchStatement;
 import org.apache.cassandra.cql3.statements.ModificationStatement;
 import org.apache.cassandra.db.ConsistencyLevel;
-import org.apache.cassandra.service.ClientState;
 import org.apache.cassandra.service.QueryState;
 import org.apache.cassandra.transport.ProtocolVersion;
 import org.apache.cassandra.transport.messages.ResultMessage;
@@ -143,12 +142,11 @@ public class CustomNowInSecondsTest extends CQLTester
             format("INSERT INTO %s.%s (id, val) VALUES (1, 1) USING TTL %d;", ks, tbl, 1)
         );
 
-        ClientState cs = ClientState.forInternalCalls();
-        QueryState qs = new QueryState(cs);
+        QueryState qs = QueryState.forInternalCalls();
 
         List<ModificationStatement> statements = new ArrayList<>(queries.size());
         for (String query : queries)
-            statements.add((ModificationStatement) QueryProcessor.parseStatement(query, cs));
+            statements.add((ModificationStatement) QueryProcessor.parseStatement(query, qs));
 
         BatchStatement batch =
             new BatchStatement(BatchStatement.Type.UNLOGGED, VariableSpecifications.empty(), statements, Attributes.none());
@@ -177,12 +175,11 @@ public class CustomNowInSecondsTest extends CQLTester
     // prepared = false tests QueryMessage path, prepared = true tests ExecuteMessage path
     private static ResultMessage execute(String query, int nowInSeconds, boolean prepared)
     {
-        ClientState cs = ClientState.forInternalCalls();
-        QueryState qs = new QueryState(cs);
+        QueryState qs = QueryState.forInternalCalls();
 
         if (prepared)
         {
-            CQLStatement statement = QueryProcessor.parseStatement(query, cs);
+            CQLStatement statement = QueryProcessor.parseStatement(query, qs);
             return QueryProcessor.instance.processPrepared(statement, qs, queryOptions(nowInSeconds), Collections.emptyMap(), System.nanoTime());
         }
         else

@@ -17,8 +17,6 @@
  */
 package org.apache.cassandra.transport.messages;
 
-import java.util.function.Supplier;
-
 import com.google.common.collect.ImmutableMap;
 
 import io.netty.buffer.ByteBuf;
@@ -108,10 +106,10 @@ public class PrepareMessage extends Message.Request
             if (traceRequest)
                 Tracing.instance.begin("Preparing CQL3 query", state.getClientAddress(), ImmutableMap.of("query", query));
 
-            ClientState clientState = state.getClientState().cloneWithKeyspaceIfSet(keyspace);
+            state = state.cloneWithKeyspaceIfSet(keyspace);
             QueryHandler queryHandler = ClientState.getCQLQueryHandler();
             long queryTime = System.currentTimeMillis();
-            ResultMessage.Prepared response = queryHandler.prepare(query, clientState, getCustomPayload());
+            ResultMessage.Prepared response = queryHandler.prepare(query, state, getCustomPayload());
             QueryEvents.instance.notifyPrepareSuccess(() -> queryHandler.getPrepared(response.statementId), query, state, queryTime, response);
             return response;
         }

@@ -17,6 +17,8 @@
  */
 package org.apache.cassandra.transport;
 
+import java.net.InetAddress;
+import java.net.InetSocketAddress;
 import javax.net.ssl.SSLPeerUnverifiedException;
 import javax.security.cert.X509Certificate;
 
@@ -113,11 +115,11 @@ public class ServerConnection extends Connection
         }
     }
 
-    public IAuthenticator.SaslNegotiator getSaslNegotiator(QueryState queryState)
+    public IAuthenticator.SaslNegotiator getSaslNegotiator()
     {
         if (saslNegotiator == null)
             saslNegotiator = DatabaseDescriptor.getAuthenticator()
-                                               .newSaslNegotiator(queryState.getClientAddress(), certificates());
+                                               .newSaslNegotiator(getClientAddress(), certificates());
         return saslNegotiator;
     }
 
@@ -141,5 +143,18 @@ public class ServerConnection extends Connection
             }
         }
         return certificates;
+    }
+
+    protected InetSocketAddress getRemoteAddress()
+    {
+        return clientState.isInternal
+               ? null
+               : clientState.getRemoteAddress();
+    }
+
+    protected final InetAddress getClientAddress()
+    {
+        InetSocketAddress socketAddress = getRemoteAddress();
+        return socketAddress == null ? null : socketAddress.getAddress();
     }
 }

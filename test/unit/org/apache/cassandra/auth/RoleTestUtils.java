@@ -18,19 +18,9 @@
 
 package org.apache.cassandra.auth;
 
-import java.util.concurrent.Callable;
-
-import org.apache.cassandra.cql3.QueryOptions;
-import org.apache.cassandra.cql3.QueryProcessor;
-import org.apache.cassandra.cql3.UntypedResultSet;
-import org.apache.cassandra.cql3.statements.SelectStatement;
 import org.apache.cassandra.db.ColumnFamilyStore;
-import org.apache.cassandra.db.ConsistencyLevel;
 import org.apache.cassandra.db.Keyspace;
 import org.apache.cassandra.schema.SchemaConstants;
-import org.apache.cassandra.service.QueryState;
-import org.apache.cassandra.transport.messages.ResultMessage;
-
 
 public class RoleTestUtils
 {
@@ -47,29 +37,6 @@ public class RoleTestUtils
     public static final RoleResource[] ALL_ROLES  = new RoleResource[] {ROLE_A,
                                                                         ROLE_B, ROLE_B_1, ROLE_B_2, ROLE_B_3,
                                                                         ROLE_C, ROLE_C_1, ROLE_C_2, ROLE_C_3};
-    /**
-     * This just extends the internal IRoleManager implementation to ensure that
-     * all access to underlying tables is made via
-     * QueryProcessor.executeOnceInternal/CQLStatement.executeInternal and not
-     * StorageProxy so that it can be used in unit tests.
-     */
-    public static class LocalCassandraRoleManager extends CassandraRoleManager
-    {
-        ResultMessage.Rows select(SelectStatement statement, QueryOptions options)
-        {
-            return statement.executeLocally(QueryState.forInternalCalls(), options);
-        }
-
-        UntypedResultSet process(String query, ConsistencyLevel consistencyLevel)
-        {
-            return QueryProcessor.executeInternal(query);
-        }
-
-        protected void scheduleSetupTask(final Callable<Void> setupTask)
-        {
-            // skip data migration or setting up default role for tests
-        }
-    }
 
     public static void grantRolesTo(IRoleManager roleManager, RoleResource grantee, RoleResource...granted)
     {

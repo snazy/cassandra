@@ -28,6 +28,8 @@ import com.datastax.driver.core.BatchStatement;
 import com.datastax.driver.core.ConsistencyLevel;
 import com.datastax.driver.core.SimpleStatement;
 import com.datastax.driver.core.Statement;
+
+import org.apache.cassandra.auth.UserRolesAndPermissions;
 import org.apache.cassandra.fql.FullQueryLogger;
 import org.apache.cassandra.cql3.QueryOptions;
 import org.apache.cassandra.service.ClientState;
@@ -64,7 +66,7 @@ public abstract class FQLQuery implements Comparable<FQLQuery>
     private QueryState queryState(String keyspace, long generatedTimestamp, int generatedNowInSeconds)
     {
         ClientState clientState = keyspace != null ? ClientState.forInternalCalls(keyspace) : ClientState.forInternalCalls();
-        return new QueryState(clientState, generatedTimestamp, generatedNowInSeconds);
+        return new QueryState(clientState, UserRolesAndPermissions.SYSTEM, generatedTimestamp, generatedNowInSeconds);
     }
 
     public boolean equals(Object o)

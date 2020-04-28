@@ -159,7 +159,7 @@ public class BatchStatement implements CQLStatement
         return functions;
     }
 
-    public void authorize(ClientState state) throws InvalidRequestException, UnauthorizedException
+    public void authorize(QueryState state) throws InvalidRequestException, UnauthorizedException
     {
         for (ModificationStatement statement : statements)
             statement.authorize(state);
@@ -250,7 +250,7 @@ public class BatchStatement implements CQLStatement
 
     // The batch itself will be validated in either Parsed#prepare() - for regular CQL3 batches,
     //   or in QueryProcessor.processBatch() - for native protocol batches.
-    public void validate(ClientState state) throws InvalidRequestException
+    public void validate(QueryState state) throws InvalidRequestException
     {
         for (ModificationStatement statement : statements)
             statement.validate(state);
@@ -598,7 +598,7 @@ public class BatchStatement implements CQLStatement
                 statement.setKeyspace(state);
         }
 
-        public BatchStatement prepare(ClientState state)
+        public BatchStatement prepare(QueryState state)
         {
             List<ModificationStatement> statements = new ArrayList<>(parsedStatements.size());
             parsedStatements.forEach(s -> statements.add(s.prepare(bindVariables)));

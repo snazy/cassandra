@@ -46,7 +46,6 @@ import org.apache.cassandra.db.partitions.*;
 import org.apache.cassandra.db.rows.RowIterator;
 import org.apache.cassandra.db.view.View;
 import org.apache.cassandra.exceptions.*;
-import org.apache.cassandra.service.ClientState;
 import org.apache.cassandra.service.QueryState;
 import org.apache.cassandra.service.StorageProxy;
 import org.apache.cassandra.service.paxos.Commit;
@@ -232,31 +231,31 @@ public abstract class ModificationStatement implements CQLStatement
         return attrs.getTimeToLive(options, metadata);
     }
 
-    public void authorize(ClientState state) throws InvalidRequestException, UnauthorizedException
+    public void authorize(QueryState state) throws InvalidRequestException, UnauthorizedException
     {
-        state.ensureTablePermission(metadata, Permission.MODIFY);
+        state.ensureTablePermission(Permission.MODIFY, metadata);
 
         // CAS updates can be used to simulate a SELECT query, so should require Permission.SELECT as well.
         if (hasConditions())
-            state.ensureTablePermission(metadata, Permission.SELECT);
+            state.ensureTablePermission(Permission.SELECT, metadata);
 
         // MV updates need to get the current state from the table, and might update the views
         // Require Permission.SELECT on the base table, and Permission.MODIFY on the views
         Iterator<ViewMetadata> views = View.findAll(keyspace(), columnFamily()).iterator();
         if (views.hasNext())
         {
-            state.ensureTablePermission(metadata, Permission.SELECT);
+            state.ensureTablePermission(Permission.SELECT, metadata);
             do
             {
-                state.ensureTablePermission(views.next().metadata, Permission.MODIFY);
+                state.ensureTablePermission(Permission.MODIFY, views.next().metadata);
             } while (views.hasNext());
         }
 
         for (Function function : getFunctions())
-            state.ensurePermission(Permission.EXECUTE, function);
+            state.ensureFunctionPermission(Permission.EXECUTE, function);
     }
 
-    public void validate(ClientState state) throws InvalidRequestException
+    public void validate(QueryState state) throws InvalidRequestException
     {
         checkFalse(hasConditions() && attrs.isTimestampSet(), "Cannot provide custom timestamp for conditional updates");
         checkFalse(isCounter() && attrs.isTimestampSet(), "Cannot provide custom timestamp for counter updates");
@@ -870,7 +869,7 @@ public abstract class ModificationStatement implements CQLStatement
             this.ifExists = ifExists;
         }
 
-        public ModificationStatement prepare(ClientState state)
+        public ModificationStatement prepare(QueryState state)
         {
             return prepare(bindVariables);
         }

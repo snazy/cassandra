@@ -20,7 +20,6 @@ package org.apache.cassandra.cql3;
 import java.io.File;
 import java.io.IOException;
 import java.lang.management.ManagementFactory;
-import java.lang.reflect.Field;
 import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.net.InetAddress;
@@ -55,9 +54,12 @@ import com.datastax.driver.core.ResultSet;
 import org.apache.cassandra.SchemaLoader;
 import org.apache.cassandra.audit.AuditLogManager;
 import org.apache.cassandra.auth.AuthCacheMBean;
+import org.apache.cassandra.auth.AuthManager;
 import org.apache.cassandra.auth.CassandraAuthorizer;
+import org.apache.cassandra.auth.CassandraNetworkAuthorizer;
 import org.apache.cassandra.auth.CassandraRoleManager;
 import org.apache.cassandra.auth.PasswordAuthenticator;
+import org.apache.cassandra.auth.UserRolesAndPermissions;
 import org.apache.cassandra.concurrent.ScheduledExecutors;
 import org.apache.cassandra.db.virtual.VirtualKeyspaceRegistry;
 import org.apache.cassandra.db.virtual.VirtualSchemaKeyspace;
@@ -417,24 +419,10 @@ public abstract class CQLTester
 
     protected static void requireAuthentication()
     {
-        setDDField("authenticator", new PasswordAuthenticator());
-        setDDField("authorizer", new CassandraAuthorizer());
-        setDDField("roleManager", new CassandraRoleManager());
+        DatabaseDescriptor.setAuthenticator(new PasswordAuthenticator());
+        DatabaseDescriptor.setAuthManager(new AuthManager(new CassandraRoleManager(), new CassandraAuthorizer(), new CassandraNetworkAuthorizer()));
 
         System.setProperty("cassandra.superuser_setup_delay_ms", "0");
-    }
-
-    protected static void setDDField(String fieldName, Object value)
-    {
-        Field field = FBUtilities.getProtectedField(DatabaseDescriptor.class, fieldName);
-        try
-        {
-            field.set(null, value);
-        }
-        catch (IllegalAccessException e)
-        {
-            fail("Error setting " + field.getType().getSimpleName() + " instance for test");
-        }
     }
 
     // lazy initialization for all tests that require Java Driver
@@ -917,11 +905,12 @@ public abstract class CQLTester
     {
         try
         {
-            ClientState state = ClientState.forInternalCalls(SchemaConstants.SYSTEM_KEYSPACE_NAME);
-            QueryState queryState = new QueryState(state);
+            ClientState state = ClientState.forInternalCalls();
+            state.setKeyspace(SchemaConstants.SYSTEM_KEYSPACE_NAME);
+            QueryState queryState = new QueryState(state, UserRolesAndPermissions.SYSTEM);
 
-            CQLStatement statement = QueryProcessor.parseStatement(query, queryState.getClientState());
-            statement.validate(state);
+            CQLStatement statement = QueryProcessor.parseStatement(query, queryState);
+            statement.validate(queryState);
 
             QueryOptions options = QueryOptions.forInternalCalls(Collections.<ByteBuffer>emptyList());
 
@@ -1005,7 +994,7 @@ public abstract class CQLTester
     {
         invalidate("PermissionsCache");
         invalidate("RolesCache");
-        invalidate("CredentialsCache");
+        invalidate("NetworkAuthCache");
     }
 
     private static void invalidate(String authCacheName)
@@ -1045,7 +1034,7 @@ public abstract class CQLTester
 
     protected ResultMessage.Prepared prepare(String query) throws Throwable
     {
-        return QueryProcessor.prepare(formatQuery(query), ClientState.forInternalCalls());
+        return QueryProcessor.prepare(formatQuery(query), QueryState.forInternalCalls());
     }
 
     protected UntypedResultSet execute(String query, Object... values) throws Throwable

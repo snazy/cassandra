@@ -24,7 +24,7 @@ import org.apache.cassandra.auth.IRoleManager.Option;
 import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.cql3.RoleName;
 import org.apache.cassandra.exceptions.*;
-import org.apache.cassandra.service.ClientState;
+import org.apache.cassandra.service.QueryState;
 import org.apache.cassandra.transport.messages.ResultMessage;
 import org.apache.commons.lang3.builder.ToStringBuilder;
 import org.apache.commons.lang3.builder.ToStringStyle;
@@ -47,7 +47,7 @@ public class AlterRoleStatement extends AuthenticationStatement
         this.dcPermissions = dcPermissions;
     }
 
-    public void validate(ClientState state) throws RequestValidationException
+    public void validate(QueryState state) throws RequestValidationException
     {
         opts.validate();
 
@@ -65,12 +65,12 @@ public class AlterRoleStatement extends AuthenticationStatement
             throw new InvalidRequestException(String.format("%s doesn't exist", role.getRoleName()));
     }
 
-    public void authorize(ClientState state) throws UnauthorizedException
+    public void authorize(QueryState state) throws UnauthorizedException
     {
         AuthenticatedUser user = state.getUser();
-        boolean isSuper = user.isSuper();
+        boolean isSuper = state.isSuper();
 
-        if (opts.getSuperuser().isPresent() && user.getRoles().contains(role))
+        if (opts.getSuperuser().isPresent() && state.hasRole(role))
             throw new UnauthorizedException("You aren't allowed to alter your own superuser " +
                                             "status or that of a role granted to you");
 
@@ -93,11 +93,11 @@ public class AlterRoleStatement extends AuthenticationStatement
         else
         {
             // if not attempting to alter another role, ensure we have ALTER permissions on it
-            super.checkPermission(state, Permission.ALTER, role);
+            super.ensurePermission(state, Permission.ALTER, role);
         }
     }
 
-    public ResultMessage execute(ClientState state) throws RequestValidationException, RequestExecutionException
+    public ResultMessage execute(QueryState state) throws RequestValidationException, RequestExecutionException
     {
         if (!opts.isEmpty())
             DatabaseDescriptor.getRoleManager().alterRole(state.getUser(), role, opts);

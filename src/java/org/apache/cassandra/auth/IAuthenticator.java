@@ -20,6 +20,7 @@ package org.apache.cassandra.auth;
 import java.net.InetAddress;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Function;
 
 import javax.security.cert.X509Certificate;
 
@@ -28,6 +29,16 @@ import org.apache.cassandra.exceptions.ConfigurationException;
 
 public interface IAuthenticator
 {
+    default <T extends IAuthenticator> T implementation()
+    {
+        return (T) this;
+    }
+
+    default <T extends IAuthenticator> boolean isImplementationOf(Class<T> implClass)
+    {
+        return implClass.isAssignableFrom(implementation().getClass());
+    }
+
     /**
      * Whether or not the authenticator requires explicit login.
      * If false will instantiate user with AuthenticatedUser.ANONYMOUS_USER.
@@ -109,8 +120,8 @@ public interface IAuthenticator
          * informational in the case that the negotiation is completed on this round.
          *
          * This method is called each time a {@link org.apache.cassandra.transport.messages.AuthResponse} is received
-         * from a client. After it is called, {@link isComplete()} is checked to determine whether the negotiation has
-         * finished. If so, an AuthenticatedUser is obtained by calling {@link getAuthenticatedUser()} and that user
+         * from a client. After it is called, {@link #isComplete()} is checked to determine whether the negotiation has
+         * finished. If so, an AuthenticatedUser is obtained by calling {@link #getAuthenticatedUser()} and that user
          * associated with the active connection and the byte[] sent back to the client via an
          * {@link org.apache.cassandra.transport.messages.AuthSuccess} message. If the negotiation is not yet complete,
          * the byte[] is returned to the client as a further challenge in an
@@ -125,7 +136,7 @@ public interface IAuthenticator
         public byte[] evaluateResponse(byte[] clientResponse) throws AuthenticationException;
 
         /**
-         * Called after each invocation of {@link evaluateResponse(byte[])} to determine whether the  authentication has
+         * Called after each invocation of {@link #evaluateResponse(byte[])} to determine whether the  authentication has
          * completed successfully or should be continued.
          *
          * @return true if the authentication exchange has completed; false otherwise.
@@ -135,7 +146,7 @@ public interface IAuthenticator
 
         /**
          * Following a sucessful negotiation, get the AuthenticatedUser representing the logged in subject.
-         * This method should only be called if {@link isComplete()} returns true.
+         * This method should only be called if {@link #isComplete()} returns true.
          * Should never return null - always throw AuthenticationException instead.
          * Returning AuthenticatedUser.ANONYMOUS_USER is an option if authentication is not required.
          *

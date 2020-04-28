@@ -106,15 +106,6 @@ public class AuthorizeForAndRestrictTest extends CQLTester
 
         useUser("authfor1", "pass1");
 
-        // attn: the permission is still cached !
-
-        assertUnauthorizedQuery("User authfor1 has no MODIFY permission on <table authfor_test.t2> or any of its parents",
-                                "INSERT INTO authfor_test.t2 (id, val) VALUES (2, 'bar')");
-
-        // need to invalidate the permissions cache
-
-        invalidateAuthCaches();
-
         // now the CQL works
 
         executeNet("INSERT INTO authfor_test.t2 (id, val) VALUES (2, 'bar')");
@@ -191,15 +182,11 @@ public class AuthorizeForAndRestrictTest extends CQLTester
         useSuperUser();
         executeNet("GRANT role_restrict TO restrict1");
 
-        invalidateAuthCaches();
-
         useUser("restrict1", "restrict1");
         assertRowsNet(executeNet("SELECT * FROM restrict_test.t1"));
 
         useSuperUser();
         executeNet("RESTRICT SELECT ON TABLE restrict_test.t1 TO restrict1");
-
-        invalidateAuthCaches();
 
         useUser("restrict1", "restrict1");
         assertUnauthorizedQuery("Access for user restrict1 on <table restrict_test.t1> or any of its parents with SELECT permission is restricted",

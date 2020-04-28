@@ -31,7 +31,7 @@ import org.apache.cassandra.db.marshal.UTF8Type;
 import org.apache.cassandra.exceptions.InvalidRequestException;
 import org.apache.cassandra.exceptions.RequestExecutionException;
 import org.apache.cassandra.exceptions.RequestValidationException;
-import org.apache.cassandra.service.ClientState;
+import org.apache.cassandra.service.QueryState;
 import org.apache.cassandra.transport.messages.ResultMessage;
 import org.apache.commons.lang3.builder.ToStringBuilder;
 import org.apache.commons.lang3.builder.ToStringStyle;
@@ -69,7 +69,7 @@ public class ListPermissionsStatement extends AuthorizationStatement
         this.grantee = grantee.hasName()? RoleResource.role(grantee.getName()) : null;
     }
 
-    public void validate(ClientState state) throws RequestValidationException
+    public void validate(QueryState state) throws RequestValidationException
     {
         // a check to ensure the existence of the user isn't being leaked by user existence check.
         state.ensureNotAnonymous();
@@ -87,18 +87,18 @@ public class ListPermissionsStatement extends AuthorizationStatement
         // If the user requesting 'LIST PERMISSIONS' is not a superuser OR their username doesn't match 'grantee', we
         // throw UnauthorizedException. So only a superuser can view everybody's permissions. Regular users are only
         // allowed to see their own permissions.
-        if (!(state.getUser().isSuper() || state.getUser().isSystem()) && !state.getUser().getRoles().contains(grantee))
+        if (!(state.isSuper() || state.isSystem()) && !state.hasRole(grantee))
             throw new UnauthorizedException(String.format("You are not authorized to view %s's permissions",
                                                           grantee == null ? "everyone" : grantee.getRoleName()));
    }
 
-    public void authorize(ClientState state)
+    public void authorize(QueryState state)
     {
         // checked in validate
     }
 
     // TODO: Create a new ResultMessage type (?). Rows will do for now.
-    public ResultMessage execute(ClientState state) throws RequestValidationException, RequestExecutionException
+    public ResultMessage execute(QueryState state) throws RequestValidationException, RequestExecutionException
     {
         List<PermissionDetails> details = new ArrayList<>();
 

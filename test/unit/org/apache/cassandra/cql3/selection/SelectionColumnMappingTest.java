@@ -35,7 +35,6 @@ import org.apache.cassandra.db.marshal.*;
 import org.apache.cassandra.dht.ByteOrderedPartitioner;
 import org.apache.cassandra.exceptions.RequestExecutionException;
 import org.apache.cassandra.exceptions.RequestValidationException;
-import org.apache.cassandra.service.ClientState;
 import org.apache.cassandra.service.QueryState;
 import org.apache.cassandra.utils.ByteBufferUtil;
 
@@ -590,7 +589,7 @@ public class SelectionColumnMappingTest extends CQLTester
     private SelectStatement getSelect(String query) throws RequestValidationException
     {
         CQLStatement statement = QueryProcessor.getStatement(String.format(query, KEYSPACE + "." + tableName),
-                                                             ClientState.forInternalCalls());
+                                                             QueryState.forInternalCalls());
         assertTrue(statement instanceof SelectStatement);
         return (SelectStatement)statement;
     }

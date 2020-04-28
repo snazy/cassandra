@@ -27,6 +27,7 @@ import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.Future;
 
+import org.apache.cassandra.auth.UserRolesAndPermissions;
 import org.apache.cassandra.cql3.CQLStatement;
 import org.apache.cassandra.cql3.QueryOptions;
 import org.apache.cassandra.cql3.QueryProcessor;
@@ -81,14 +82,14 @@ public class Coordinator implements ICoordinator
 
     private QueryResult executeInternal(String query, ConsistencyLevel consistencyLevelOrigin, Object[] boundValues)
     {
-        ClientState clientState = makeFakeClientState();
-        CQLStatement prepared = QueryProcessor.getStatement(query, clientState);
+        QueryState fakeQueryState = makeFakeQueryState();
+        CQLStatement prepared = QueryProcessor.getStatement(query, fakeQueryState);
         List<ByteBuffer> boundBBValues = new ArrayList<>();
         ConsistencyLevel consistencyLevel = ConsistencyLevel.valueOf(consistencyLevelOrigin.name());
         for (Object boundValue : boundValues)
             boundBBValues.add(ByteBufferUtil.objectToBytes(boundValue));
 
-        prepared.validate(QueryState.forInternalCalls().getClientState());
+        prepared.validate(QueryState.forInternalCalls());
         ResultMessage res = prepared.execute(QueryState.forInternalCalls(),
                                              QueryOptions.create(toCassandraCL(consistencyLevel),
                                                                  boundBBValues,
@@ -130,16 +131,16 @@ public class Coordinator implements ICoordinator
             throw new IllegalArgumentException("Page size should be strictly positive but was " + pageSize);
 
         return instance.sync(() -> {
-            ClientState clientState = makeFakeClientState();
+            QueryState queryState = makeFakeQueryState();
             ConsistencyLevel consistencyLevel = ConsistencyLevel.valueOf(consistencyLevelOrigin.name());
-            CQLStatement prepared = QueryProcessor.getStatement(query, clientState);
+            CQLStatement prepared = QueryProcessor.getStatement(query, queryState);
             List<ByteBuffer> boundBBValues = new ArrayList<>();
             for (Object boundValue : boundValues)
             {
                 boundBBValues.add(ByteBufferUtil.objectToBytes(boundValue));
             }
 
-            prepared.validate(clientState);
+            prepared.validate(queryState);
             assert prepared instanceof SelectStatement : "Only SELECT statements can be executed with paging";
 
             SelectStatement selectStatement = (SelectStatement) prepared;
@@ -158,7 +159,7 @@ public class Coordinator implements ICoordinator
             // Usually pager fetches a single page (see SelectStatement#execute). We need to iterate over all
             // of the results lazily.
             return new Iterator<Object[]>() {
-                Iterator<Object[]> iter = RowUtil.toObjects(UntypedResultSet.create(selectStatement, toCassandraCL(consistencyLevel), clientState, pager,  pageSize));
+                Iterator<Object[]> iter = RowUtil.toObjects(UntypedResultSet.create(selectStatement, toCassandraCL(consistencyLevel), queryState.getClientState(), pager,  pageSize));
 
                 public boolean hasNext()
                 {
@@ -174,8 +175,8 @@ public class Coordinator implements ICoordinator
         }).call();
     }
 
-    private static final ClientState makeFakeClientState()
+    private static QueryState makeFakeQueryState()
     {
-        return ClientState.forExternalCalls(new InetSocketAddress(FBUtilities.getJustLocalAddress(), 9042));
+        return new QueryState(ClientState.forExternalCalls(new InetSocketAddress(FBUtilities.getJustLocalAddress(), 9042)), UserRolesAndPermissions.SYSTEM);
     }
 }

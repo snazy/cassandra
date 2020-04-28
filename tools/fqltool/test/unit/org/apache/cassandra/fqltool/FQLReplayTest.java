@@ -42,6 +42,9 @@ import net.openhft.chronicle.queue.ChronicleQueueBuilder;
 import net.openhft.chronicle.queue.ExcerptAppender;
 import net.openhft.chronicle.queue.ExcerptTailer;
 import net.openhft.chronicle.wire.WireOut;
+
+import org.apache.cassandra.auth.AuthenticatedUser;
+import org.apache.cassandra.auth.UserRolesAndPermissions;
 import org.apache.cassandra.fql.FullQueryLogger;
 import org.apache.cassandra.cql3.QueryOptions;
 import org.apache.cassandra.cql3.statements.BatchStatement;
@@ -732,8 +735,7 @@ public class FQLReplayTest
 
     private QueryState queryState(String keyspace)
     {
-        ClientState clientState = ClientState.forInternalCalls(keyspace);
-        return new QueryState(clientState);
+        return new QueryState(ClientState.forInternalCalls(keyspace));
     }
 
     static ResultHandler.ComparableResultSet createResultSet(int columnCount, int rowCount, boolean random)

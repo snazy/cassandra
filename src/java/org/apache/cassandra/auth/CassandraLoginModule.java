@@ -148,7 +148,7 @@ public class CassandraLoginModule implements LoginModule
             throw new AuthenticationException(String.format("Invalid user %s", user.getName()));
 
         // The LOGIN privilege is required to authenticate - c.f. ClientState::login
-        if (!DatabaseDescriptor.getRoleManager().canLogin(user.getPrimaryRole()))
+        if (!DatabaseDescriptor.getAuthManager().canLogin(user.getLoginRole()))
             throw new AuthenticationException(user.getName() + " is not permitted to log in");
     }
 

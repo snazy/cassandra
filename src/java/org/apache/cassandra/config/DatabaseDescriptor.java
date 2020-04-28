@@ -40,13 +40,14 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import org.apache.cassandra.audit.AuditLogOptions;
+import org.apache.cassandra.auth.AuthManager;
+import org.apache.cassandra.auth.INetworkAuthorizer;
 import org.apache.cassandra.fql.FullQueryLoggerOptions;
 import org.apache.cassandra.auth.AllowAllInternodeAuthenticator;
 import org.apache.cassandra.auth.AuthConfig;
 import org.apache.cassandra.auth.IAuthenticator;
 import org.apache.cassandra.auth.IAuthorizer;
 import org.apache.cassandra.auth.IInternodeAuthenticator;
-import org.apache.cassandra.auth.INetworkAuthorizer;
 import org.apache.cassandra.auth.IRoleManager;
 import org.apache.cassandra.config.Config.CommitLogSync;
 import org.apache.cassandra.config.EncryptionOptions.ServerEncryptionOptions.InternodeEncryption;
@@ -120,11 +121,7 @@ public class DatabaseDescriptor
     private static Config.DiskAccessMode indexAccessMode;
 
     private static IAuthenticator authenticator;
-    private static IAuthorizer authorizer;
-    private static INetworkAuthorizer networkAuthorizer;
-    // Don't initialize the role manager until applying config. The options supported by CassandraRoleManager
-    // depend on the configured IAuthenticator, so defer creating it until that's been set.
-    private static IRoleManager roleManager;
+    private static AuthManager authManager;
 
     private static long preparedStatementsCacheSizeInMB;
 
@@ -338,7 +335,8 @@ public class DatabaseDescriptor
         }
     }
 
-    private static void setConfig(Config config)
+    @VisibleForTesting
+    public static void setConfig(Config config)
     {
         conf = config;
     }
@@ -1184,34 +1182,30 @@ public class DatabaseDescriptor
         DatabaseDescriptor.authenticator = authenticator;
     }
 
-    public static IAuthorizer getAuthorizer()
+
+    public static void setAuthManager(AuthManager authManager)
     {
-        return authorizer;
+        DatabaseDescriptor.authManager = authManager;
     }
 
-    public static void setAuthorizer(IAuthorizer authorizer)
+    public static AuthManager getAuthManager()
     {
-        DatabaseDescriptor.authorizer = authorizer;
+        return authManager;
+    }
+
+    public static IAuthorizer getAuthorizer()
+    {
+        return authManager.getAuthorizer();
     }
 
     public static INetworkAuthorizer getNetworkAuthorizer()
     {
-        return networkAuthorizer;
-    }
-
-    public static void setNetworkAuthorizer(INetworkAuthorizer networkAuthorizer)
-    {
-        DatabaseDescriptor.networkAuthorizer = networkAuthorizer;
+        return authManager.getNetworkAuthorizer();
     }
 
     public static IRoleManager getRoleManager()
     {
-        return roleManager;
-    }
-
-    public static void setRoleManager(IRoleManager roleManager)
-    {
-        DatabaseDescriptor.roleManager = roleManager;
+        return authManager.getRoleManager();
     }
 
     public static int getPermissionsValidity()
@@ -1246,6 +1240,16 @@ public class DatabaseDescriptor
         return conf.permissions_cache_max_entries = maxEntries;
     }
 
+    public static int getPermissionsCacheInitialCapacity()
+    {
+        return conf.permissions_cache_initial_capacity;
+    }
+
+    public static int setPermissionsCacheInitialCapacity(int maxEntries)
+    {
+        return conf.permissions_cache_initial_capacity = maxEntries;
+    }
+
     public static int getRolesValidity()
     {
         return conf.roles_validity_in_ms;
@@ -1278,36 +1282,14 @@ public class DatabaseDescriptor
         return conf.roles_cache_max_entries = maxEntries;
     }
 
-    public static int getCredentialsValidity()
+    public static int getRolesCacheInitialCapacity()
     {
-        return conf.credentials_validity_in_ms;
+        return conf.roles_cache_initial_capacity;
     }
 
-    public static void setCredentialsValidity(int timeout)
+    public static int setRolesCacheInitialCapacity(int maxEntries)
     {
-        conf.credentials_validity_in_ms = timeout;
-    }
-
-    public static int getCredentialsUpdateInterval()
-    {
-        return conf.credentials_update_interval_in_ms == -1
-               ? conf.credentials_validity_in_ms
-               : conf.credentials_update_interval_in_ms;
-    }
-
-    public static void setCredentialsUpdateInterval(int updateInterval)
-    {
-        conf.credentials_update_interval_in_ms = updateInterval;
-    }
-
-    public static int getCredentialsCacheMaxEntries()
-    {
-        return conf.credentials_cache_max_entries;
-    }
-
-    public static int setCredentialsCacheMaxEntries(int maxEntries)
-    {
-        return conf.credentials_cache_max_entries = maxEntries;
+        return conf.roles_cache_initial_capacity = maxEntries;
     }
 
     public static int getMaxValueSize()

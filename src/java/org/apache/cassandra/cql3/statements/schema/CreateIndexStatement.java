@@ -36,7 +36,7 @@ import org.apache.cassandra.exceptions.InvalidRequestException;
 import org.apache.cassandra.index.sasi.SASIIndex;
 import org.apache.cassandra.schema.*;
 import org.apache.cassandra.schema.Keyspaces.KeyspacesDiff;
-import org.apache.cassandra.service.ClientState;
+import org.apache.cassandra.service.QueryState;
 import org.apache.cassandra.transport.Event.SchemaChange;
 import org.apache.cassandra.transport.Event.SchemaChange.Change;
 import org.apache.cassandra.transport.Event.SchemaChange.Target;
@@ -203,9 +203,9 @@ public final class CreateIndexStatement extends AlterSchemaStatement
         return new SchemaChange(Change.UPDATED, Target.TABLE, keyspaceName, tableName);
     }
 
-    public void authorize(ClientState client)
+    public void authorize(QueryState client)
     {
-        client.ensureTablePermission(keyspaceName, tableName, Permission.ALTER);
+        client.ensureTablePermission(Permission.ALTER, keyspaceName, tableName);
     }
 
     @Override
@@ -240,11 +240,11 @@ public final class CreateIndexStatement extends AlterSchemaStatement
             this.ifNotExists = ifNotExists;
         }
 
-        public CreateIndexStatement prepare(ClientState state)
+        public CreateIndexStatement prepare(QueryState state)
         {
             String keyspaceName = tableName.hasKeyspace()
                                 ? tableName.getKeyspace()
-                                : indexName.hasKeyspace() ? indexName.getKeyspace() : state.getKeyspace();
+                                : indexName.hasKeyspace() ? indexName.getKeyspace() : state.getClientState().getKeyspace();
 
             if (tableName.hasKeyspace() && !keyspaceName.equals(tableName.getKeyspace()))
                 throw ire("Keyspace name '%s' doesn't match table name '%s'", keyspaceName, tableName);

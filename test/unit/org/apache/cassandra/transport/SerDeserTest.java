@@ -32,7 +32,6 @@ import org.apache.cassandra.cql3.*;
 import org.apache.cassandra.db.ConsistencyLevel;
 import org.apache.cassandra.db.marshal.*;
 import org.apache.cassandra.serializers.CollectionSerializer;
-import org.apache.cassandra.service.ClientState;
 import org.apache.cassandra.service.QueryState;
 import org.apache.cassandra.transport.Event.TopologyChange;
 import org.apache.cassandra.transport.Event.SchemaChange;
@@ -367,7 +366,7 @@ public class SerDeserTest
         QueryOptions.codec.encode(options, buf, version);
         QueryOptions decodedOptions = QueryOptions.codec.decode(buf, version);
 
-        QueryState state = new QueryState(ClientState.forInternalCalls());
+        QueryState state = QueryState.forInternalCalls();
 
         assertNotNull(decodedOptions);
         assertEquals(options.getConsistency(), decodedOptions.getConsistency());

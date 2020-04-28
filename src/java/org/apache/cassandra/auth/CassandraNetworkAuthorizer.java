@@ -32,7 +32,6 @@ import org.apache.cassandra.db.ConsistencyLevel;
 import org.apache.cassandra.db.marshal.UTF8Type;
 import org.apache.cassandra.exceptions.ConfigurationException;
 import org.apache.cassandra.schema.SchemaConstants;
-import org.apache.cassandra.service.ClientState;
 import org.apache.cassandra.service.QueryState;
 import org.apache.cassandra.transport.messages.ResultMessage;
 import org.apache.cassandra.utils.ByteBufferUtil;
@@ -46,7 +45,7 @@ public class CassandraNetworkAuthorizer implements INetworkAuthorizer
         String query = String.format("SELECT dcs FROM %s.%s WHERE role = ?",
                                      SchemaConstants.AUTH_KEYSPACE_NAME,
                                      AuthKeyspace.NETWORK_PERMISSIONS);
-        authorizeUserStatement = (SelectStatement) QueryProcessor.getStatement(query, ClientState.forInternalCalls());
+        authorizeUserStatement = (SelectStatement) QueryProcessor.getStatement(query, QueryState.forInternalCalls());
     }
 
     @VisibleForTesting
@@ -78,11 +77,12 @@ public class CassandraNetworkAuthorizer implements INetworkAuthorizer
 
     public DCPermissions authorize(RoleResource role)
     {
-        if (!Roles.canLogin(role))
+        AuthManager authManager = DatabaseDescriptor.getAuthManager();
+        if (!authManager.canLogin(role))
         {
             return DCPermissions.none();
         }
-        if (Roles.hasSuperuserStatus(role))
+        if (authManager.isSuperuser(role))
         {
             return DCPermissions.all();
         }

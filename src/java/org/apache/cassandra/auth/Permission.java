@@ -72,4 +72,16 @@ public enum Permission
     {
         return Permission.valueOf(name.toUpperCase(Locale.US));
     }
+
+    public static Permission permission(String name)
+    {
+        try
+        {
+            return Permission.valueOf(name.toUpperCase(Locale.US));
+        }
+        catch (Exception e)
+        {
+            throw new IllegalArgumentException("Unknown permission: " + name);
+        }
+    }
 }

@@ -18,6 +18,7 @@
 
 package org.apache.cassandra.auth;
 
+import java.util.Collections;
 import java.util.Set;
 
 import com.google.common.collect.Iterables;
@@ -31,51 +32,24 @@ import org.junit.Test;
 import org.apache.cassandra.SchemaLoader;
 import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.cql3.CQLStatement;
-import org.apache.cassandra.cql3.QueryOptions;
 import org.apache.cassandra.cql3.QueryProcessor;
 import org.apache.cassandra.cql3.UntypedResultSet;
 import org.apache.cassandra.cql3.statements.AlterRoleStatement;
 import org.apache.cassandra.cql3.statements.AuthenticationStatement;
 import org.apache.cassandra.cql3.statements.CreateRoleStatement;
 import org.apache.cassandra.cql3.statements.DropRoleStatement;
-import org.apache.cassandra.cql3.statements.SelectStatement;
 import org.apache.cassandra.db.Keyspace;
 import org.apache.cassandra.db.marshal.UTF8Type;
 import org.apache.cassandra.exceptions.ConfigurationException;
-import org.apache.cassandra.exceptions.RequestExecutionException;
 import org.apache.cassandra.service.ClientState;
 import org.apache.cassandra.service.QueryState;
-import org.apache.cassandra.transport.messages.ResultMessage;
 
 import static org.apache.cassandra.auth.AuthKeyspace.NETWORK_PERMISSIONS;
-import static org.apache.cassandra.auth.RoleTestUtils.LocalCassandraRoleManager;
 import static org.apache.cassandra.schema.SchemaConstants.AUTH_KEYSPACE_NAME;
 import static org.apache.cassandra.auth.RoleTestUtils.getReadCount;
 
 public class CassandraNetworkAuthorizerTest
 {
-    private static class LocalCassandraAuthorizer extends CassandraAuthorizer
-    {
-        UntypedResultSet process(String query, Object... arguments) throws RequestExecutionException
-        {
-            String cql = String.format(query, arguments);
-            return QueryProcessor.executeInternal(cql);
-        }
-    }
-
-    private static class LocalCassandraNetworkAuthorizer extends CassandraNetworkAuthorizer
-    {
-        ResultMessage.Rows select(SelectStatement statement, QueryOptions options)
-        {
-            return statement.executeLocally(QueryState.forInternalCalls(), options);
-        }
-
-        void process(String query)
-        {
-            QueryProcessor.executeInternal(query);
-        }
-    }
-
     private static void setupSuperUser()
     {
         QueryProcessor.executeInternal(String.format("INSERT INTO %s.%s (role, is_superuser, can_login, salted_hash) "
@@ -95,8 +69,7 @@ public class CassandraNetworkAuthorizerTest
                                new LocalCassandraAuthorizer(),
                                new LocalCassandraNetworkAuthorizer());
         setupSuperUser();
-        // not strictly necessary to init the cache here, but better to be explicit
-        Roles.initRolesCache(DatabaseDescriptor.getRoleManager(), () -> true);
+        DatabaseDescriptor.getAuthManager().invalidateCaches();
     }
 
     @Before
@@ -133,24 +106,24 @@ public class CassandraNetworkAuthorizerTest
         return RandomStringUtils.randomAlphabetic(8).toLowerCase();
     }
 
-    private static ClientState getClientState()
+    private static QueryState getQueryState()
     {
         ClientState state = ClientState.forInternalCalls();
         state.login(new AuthenticatedUser(CassandraRoleManager.DEFAULT_SUPERUSER_NAME));
-        return state;
+        return new QueryState(state, UserRolesAndPermissions.createSuperUserRolesAndPermissions(CassandraRoleManager.DEFAULT_SUPERUSER_NAME, Collections.emptySet()));
     }
 
     private static void auth(String query, Object... args)
     {
-        CQLStatement statement = QueryProcessor.parseStatement(String.format(query, args)).prepare(ClientState.forInternalCalls());
+        CQLStatement statement = QueryProcessor.parseStatement(String.format(query, args)).prepare(QueryState.forInternalCalls());
         assert statement instanceof CreateRoleStatement
                || statement instanceof AlterRoleStatement
                || statement instanceof DropRoleStatement;
         AuthenticationStatement authStmt = (AuthenticationStatement) statement;
 
         // invalidate roles cache so that any changes to the underlying roles are picked up
-        Roles.clearCache();
-        authStmt.execute(getClientState());
+        DatabaseDescriptor.getAuthManager().invalidateCaches();
+        authStmt.execute(getQueryState());
     }
 
     private static DCPermissions dcPerms(String username)
@@ -220,7 +193,7 @@ public class CassandraNetworkAuthorizerTest
         assertDcPermRow(username, "dc1");
 
         // clear the roles cache to lose the (non-)superuser status for the user
-        Roles.clearCache();
+        DatabaseDescriptor.getAuthManager().invalidateCaches();
         auth("ALTER ROLE %s WITH superuser = true", username);
         Assert.assertEquals(DCPermissions.all(), dcPerms(username));
     }

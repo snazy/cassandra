@@ -18,55 +18,59 @@
 
 package org.apache.cassandra.auth;
 
-import java.util.Map;
-import java.util.Set;
-
-import com.google.common.base.Objects;
+import com.google.common.base.MoreObjects;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 
-public class Role
+/**
+ * Represents all attributes of a role.
+ */
+public final class Role
 {
-    /**
-     * Represents a user or group in the auth subsystem.
-     * Roles may be members of other roles, but circular graphs of roles are not permitted.
-     * The reason that memberOf is a Set<String> and not Set<Role> is to simplify loading
-     * for IRoleManager implementations (in particular, CassandraRoleManager)
-     */
+    // NullObject
+    public static final Role NULL_ROLE = new Role("", ImmutableSet.of(), false, false, ImmutableMap.of(), "");
 
-    public final RoleResource resource ;
+    public final String name;
+    public final ImmutableSet<RoleResource> memberOf;
     public final boolean isSuper;
     public final boolean canLogin;
-    public final Set<String> memberOf;
-    public final Map<String, String> options;
+    public final ImmutableMap<String, String> options;
+    final String hashedPassword;
 
-    public Role(String name, boolean isSuperUser, boolean canLogin, Map<String, String> options, Set<String> memberOf)
+    public Role withOptions(ImmutableMap<String, String> options)
     {
-        this.resource = RoleResource.role(name);
-        this.isSuper = isSuperUser;
+        return new Role(name, memberOf, isSuper, canLogin, options, hashedPassword);
+    }
+
+    public Role withRoles(ImmutableSet<RoleResource> memberOf)
+    {
+        return new Role(name, memberOf, isSuper, canLogin, options, hashedPassword);
+    }
+
+    public Role(String name,
+                ImmutableSet<RoleResource> memberOf,
+                boolean isSuper,
+                boolean canLogin,
+                ImmutableMap<String, String> options,
+                String hashedPassword)
+    {
+        this.name = name;
+        this.memberOf = memberOf;
+        this.isSuper = isSuper;
         this.canLogin = canLogin;
-        this.memberOf = ImmutableSet.copyOf(memberOf);
         this.options = ImmutableMap.copyOf(options);
+        this.hashedPassword = hashedPassword;
     }
 
-    public boolean equals(Object o)
+    @Override
+    public String toString()
     {
-        if (this == o)
-            return true;
-
-        if (!(o instanceof Role))
-            return false;
-
-        Role r = (Role)o;
-        return Objects.equal(resource, r.resource)
-               && Objects.equal(isSuper, r.isSuper)
-               && Objects.equal(canLogin, r.canLogin)
-               && Objects.equal(memberOf, r.memberOf)
-               && Objects.equal(options, r.options);
-    }
-
-    public int hashCode()
-    {
-        return Objects.hashCode(resource, isSuper, canLogin, memberOf, options);
+        return MoreObjects.toStringHelper(this)
+                          .add("name", name)
+                          .add("memberOf", memberOf)
+                          .add("isSuper", isSuper)
+                          .add("canLogin", canLogin)
+                          .add("options", options)
+                          .toString();
     }
 }

@@ -24,7 +24,7 @@ import org.apache.cassandra.cql3.CQLStatement;
 import org.apache.cassandra.cql3.QualifiedName;
 import org.apache.cassandra.schema.*;
 import org.apache.cassandra.schema.Keyspaces.KeyspacesDiff;
-import org.apache.cassandra.service.ClientState;
+import org.apache.cassandra.service.QueryState;
 import org.apache.cassandra.transport.Event.SchemaChange;
 import org.apache.cassandra.transport.Event.SchemaChange.Change;
 import org.apache.cassandra.transport.Event.SchemaChange.Target;
@@ -81,9 +81,9 @@ public final class DropTableStatement extends AlterSchemaStatement
         return new SchemaChange(Change.DROPPED, Target.TABLE, keyspaceName, tableName);
     }
 
-    public void authorize(ClientState client)
+    public void authorize(QueryState client)
     {
-        client.ensureTablePermission(keyspaceName, tableName, Permission.DROP);
+        client.ensureTablePermission(Permission.DROP, keyspaceName, tableName);
     }
 
     @Override
@@ -108,9 +108,9 @@ public final class DropTableStatement extends AlterSchemaStatement
             this.ifExists = ifExists;
         }
 
-        public DropTableStatement prepare(ClientState state)
+        public DropTableStatement prepare(QueryState state)
         {
-            String keyspaceName = name.hasKeyspace() ? name.getKeyspace() : state.getKeyspace();
+            String keyspaceName = name.hasKeyspace() ? name.getKeyspace() : state.getClientState().getKeyspace();
             return new DropTableStatement(keyspaceName, name.getName(), ifExists);
         }
     }

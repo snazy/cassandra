@@ -17,15 +17,31 @@
  */
 package org.apache.cassandra.auth;
 
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Map;
 import java.util.Set;
 import java.util.function.BooleanSupplier;
-import java.util.stream.Collectors;
+import java.util.function.Function;
+
+import com.google.common.annotations.VisibleForTesting;
 
 import org.apache.cassandra.config.DatabaseDescriptor;
 
-public class RolesCache extends AuthCache<RoleResource, Set<Role>>
+public class RolesCache extends AuthCache<RoleResource, Role>
 {
-    public RolesCache(IRoleManager roleManager, BooleanSupplier enableCache)
+    public RolesCache(IRoleManager roleManager)
+    {
+        this(roleManager::getRoleData,
+             roleManager::getRolesData,
+             () -> DatabaseDescriptor.getAuthenticator().requireAuthentication());
+    }
+
+    @VisibleForTesting
+    public RolesCache(Function<RoleResource, Role> loadFunction,
+                      Function<Iterable<? extends RoleResource>, Map<RoleResource, Role>> loadAllFunction,
+                      BooleanSupplier enabledFunction)
     {
         super("RolesCache",
               DatabaseDescriptor::setRolesValidity,
@@ -34,32 +50,69 @@ public class RolesCache extends AuthCache<RoleResource, Set<Role>>
               DatabaseDescriptor::getRolesUpdateInterval,
               DatabaseDescriptor::setRolesCacheMaxEntries,
               DatabaseDescriptor::getRolesCacheMaxEntries,
-              roleManager::getRoleDetails,
-              enableCache);
+              DatabaseDescriptor::setRolesCacheInitialCapacity,
+              DatabaseDescriptor::getRolesCacheInitialCapacity,
+              loadFunction,
+              loadAllFunction,
+              enabledFunction);
     }
 
-    /**
-     * Read or return from the cache the Set of the RoleResources identifying the roles granted to the primary resource
-     * @see Roles#getRoles(RoleResource)
-     * @param primaryRole identifier for the primary role
-     * @return the set of identifiers of all the roles granted to (directly or through inheritance) the primary role
-     */
-    Set<RoleResource> getRoleResources(RoleResource primaryRole)
+    public Map<RoleResource, Role> getRoles(RoleResource primaryRole)
     {
-        return get(primaryRole).stream()
-                               .map(r -> r.resource)
-                               .collect(Collectors.toSet());
+        Role role = get(primaryRole);
+
+        if (role == null)
+        {
+            return Collections.emptyMap();
+        }
+
+        if (role.memberOf.isEmpty())
+        {
+            return Collections.singletonMap(primaryRole, role);
+        }
+
+        Map<RoleResource, Role> map = new HashMap<>();
+        map.put(primaryRole, role);
+        Set<RoleResource> remaining = new HashSet<>(role.memberOf);
+
+        return collectRoles(Collections.synchronizedSet(remaining),
+                            Collections.synchronizedMap(map));
     }
 
-    /**
-     * Read or return from cache the set of Role objects representing the roles granted to the primary resource
-     * @see Roles#getRoleDetails(RoleResource)
-     * @param primaryRole identifier for the primary role
-     * @return the set of Role objects containing info of all roles granted to (directly or through inheritance)
-     * the primary role.
-     */
-    Set<Role> getRoles(RoleResource primaryRole)
+    private Map<RoleResource, Role> collectRoles(Set<RoleResource> needToVisit,
+                                                 Map<RoleResource, Role> workMap)
     {
-        return get(primaryRole);
+        while (!needToVisit.isEmpty())
+        {
+            // handle the ones present in the cache first
+            Map<RoleResource, Role> presentRoles = getAllPresent(needToVisit);
+            handleCollectRoles(needToVisit, workMap, presentRoles);
+
+            Map<RoleResource, Role> loadedRoles = getAll(needToVisit);
+            // handle the roles that actually need to be loaded
+            handleCollectRoles(needToVisit, workMap, loadedRoles);
+            collectRoles(needToVisit, workMap);
+        }
+
+        return Collections.unmodifiableMap(workMap);
+    }
+
+    private void handleCollectRoles(Set<RoleResource> needToVisit, Map<RoleResource, Role> workMap, Map<RoleResource, Role> result)
+    {
+        for (Map.Entry<RoleResource, Role> entry : result.entrySet())
+        {
+            Role role = entry.getValue();
+            if (workMap.put(entry.getKey(), role) == null)
+            {
+                for (RoleResource memberOf : role.memberOf)
+                {
+                    if (!workMap.containsKey(memberOf))
+                    {
+                        needToVisit.add(memberOf);
+                    }
+                }
+            }
+            needToVisit.remove(entry.getKey());
+        }
     }
 }

@@ -56,14 +56,12 @@ import org.apache.cassandra.db.filter.ColumnFilter;
 import org.apache.cassandra.db.partitions.UnfilteredPartitionIterator;
 import org.apache.cassandra.db.partitions.UnfilteredPartitionIterators;
 import org.apache.cassandra.io.sstable.format.SSTableReader;
-import org.apache.cassandra.io.util.DataOutputBuffer;
 import org.apache.cassandra.io.util.DataOutputPlus;
 import org.apache.cassandra.io.util.UnbufferedDataOutputStreamPlus;
 import org.apache.cassandra.net.MessagingService;
 import org.apache.cassandra.schema.KeyspaceParams;
 import org.apache.cassandra.schema.Schema;
 import org.apache.cassandra.schema.TableMetadata;
-import org.apache.cassandra.service.ClientState;
 import org.apache.cassandra.service.QueryState;
 import org.apache.cassandra.utils.FBUtilities;
 import org.apache.cassandra.utils.ObjectSizes;
@@ -476,7 +474,7 @@ public class CompactionAllocationTest
                 cfs.disableAutoCompaction();
                 String insert = String.format("INSERT INTO %s.%s (k, v) VALUES (?,?)", ksname, "tbl");
                 String read = String.format("SELECT * FROM %s.%s WHERE k = ?", ksname, "tbl");
-                SelectStatement select = (SelectStatement) QueryProcessor.parseStatement(read).prepare(ClientState.forInternalCalls());
+                SelectStatement select = (SelectStatement) QueryProcessor.parseStatement(read).prepare(QueryState.forInternalCalls());
                 QueryState queryState = QueryState.forInternalCalls();
                 for (int f=0; f<numSSTable; f++)
                 {
@@ -585,7 +583,7 @@ public class CompactionAllocationTest
                 cfs.disableAutoCompaction();
                 String insert = String.format("INSERT INTO %s.%s (k, c, v1, v2, v3, v4) VALUES (?, ?, ?, ?, ?, ?)", ksname, "tbl");
                 String read = String.format("SELECT * FROM %s.%s WHERE k = ?", ksname, "tbl");
-                SelectStatement select = (SelectStatement) QueryProcessor.parseStatement(read).prepare(ClientState.forInternalCalls());
+                SelectStatement select = (SelectStatement) QueryProcessor.parseStatement(read).prepare(QueryState.forInternalCalls());
                 QueryState queryState = QueryState.forInternalCalls();
                 for (int f=0; f<numSSTable; f++)
                 {
@@ -686,7 +684,7 @@ public class CompactionAllocationTest
                 cfs.disableAutoCompaction();
                 String insert = String.format("INSERT INTO %s.%s (k, c, v1, v2, v3, v4) VALUES (?, ?, ?, ?, ?, ?)", ksname, "tbl");
                 String read = String.format("SELECT * FROM %s.%s WHERE k = ?", ksname, "tbl");
-                SelectStatement select = (SelectStatement) QueryProcessor.parseStatement(read).prepare(ClientState.forInternalCalls());
+                SelectStatement select = (SelectStatement) QueryProcessor.parseStatement(read).prepare(QueryState.forInternalCalls());
                 QueryState queryState = QueryState.forInternalCalls();
                 for (int f=0; f<numSSTable; f++)
                 {

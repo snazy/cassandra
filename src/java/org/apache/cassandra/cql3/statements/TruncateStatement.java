@@ -28,7 +28,6 @@ import org.apache.cassandra.db.Keyspace;
 import org.apache.cassandra.exceptions.*;
 import org.apache.cassandra.schema.Schema;
 import org.apache.cassandra.schema.TableMetadata;
-import org.apache.cassandra.service.ClientState;
 import org.apache.cassandra.service.QueryState;
 import org.apache.cassandra.service.StorageProxy;
 import org.apache.cassandra.transport.messages.ResultMessage;
@@ -42,17 +41,17 @@ public class TruncateStatement extends QualifiedStatement implements CQLStatemen
         super(name);
     }
 
-    public TruncateStatement prepare(ClientState state)
+    public TruncateStatement prepare(QueryState state)
     {
         return this;
     }
 
-    public void authorize(ClientState state) throws InvalidRequestException, UnauthorizedException
+    public void authorize(QueryState state) throws InvalidRequestException, UnauthorizedException
     {
-        state.ensureTablePermission(keyspace(), name(), Permission.MODIFY);
+        state.ensureTablePermission(Permission.MODIFY, keyspace(), name());
     }
 
-    public void validate(ClientState state) throws InvalidRequestException
+    public void validate(QueryState state) throws InvalidRequestException
     {
         Schema.instance.validateTable(keyspace(), name());
     }

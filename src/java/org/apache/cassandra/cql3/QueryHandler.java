@@ -23,7 +23,6 @@ import java.util.Map;
 import org.apache.cassandra.cql3.statements.BatchStatement;
 import org.apache.cassandra.exceptions.RequestExecutionException;
 import org.apache.cassandra.exceptions.RequestValidationException;
-import org.apache.cassandra.service.ClientState;
 import org.apache.cassandra.service.QueryState;
 import org.apache.cassandra.transport.messages.ResultMessage;
 import org.apache.cassandra.utils.MD5Digest;
@@ -39,7 +38,7 @@ public interface QueryHandler
                           long queryStartNanoTime) throws RequestExecutionException, RequestValidationException;
 
     ResultMessage.Prepared prepare(String query,
-                                   ClientState clientState,
+                                   QueryState queryState,
                                    Map<String, ByteBuffer> customPayload) throws RequestValidationException;
 
     QueryHandler.Prepared getPrepared(MD5Digest id);
@@ -64,7 +63,7 @@ public interface QueryHandler
 
         /**
          * Contains the CQL statement source if the statement has been "regularly" perpared via
-         * {@link QueryHandler#prepare(String, ClientState, Map)}.
+         * {@link QueryHandler#prepare(String, QueryState, Map)}.
          * Other usages of this class may or may not contain the CQL statement source.
          */
         public final String rawCQLStatement;

@@ -178,7 +178,7 @@ public class BatchMessage extends Message.Request
                 QueryHandler.Prepared p;
                 if (query instanceof String)
                 {
-                    statement = QueryProcessor.parseStatement((String)query, state.getClientState().cloneWithKeyspaceIfSet(options.getKeyspace()));
+                    statement = QueryProcessor.parseStatement((String)query, state.cloneWithKeyspaceIfSet(options.getKeyspace()));
                     p = new QueryHandler.Prepared(statement, (String) query);
                 }
                 else

@@ -17,15 +17,13 @@
  */
 package org.apache.cassandra.auth;
 
-import java.util.List;
-import java.util.Set;
-import java.util.stream.Collectors;
+import java.util.Collections;
+import java.util.IdentityHashMap;
+import java.util.Map;
 
 import com.google.common.base.Objects;
-
-import org.apache.cassandra.config.DatabaseDescriptor;
-import org.apache.cassandra.dht.Datacenters;
-import org.apache.cassandra.utils.Pair;
+import com.google.common.collect.ImmutableMap;
+import com.google.common.collect.ImmutableSet;
 
 /**
  * Returned from IAuthenticator#authenticate(), represents an authenticated user everywhere internally.
@@ -41,9 +39,39 @@ public class AuthenticatedUser
     public static final String ANONYMOUS_USERNAME = "anonymous";
     public static final AuthenticatedUser ANONYMOUS_USER = new AuthenticatedUser(ANONYMOUS_USERNAME);
 
-    // User-level permissions cache.
-    private static final PermissionsCache permissionsCache = new PermissionsCache(DatabaseDescriptor.getAuthorizer());
-    private static final NetworkAuthCache networkAuthCache = new NetworkAuthCache(DatabaseDescriptor.getNetworkAuthorizer());
+    /**
+     * We need a global map of artificial, internal users, since DSE creates its own internal users, too.
+     * For example in {@code DseAuthenticator.InProcAuthenticatedUser} ({@code InProcessSaslNegotiator})
+     */
+    private static Map<RoleResource, Role> internalUserRoles = Collections.emptyMap();
+    static
+    {
+        registerInternalUserRole(SYSTEM_USER, new Role(SYSTEM_USERNAME,
+                                                       ImmutableSet.of(),
+                                                       true,
+                                                       false,
+                                                       ImmutableMap.of(),
+                                                       ""));
+        registerInternalUserRole(ANONYMOUS_USER, new Role(ANONYMOUS_USERNAME,
+                                                          ImmutableSet.of(),
+                                                          false,
+                                                          false,
+                                                          ImmutableMap.of(),
+                                                          ""));
+    }
+
+    protected static synchronized void registerInternalUserRole(AuthenticatedUser internalUser, Role internalRole)
+    {
+        IdentityHashMap<RoleResource, Role> newMap = new IdentityHashMap<>(internalUserRoles);
+        if (newMap.putIfAbsent(internalUser.getPrimaryRole(), internalRole) != null)
+            throw new IllegalArgumentException("Duplicate internal user assignment for " + internalUser);
+        internalUserRoles = newMap;
+    }
+
+    public static Role maybeGetInternalUserRole(RoleResource role)
+    {
+        return internalUserRoles.get(role);
+    }
 
     private final String name;
     // primary Role of the logged in user
@@ -60,20 +88,20 @@ public class AuthenticatedUser
         return name;
     }
 
+    /**
+     * The primay role of this user. Proxy users return the role of the authorized user.
+     */
     public RoleResource getPrimaryRole()
     {
         return role;
     }
 
     /**
-     * Checks the user's superuser status.
-     * Only a superuser is allowed to perform CREATE USER and DROP USER queries.
-     * Im most cased, though not necessarily, a superuser will have Permission.ALL on every resource
-     * (depends on IAuthorizer implementation).
+     * Normal users just return the primary role. Proxy users return the authenticated user's primary role.
      */
-    public boolean isSuper()
+    public RoleResource getLoginRole()
     {
-        return !isAnonymous() && Roles.hasSuperuserStatus(role);
+        return role;
     }
 
     /**
@@ -92,71 +120,6 @@ public class AuthenticatedUser
     public boolean isSystem()
     {
         return this == SYSTEM_USER;
-    }
-
-    /**
-     * Get the roles that have been granted to the user via the IRoleManager
-     *
-     * @return a set of identifiers for the roles that have been granted to the user
-     */
-    public Set<RoleResource> getRoles()
-    {
-        return Roles.getRoles(role);
-    }
-
-    /**
-     * Get the detailed info on roles granted to the user via IRoleManager
-     *
-     * @return a set of Role objects detailing the roles granted to the user
-     */
-    public Set<Role> getRoleDetails()
-    {
-       return Roles.getRoleDetails(role);
-    }
-
-    /**
-     * Returns the names of the roles that have been granted to the user via the IRoleManager
-     *
-     * @return a list of role names that have been granted to the user
-     */
-    public List<String> getRoleNames()
-    {
-        return getRoles().stream().map(RoleResource::getRoleName).collect(Collectors.toList());
-    }
-
-    /**
-     * Returns a cummulated view of all granted, restricted and grantable permissions on
-     * the resource <em>chain</em> of the given resource for this user.
-     */
-    public PermissionSets resourceChainPermissions(IResource resource)
-    {
-        return permissionsCache.getPermissions(Resources.chain(resource)
-                                                        .stream()
-                                                        .map(res -> Pair.create(this, (IResource) res))
-                                                        .collect(Collectors.toList()));
-    }
-
-    /**
-     * Check whether this user has login privileges.
-     * LOGIN is not inherited from granted roles, so must be directly granted to the primary role for this user
-     *
-     * @return true if the user is permitted to login, false otherwise.
-     */
-    public boolean canLogin()
-    {
-        return Roles.canLogin(getPrimaryRole());
-    }
-
-    /**
-     * Verify that there is not DC level restriction on this user accessing this node.
-     * Further extends the login privilege check by verifying that the primary role for this user is permitted
-     * to perform operations in the local (to this node) datacenter. Like LOGIN, this is not inherited from
-     * granted roles.
-     * @return true if the user is permitted to access nodes in this node's datacenter, false otherwise
-     */
-    public boolean hasLocalAccess()
-    {
-        return networkAuthCache.get(this.getPrimaryRole()).canAccess(Datacenters.thisDatacenter());
     }
 
     @Override

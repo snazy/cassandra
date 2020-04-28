@@ -22,8 +22,8 @@ import java.util.*;
 import java.util.function.Consumer;
 import java.util.stream.Collectors;
 
+import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.ImmutableSet;
-import com.google.common.collect.Lists;
 import org.apache.commons.lang3.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -37,7 +37,6 @@ import org.apache.cassandra.exceptions.*;
 import org.apache.cassandra.schema.SchemaConstants;
 import org.apache.cassandra.serializers.ListSerializer;
 import org.apache.cassandra.serializers.UTF8Serializer;
-import org.apache.cassandra.service.ClientState;
 import org.apache.cassandra.service.QueryState;
 import org.apache.cassandra.transport.messages.ResultMessage;
 
@@ -61,47 +60,10 @@ public class CassandraAuthorizer implements IAuthorizer
 
     private static final String ROLE_PERMISSIONS_TABLE = AUTH_KEYSPACE_NAME + "." + ROLE_PERMISSIONS;
 
-    private SelectStatement authorizeRoleStatement;
+    private SelectStatement permissionsForRolesStatement;
 
     public CassandraAuthorizer()
     {
-    }
-
-    @Override
-    public PermissionSets allPermissionSets(AuthenticatedUser user, IResource resource)
-    {
-        if (user.isSuper())
-            // superuser can do everything
-            return PermissionSets.builder()
-                                 .addGranted(applicablePermissions(resource))
-                                 .addGrantables(applicablePermissions(resource))
-                                 .build();
-
-        try
-        {
-            return getPermissionsFor(user, resource);
-        }
-        catch (RequestValidationException e)
-        {
-            throw new AssertionError(e); // not supposed to happen
-        }
-        catch (RequestExecutionException e)
-        {
-            logger.warn("CassandraAuthorizer failed to authorize {} for {}", user, resource);
-            throw e;
-        }
-    }
-
-    public void grant(AuthenticatedUser performer, Set<Permission> permissions, IResource resource, RoleResource grantee, GrantMode grantMode)
-    throws RequestValidationException, RequestExecutionException
-    {
-        grantRevoke(permissions, resource, grantee, grantMode, "+");
-    }
-
-    public void revoke(AuthenticatedUser performer, Set<Permission> permissions, IResource resource, RoleResource revokee, GrantMode grantMode)
-    throws RequestValidationException, RequestExecutionException
-    {
-        grantRevoke(permissions, resource, revokee, grantMode, "-");
     }
 
     // Called when deleting a role with DROP ROLE query.
@@ -170,44 +132,78 @@ public class CassandraAuthorizer implements IAuthorizer
         return roles;
     }
 
-    /**
-     * Returns the permissions for the specified user and resource
-     * @param user the user
-     * @param resource the resource
-     * @return the permissions for the specified user and resource
-     */
-    private PermissionSets getPermissionsFor(AuthenticatedUser user, IResource resource)
+    public Map<IResource, PermissionSets> allPermissionSets(RoleResource role)
     {
-        PermissionSets.Builder permissions = PermissionSets.builder();
-
-        for (UntypedResultSet.Row row : fetchPermissions(user, resource))
-            addPermissionsFromRow(row, permissions);
-
-        return permissions.build();
+        try
+        {
+            return permissionsForRole(role);
+        }
+        catch (RequestValidationException e)
+        {
+            throw new AssertionError(e); // not supposed to happen
+        }
+        catch (RequestExecutionException e)
+        {
+            logger.warn("CassandraAuthorizer failed to authorize {}", role);
+            throw new RuntimeException(e);
+        }
     }
 
-    /**
-     * Fetch the permissions of the user for the specified resources from the {@code role_permissions} table.
-     * @param user the user
-     * @param resource the resource
-     * @return the permissions of the user for the resources
-     */
-    private UntypedResultSet fetchPermissions(AuthenticatedUser user, IResource resource)
+    @Override
+    public Map<RoleResource, Map<IResource, PermissionSets>> allPermissionSetsMany(Iterable<? extends RoleResource> roles)
     {
-        // Query looks like this:
-        //      SELECT permissions, restricted, grantables
-        //        FROM system_auth.role-permissions
-        //       WHERE resource = ? AND role IN ?
-        // Purpose is to fetch permissions for all role with one query and not one query per role.
+        try
+        {
+            return permissionsForRoles(roles);
+        }
+        catch (RequestValidationException e)
+        {
+            throw new AssertionError(e); // not supposed to happen
+        }
+        catch (RequestExecutionException e)
+        {
+            logger.warn("CassandraAuthorizer failed to authorize {}", roles);
+            throw new RuntimeException(e);
+        }
+    }
 
-        ByteBuffer resourceName = UTF8Serializer.instance.serialize(resource.getName());
-        ByteBuffer roleNames = ListSerializer.getInstance(UTF8Serializer.instance).serialize(user.getRoleNames());
+    private Map<IResource, PermissionSets> permissionsForRole(RoleResource role)
+    {
+        return permissionsForRoles(Collections.singleton(role)).get(role);
+    }
+
+    private Map<RoleResource, Map<IResource, PermissionSets>> permissionsForRoles(Iterable<? extends RoleResource> roles)
+    {
+        Map<RoleResource, Map<IResource, PermissionSets>> roleResourcePermissions = new HashMap<>();
+        List<String> names = new ArrayList<>();
+        for (RoleResource role : roles)
+        {
+            names.add(role.getRoleName());
+            roleResourcePermissions.put(role, new HashMap<>());
+        }
+        ByteBuffer roleNames = ListSerializer.getInstance(UTF8Serializer.instance).serialize(names);
 
         QueryOptions options = QueryOptions.forInternalCalls(ConsistencyLevel.LOCAL_ONE,
-                                                             Lists.newArrayList(resourceName, roleNames));
+                                                             Collections.singletonList(roleNames));
 
-        ResultMessage.Rows rows = authorizeRoleStatement.execute(QueryState.forInternalCalls(), options, System.nanoTime());
-        return UntypedResultSet.create(rows.result);
+
+        ResultMessage.Rows rows = select(permissionsForRolesStatement, options);
+        UntypedResultSet result = UntypedResultSet.create(rows.result);
+
+        if (result.isEmpty())
+            return roleResourcePermissions;
+
+        for (UntypedResultSet.Row row : result)
+        {
+            IResource resource = Resources.fromName(row.getString(RESOURCE));
+            PermissionSets.Builder builder = PermissionSets.builder();
+            addPermissionsFromRow(row, builder);
+            RoleResource role = RoleResource.role(row.getString(ROLE));
+            Map<IResource, PermissionSets> resourcePermissions = roleResourcePermissions.get(role);
+            resourcePermissions.put(resource, builder.build());
+        }
+
+        return roleResourcePermissions;
     }
 
     private static void addPermissionsFromRow(UntypedResultSet.Row row, PermissionSets.Builder perms)
@@ -227,12 +223,23 @@ public class CassandraAuthorizer implements IAuthorizer
            .forEach(perms);
     }
 
-    private void grantRevoke(Set<Permission> permissions,
-                             IResource resource,
-                             RoleResource role,
-                             GrantMode grantMode,
-                             String op)
+    public void grant(AuthenticatedUser performer, Set<Permission> permissions, IResource resource, RoleResource grantee, GrantMode... grantModes)
+            throws RequestValidationException, RequestExecutionException
     {
+        grantRevoke(permissions, resource, grantee, "+", grantModes);
+    }
+
+    public void revoke(AuthenticatedUser performer, Set<Permission> permissions, IResource resource, RoleResource revokee, GrantMode... grantModes)
+            throws RequestValidationException, RequestExecutionException
+    {
+        grantRevoke(permissions, resource, revokee, "-", grantModes);
+    }
+
+    private void grantRevoke(Set<Permission> permissions, IResource resource, RoleResource role, String op, GrantMode... grantModes)
+    {
+        if (grantModes == null || grantModes.length == 0)
+            throw new IllegalArgumentException("Must specify at least one grantMode");
+
         // Construct a CQL command like the following. The updated columns are variable (depend on grantMode).
         //
         //   UPDATE system_auth.role_permissions
@@ -241,14 +248,19 @@ public class CassandraAuthorizer implements IAuthorizer
         //      AND resource = <resource-name>
         //
 
-        String column = columnForGrantMode(grantMode);
+        for (GrantMode grantMode : grantModes)
+        {
+            String column = columnForGrantMode(grantMode);
 
-        String perms = permissions.stream()
-                                  .map(Permission::name)
-                                  .collect(Collectors.joining("','", "'", "'"));
+            String perms = permissions.stream()
+                                      .map(Permission::name)
+                                      .collect(Collectors.joining("','", "'", "'"));
 
-        process("UPDATE " + ROLE_PERMISSIONS_TABLE + " SET %s = %s %s { %s } WHERE role = '%s' AND resource = '%s'",
-                column, column, op, perms, escape(role.getRoleName()), escape(resource.getName()));
+            process("UPDATE " + ROLE_PERMISSIONS_TABLE + " SET %s = %s %s { %s } WHERE role = '%s' AND resource = '%s'",
+                    column, column, op, perms,
+                    escape(role.getRoleName()),
+                    escape(resource.getName()));
+        }
     }
 
     private static String columnForGrantMode(GrantMode grantMode)
@@ -278,7 +290,7 @@ public class CassandraAuthorizer implements IAuthorizer
         Set<PermissionDetails> details = new HashSet<>();
         // If it exists, try the legacy user permissions table first. This is to handle the case
         // where the cluster is being upgraded and so is running with mixed versions of the perms table
-        for (UntypedResultSet.Row row : process(buildListQuery(resource, roles)))
+        for (UntypedResultSet.Row row : process("%s", buildListQuery(resource, roles)))
         {
             PermissionSets.Builder permsBuilder = PermissionSets.builder();
             addPermissionsFromRow(row, permsBuilder);
@@ -343,20 +355,16 @@ public class CassandraAuthorizer implements IAuthorizer
 
     public void setup()
     {
-        authorizeRoleStatement = getStatement("SELECT %s, %s, %s FROM %s.%s WHERE resource = ? AND %s IN ?",
-                                              PERMISSIONS,
-                                              RESTRICTED,
-                                              GRANTABLES,
-                                              SchemaConstants.AUTH_KEYSPACE_NAME,
-                                              AuthKeyspace.ROLE_PERMISSIONS,
-                                              ROLE);
-    }
+        String cql = "SELECT "
+                     + ROLE + ", "
+                     + RESOURCE + ", "
+                     + PERMISSIONS + ", "
+                     + RESTRICTED + ", "
+                     + GRANTABLES
+                     + " FROM " + ROLE_PERMISSIONS_TABLE
+                     + " WHERE " + ROLE + " IN ?";
 
-    @SuppressWarnings("unchecked")
-    private <T extends CQLStatement> T getStatement(String query, Object... arguments)
-    {
-        String cql = String.format(query, arguments);
-        return (T) QueryProcessor.getStatement(cql, ClientState.forInternalCalls());
+        permissionsForRolesStatement = (SelectStatement) QueryProcessor.getStatement(cql, QueryState.forInternalCalls());
     }
 
     // We only worry about one character ('). Make sure it's properly escaped.
@@ -365,9 +373,16 @@ public class CassandraAuthorizer implements IAuthorizer
         return StringUtils.replace(name, "'", "''");
     }
 
+    @VisibleForTesting
     UntypedResultSet process(String query, Object... arguments) throws RequestExecutionException
     {
         String cql = String.format(query, arguments);
         return QueryProcessor.process(cql, ConsistencyLevel.LOCAL_ONE);
+    }
+
+    @VisibleForTesting
+    ResultMessage.Rows select(SelectStatement statement, QueryOptions options)
+    {
+        return statement.execute(QueryState.forInternalCalls(), options, System.nanoTime());
     }
 }

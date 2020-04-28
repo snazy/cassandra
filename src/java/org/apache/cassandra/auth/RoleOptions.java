@@ -118,7 +118,7 @@ public class RoleOptions
         {
             if (!DatabaseDescriptor.getRoleManager().supportedOptions().contains(option.getKey()))
                 throw new InvalidRequestException(String.format("%s doesn't support %s",
-                                                                DatabaseDescriptor.getRoleManager().getClass().getName(),
+                                                                DatabaseDescriptor.getRoleManager().implementation().getClass().getName(),
                                                                 option.getKey()));
             switch (option.getKey())
             {

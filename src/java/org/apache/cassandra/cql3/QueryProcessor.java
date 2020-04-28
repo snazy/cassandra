@@ -35,6 +35,9 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import org.antlr.runtime.*;
+
+import org.apache.cassandra.auth.AuthenticatedUser;
+import org.apache.cassandra.auth.UserRolesAndPermissions;
 import org.apache.cassandra.concurrent.ScheduledExecutors;
 import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.schema.Schema;
@@ -126,20 +129,19 @@ public class QueryProcessor implements QueryHandler
 
         InternalStateInstance()
         {
-            clientState = ClientState.forInternalCalls(SchemaConstants.SYSTEM_KEYSPACE_NAME);
+            clientState = ClientState.forInternalCalls(SchemaConstants.SYSTEM_KEYSPACE_NAME, AuthenticatedUser.SYSTEM_USER);
         }
     }
 
     public static void preloadPreparedStatement()
     {
-        ClientState clientState = ClientState.forInternalCalls();
+        QueryState state = QueryState.forInternalCalls();
         int count = 0;
         for (Pair<String, String> useKeyspaceAndCQL : SystemKeyspace.loadPreparedStatements())
         {
             try
             {
-                clientState.setKeyspace(useKeyspaceAndCQL.left);
-                prepare(useKeyspaceAndCQL.right, clientState);
+                prepare(useKeyspaceAndCQL.right, state.cloneWithKeyspaceIfSet(useKeyspaceAndCQL.left));
                 count++;
             }
             catch (RequestValidationException e)
@@ -199,9 +201,8 @@ public class QueryProcessor implements QueryHandler
     throws RequestExecutionException, RequestValidationException
     {
         logger.trace("Process {} @CL.{}", statement, options.getConsistency());
-        ClientState clientState = queryState.getClientState();
-        statement.authorize(clientState);
-        statement.validate(clientState);
+        statement.authorize(queryState);
+        statement.validate(queryState);
 
         ResultMessage result;
         if (options.getConsistency() == ConsistencyLevel.NODE_LOCAL)
@@ -228,7 +229,7 @@ public class QueryProcessor implements QueryHandler
 
     public CQLStatement parse(String queryString, QueryState queryState, QueryOptions options)
     {
-        return getStatement(queryString, queryState.getClientState().cloneWithKeyspaceIfSet(options.getKeyspace()));
+        return getStatement(queryString, queryState.cloneWithKeyspaceIfSet(options.getKeyspace()));
     }
 
     public ResultMessage process(CQLStatement statement,
@@ -253,9 +254,9 @@ public class QueryProcessor implements QueryHandler
         return processStatement(prepared, queryState, options, queryStartNanoTime);
     }
 
-    public static CQLStatement parseStatement(String queryStr, ClientState clientState) throws RequestValidationException
+    public static CQLStatement parseStatement(String queryStr, QueryState queryState) throws RequestValidationException
     {
-        return getStatement(queryStr, clientState);
+        return getStatement(queryStr, queryState);
     }
 
     public static UntypedResultSet process(String query, ConsistencyLevel cl) throws RequestExecutionException
@@ -303,8 +304,8 @@ public class QueryProcessor implements QueryHandler
             return prepared;
 
         // Note: if 2 threads prepare the same query, we'll live so don't bother synchronizing
-        CQLStatement statement = parseStatement(query, internalQueryState().getClientState());
-        statement.validate(internalQueryState().getClientState());
+        CQLStatement statement = parseStatement(query, internalQueryState());
+        statement.validate(internalQueryState());
 
         prepared = new Prepared(statement);
         internalStatements.put(query, prepared);
@@ -362,8 +363,8 @@ public class QueryProcessor implements QueryHandler
      */
     public static UntypedResultSet executeOnceInternal(String query, Object... values)
     {
-        CQLStatement statement = parseStatement(query, internalQueryState().getClientState());
-        statement.validate(internalQueryState().getClientState());
+        CQLStatement statement = parseStatement(query, internalQueryState());
+        statement.validate(internalQueryState());
         ResultMessage result = statement.executeLocally(internalQueryState(), makeInternalOptions(statement, values));
         if (result instanceof ResultMessage.Rows)
             return UntypedResultSet.create(((ResultMessage.Rows)result).result);
@@ -402,26 +403,26 @@ public class QueryProcessor implements QueryHandler
     }
 
     public ResultMessage.Prepared prepare(String query,
-                                          ClientState clientState,
+                                          QueryState queryState,
                                           Map<String, ByteBuffer> customPayload) throws RequestValidationException
     {
-        return prepare(query, clientState);
+        return prepare(query, queryState);
     }
 
-    public static ResultMessage.Prepared prepare(String queryString, ClientState clientState)
+    public static ResultMessage.Prepared prepare(String queryString, QueryState queryState)
     {
-        ResultMessage.Prepared existing = getStoredPreparedStatement(queryString, clientState.getRawKeyspace());
+        ResultMessage.Prepared existing = getStoredPreparedStatement(queryString, queryState.getClientState().getRawKeyspace());
         if (existing != null)
             return existing;
 
-        CQLStatement statement = getStatement(queryString, clientState);
+        CQLStatement statement = getStatement(queryString, queryState);
         Prepared prepared = new Prepared(statement, queryString);
 
         int boundTerms = statement.getBindVariables().size();
         if (boundTerms > FBUtilities.MAX_UNSIGNED_SHORT)
             throw new InvalidRequestException(String.format("Too many markers(?). %d markers exceed the allowed maximum of %d", boundTerms, FBUtilities.MAX_UNSIGNED_SHORT));
 
-        return storePreparedStatement(queryString, clientState.getRawKeyspace(), prepared);
+        return storePreparedStatement(queryString, queryState.getClientState().getRawKeyspace(), prepared);
     }
 
     private static MD5Digest computeId(String queryString, String keyspace)
@@ -511,25 +512,24 @@ public class QueryProcessor implements QueryHandler
     public ResultMessage processBatch(BatchStatement batch, QueryState queryState, BatchQueryOptions options, long queryStartNanoTime)
     throws RequestExecutionException, RequestValidationException
     {
-        ClientState clientState = queryState.getClientState().cloneWithKeyspaceIfSet(options.getKeyspace());
-        batch.authorize(clientState);
+        batch.authorize(queryState);
         batch.validate();
-        batch.validate(clientState);
+        batch.validate(queryState);
         return batch.execute(queryState, options, queryStartNanoTime);
     }
 
-    public static CQLStatement getStatement(String queryStr, ClientState clientState)
+    public static CQLStatement getStatement(String queryStr, QueryState queryState)
     throws RequestValidationException
     {
         Tracing.trace("Parsing {}", queryStr);
         CQLStatement.Raw statement = parseStatement(queryStr);
 
         // Set keyspace for statement that require login
-        if (statement instanceof QualifiedStatement)
-            ((QualifiedStatement) statement).setKeyspace(clientState);
+        if (statement instanceof QualifiedStatement && queryState != null)
+            ((QualifiedStatement) statement).setKeyspace(queryState.getClientState());
 
         Tracing.trace("Preparing statement");
-        return statement.prepare(clientState);
+        return statement.prepare(queryState);
     }
 
     public static <T extends CQLStatement.Raw> T parseStatement(String queryStr, Class<T> klass, String type) throws SyntaxException

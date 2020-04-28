@@ -378,13 +378,13 @@ public class MessagePayloadTest extends CQLTester
         }
 
         public ResultMessage.Prepared prepare(String query,
-                                              ClientState clientState,
+                                              QueryState queryState,
                                               Map<String, ByteBuffer> customPayload)
                                                       throws RequestValidationException
         {
             if (customPayload != null)
                 requestPayload = customPayload;
-            ResultMessage.Prepared result = QueryProcessor.instance.prepare(query, clientState, customPayload);
+            ResultMessage.Prepared result = QueryProcessor.instance.prepare(query, queryState, customPayload);
             if (customPayload != null)
             {
                 result.setCustomPayload(responsePayload);

@@ -18,6 +18,9 @@
 
 package org.apache.cassandra.auth;
 
+import java.util.HashMap;
+import java.util.Map;
+
 import org.apache.cassandra.exceptions.ConfigurationException;
 
 public interface INetworkAuthorizer
@@ -42,6 +45,14 @@ public interface INetworkAuthorizer
      * Returns the dc permissions associated with the given role
      */
     DCPermissions authorize(RoleResource role);
+
+    default Map<RoleResource, DCPermissions> authorizeMultiple(Iterable<? extends RoleResource> roleResources)
+    {
+        Map<RoleResource, DCPermissions> r = new HashMap<>();
+        for (RoleResource roleResource : roleResources)
+            r.put(roleResource, authorize(roleResource));
+        return r;
+    }
 
     void setRoleDatacenters(RoleResource role, DCPermissions permissions);
 

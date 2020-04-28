@@ -168,25 +168,6 @@ permissions_validity_in_ms: 2000
 # Defaults to the same value as permissions_validity_in_ms.
 # permissions_update_interval_in_ms: 2000
 
-# Validity period for credentials cache. This cache is tightly coupled to
-# the provided PasswordAuthenticator implementation of IAuthenticator. If
-# another IAuthenticator implementation is configured, this cache will not
-# be automatically used and so the following settings will have no effect.
-# Please note, credentials are cached in their encrypted form, so while
-# activating this cache may reduce the number of queries made to the
-# underlying table, it may not  bring a significant reduction in the
-# latency of individual authentication attempts.
-# Defaults to 2000, set to 0 to disable credentials caching.
-credentials_validity_in_ms: 2000
-
-# Refresh interval for credentials cache (if enabled).
-# After this interval, cache entries become eligible for refresh. Upon next
-# access, an async reload is scheduled and the old value returned until it
-# completes. If credentials_validity_in_ms is non-zero, then this must be
-# also.
-# Defaults to the same value as credentials_validity_in_ms.
-# credentials_update_interval_in_ms: 2000
-
 # The partitioner is responsible for distributing groups of rows (by
 # partition key) across nodes in the cluster. The partitioner can NOT be
 # changed without reloading all data.  If you are adding nodes or upgrading,

@@ -24,7 +24,6 @@ import org.apache.cassandra.cql3.QueryOptions;
 import org.apache.cassandra.exceptions.InvalidRequestException;
 import org.apache.cassandra.exceptions.UnauthorizedException;
 import org.apache.cassandra.transport.messages.ResultMessage;
-import org.apache.cassandra.service.ClientState;
 import org.apache.cassandra.service.QueryState;
 import org.apache.commons.lang3.builder.ToStringBuilder;
 import org.apache.commons.lang3.builder.ToStringStyle;
@@ -38,17 +37,16 @@ public class UseStatement extends CQLStatement.Raw implements CQLStatement
         this.keyspace = keyspace;
     }
 
-    public UseStatement prepare(ClientState state)
+    public UseStatement prepare(QueryState state)
     {
         return this;
     }
 
-    public void authorize(ClientState state) throws UnauthorizedException
+    public void authorize(QueryState state) throws UnauthorizedException
     {
-        state.validateLogin();
     }
 
-    public void validate(ClientState state) throws InvalidRequestException
+    public void validate(QueryState state) throws InvalidRequestException
     {
     }
 

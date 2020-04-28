@@ -22,6 +22,7 @@ import java.io.IOException;
 import java.util.*;
 
 import org.apache.cassandra.auth.AuthKeyspace;
+import org.apache.cassandra.auth.AuthManager;
 import org.apache.cassandra.auth.AuthSchemaChangeListener;
 import org.apache.cassandra.auth.IAuthenticator;
 import org.apache.cassandra.auth.IAuthorizer;
@@ -301,15 +302,10 @@ public class SchemaLoader
 
     public static void setupAuth(IRoleManager roleManager, IAuthenticator authenticator, IAuthorizer authorizer, INetworkAuthorizer networkAuthorizer)
     {
-        DatabaseDescriptor.setRoleManager(roleManager);
         DatabaseDescriptor.setAuthenticator(authenticator);
-        DatabaseDescriptor.setAuthorizer(authorizer);
-        DatabaseDescriptor.setNetworkAuthorizer(networkAuthorizer);
+        DatabaseDescriptor.setAuthManager(new AuthManager(roleManager, authorizer, networkAuthorizer));
         MigrationManager.announceNewKeyspace(AuthKeyspace.metadata(), true);
-        DatabaseDescriptor.getRoleManager().setup();
-        DatabaseDescriptor.getAuthenticator().setup();
-        DatabaseDescriptor.getAuthorizer().setup();
-        DatabaseDescriptor.getNetworkAuthorizer().setup();
+        DatabaseDescriptor.getAuthManager().setup(authenticator);
         Schema.instance.registerListener(new AuthSchemaChangeListener());
     }
 

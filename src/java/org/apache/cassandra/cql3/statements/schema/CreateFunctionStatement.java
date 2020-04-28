@@ -41,7 +41,7 @@ import org.apache.cassandra.schema.KeyspaceMetadata;
 import org.apache.cassandra.schema.Keyspaces;
 import org.apache.cassandra.schema.Keyspaces.KeyspacesDiff;
 import org.apache.cassandra.schema.Schema;
-import org.apache.cassandra.service.ClientState;
+import org.apache.cassandra.service.QueryState;
 import org.apache.cassandra.transport.Event.SchemaChange;
 import org.apache.cassandra.transport.Event.SchemaChange.Change;
 import org.apache.cassandra.transport.Event.SchemaChange.Target;
@@ -169,7 +169,7 @@ public final class CreateFunctionStatement extends AlterSchemaStatement
                                 rawArgumentTypes.stream().map(CQL3Type.Raw::toString).collect(toList()));
     }
 
-    public void authorize(ClientState client)
+    public void authorize(QueryState client)
     {
         FunctionName name = new FunctionName(keyspaceName, functionName);
 
@@ -236,9 +236,9 @@ public final class CreateFunctionStatement extends AlterSchemaStatement
             this.ifNotExists = ifNotExists;
         }
 
-        public CreateFunctionStatement prepare(ClientState state)
+        public CreateFunctionStatement prepare(QueryState state)
         {
-            String keyspaceName = name.hasKeyspace() ? name.keyspace : state.getKeyspace();
+            String keyspaceName = name.hasKeyspace() ? name.keyspace : state.getClientState().getKeyspace();
 
             return new CreateFunctionStatement(keyspaceName,
                                                name.name,

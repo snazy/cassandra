@@ -26,7 +26,7 @@ import org.apache.cassandra.cql3.RoleName;
 import org.apache.cassandra.exceptions.InvalidRequestException;
 import org.apache.cassandra.exceptions.RequestValidationException;
 import org.apache.cassandra.exceptions.UnauthorizedException;
-import org.apache.cassandra.service.ClientState;
+import org.apache.cassandra.service.QueryState;
 
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.builder.ToStringBuilder;
@@ -47,7 +47,7 @@ public abstract class PermissionsManagementStatement extends AuthorizationStatem
         this.grantMode = grantMode;
     }
 
-    public void validate(ClientState state) throws RequestValidationException
+    public void validate(QueryState state) throws RequestValidationException
     {
         // validate login here before authorize to avoid leaking user existence to anonymous users.
         state.ensureNotAnonymous();
@@ -70,7 +70,7 @@ public abstract class PermissionsManagementStatement extends AuthorizationStatem
             throw new InvalidRequestException(String.format("Resource %s doesn't exist", resource));
     }
 
-    public void authorize(ClientState state) throws UnauthorizedException
+    public void authorize(QueryState state) throws UnauthorizedException
     {
         // if a keyspace is omitted when GRANT/REVOKE ON TABLE <table>, we need to correct the resource.
         resource = maybeCorrectResource(resource, state);
@@ -105,7 +105,7 @@ public abstract class PermissionsManagementStatement extends AuthorizationStatem
             if (grantMode == GrantMode.GRANTABLE)
             {
                 throw new UnauthorizedException(String.format("User %s must not grant AUTHORIZE FOR %s permission on %s",
-                                                              state.getUser().getName(),
+                                                              state.getUserName(),
                                                               StringUtils.join(missingPermissions, ", "),
                                                               resource));
             }
@@ -115,14 +115,14 @@ public abstract class PermissionsManagementStatement extends AuthorizationStatem
             // Check that the user has grant-option on all permissions to be
             // granted for the resource
             for (Permission p : permissions)
-                if (!state.hasGrantOption(p, resource))
+                if (!state.hasGrantPermission(p, resource))
                 {
                     missingGrantables.add(p);
                 }
 
             if (!missingGrantables.isEmpty())
                 throw new UnauthorizedException(String.format("User %s has no %s permission nor AUTHORIZE FOR %s permission on %s or any of its parents",
-                                                              state.getUser().getName(),
+                                                              state.getUserName(),
                                                               StringUtils.join(missingPermissions, ", "),
                                                               StringUtils.join(missingGrantables, ", "),
                                                               resource));
@@ -131,9 +131,9 @@ public abstract class PermissionsManagementStatement extends AuthorizationStatem
             // to any of the roles the user belongs to. This check
             // assumes that getRoles() returns a role for the user himself
             // (i.e. like "RoleResource(username)" as for AuthenticatedUser.role).
-            if (state.getUser().getRoles().contains(grantee))
+            if (state.hasRole(grantee))
                 throw new UnauthorizedException(String.format("User %s has grant privilege for %s permission(s) on %s but must not grant/revoke for him/herself",
-                                                              state.getUser().getName(),
+                                                              state.getUserName(),
                                                               StringUtils.join(permissions, ", "),
                                                               resource));
 

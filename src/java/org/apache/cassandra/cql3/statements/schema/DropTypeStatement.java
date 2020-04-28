@@ -30,7 +30,7 @@ import org.apache.cassandra.schema.KeyspaceMetadata;
 import org.apache.cassandra.schema.Keyspaces.KeyspacesDiff;
 import org.apache.cassandra.schema.Keyspaces;
 import org.apache.cassandra.schema.TableMetadata;
-import org.apache.cassandra.service.ClientState;
+import org.apache.cassandra.service.QueryState;
 import org.apache.cassandra.transport.Event.SchemaChange.Change;
 import org.apache.cassandra.transport.Event.SchemaChange.Target;
 import org.apache.cassandra.transport.Event.SchemaChange;
@@ -118,9 +118,9 @@ public final class DropTypeStatement extends AlterSchemaStatement
         return new SchemaChange(Change.DROPPED, Target.TYPE, keyspaceName, typeName);
     }
 
-    public void authorize(ClientState client)
+    public void authorize(QueryState client)
     {
-        client.ensureKeyspacePermission(keyspaceName, Permission.DROP);
+        client.ensureKeyspacePermission(Permission.DROP, keyspaceName);
     }
 
     @Override
@@ -145,9 +145,9 @@ public final class DropTypeStatement extends AlterSchemaStatement
             this.ifExists = ifExists;
         }
 
-        public DropTypeStatement prepare(ClientState state)
+        public DropTypeStatement prepare(QueryState state)
         {
-            String keyspaceName = name.hasKeyspace() ? name.getKeyspace() : state.getKeyspace();
+            String keyspaceName = name.hasKeyspace() ? name.getKeyspace() : state.getClientState().getKeyspace();
             return new DropTypeStatement(keyspaceName, name.getStringTypeName(), ifExists);
         }
     }

@@ -24,7 +24,7 @@ import org.apache.cassandra.cql3.CQLStatement;
 import org.apache.cassandra.cql3.QualifiedName;
 import org.apache.cassandra.schema.*;
 import org.apache.cassandra.schema.Keyspaces.KeyspacesDiff;
-import org.apache.cassandra.service.ClientState;
+import org.apache.cassandra.service.QueryState;
 import org.apache.cassandra.transport.Event.SchemaChange;
 import org.apache.cassandra.transport.Event.SchemaChange.Change;
 import org.apache.cassandra.transport.Event.SchemaChange.Target;
@@ -79,11 +79,11 @@ public final class AlterViewStatement extends AlterSchemaStatement
         return new SchemaChange(Change.UPDATED, Target.TABLE, keyspaceName, viewName);
     }
 
-    public void authorize(ClientState client)
+    public void authorize(QueryState client)
     {
         ViewMetadata view = Schema.instance.getView(keyspaceName, viewName);
         if (null != view)
-            client.ensureTablePermission(keyspaceName, view.baseTableName, Permission.ALTER);
+            client.ensureTablePermission(Permission.ALTER, keyspaceName, view.baseTableName);
     }
 
     @Override
@@ -108,9 +108,9 @@ public final class AlterViewStatement extends AlterSchemaStatement
             this.attrs = attrs;
         }
 
-        public AlterViewStatement prepare(ClientState state)
+        public AlterViewStatement prepare(QueryState state)
         {
-            String keyspaceName = name.hasKeyspace() ? name.getKeyspace() : state.getKeyspace();
+            String keyspaceName = name.hasKeyspace() ? name.getKeyspace() : state.getClientState().getKeyspace();
             return new AlterViewStatement(keyspaceName, name.getName(), attrs);
         }
     }

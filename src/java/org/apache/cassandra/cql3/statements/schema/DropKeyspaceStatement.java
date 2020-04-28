@@ -23,7 +23,7 @@ import org.apache.cassandra.auth.Permission;
 import org.apache.cassandra.cql3.CQLStatement;
 import org.apache.cassandra.schema.Keyspaces;
 import org.apache.cassandra.schema.Keyspaces.KeyspacesDiff;
-import org.apache.cassandra.service.ClientState;
+import org.apache.cassandra.service.QueryState;
 import org.apache.cassandra.transport.Event.SchemaChange;
 import org.apache.cassandra.transport.Event.SchemaChange.Change;
 
@@ -53,9 +53,9 @@ public final class DropKeyspaceStatement extends AlterSchemaStatement
         return new SchemaChange(Change.DROPPED, keyspaceName);
     }
 
-    public void authorize(ClientState client)
+    public void authorize(QueryState client)
     {
-        client.ensureKeyspacePermission(keyspaceName, Permission.DROP);
+        client.ensureKeyspacePermission(Permission.DROP, keyspaceName);
     }
 
     @Override
@@ -80,7 +80,7 @@ public final class DropKeyspaceStatement extends AlterSchemaStatement
             this.ifExists = ifExists;
         }
 
-        public DropKeyspaceStatement prepare(ClientState state)
+        public DropKeyspaceStatement prepare(QueryState state)
         {
             return new DropKeyspaceStatement(keyspaceName, ifExists);
         }

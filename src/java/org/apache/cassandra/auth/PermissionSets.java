@@ -22,6 +22,8 @@ import java.util.Collections;
 import java.util.EnumSet;
 import java.util.Set;
 
+import com.google.common.base.MoreObjects;
+
 /**
  * Container for granted permissions, restricted permissions and grantable permissions.
  */
@@ -83,11 +85,47 @@ public final class PermissionSets
                             .addGrantables(grantables);
     }
 
+    public boolean equals(Object o)
+    {
+        if (this == o) return true;
+        if (o == null || getClass() != o.getClass()) return false;
+
+        PermissionSets that = (PermissionSets) o;
+
+        if (!granted.equals(that.granted)) return false;
+        if (!restricted.equals(that.restricted)) return false;
+        return grantables.equals(that.grantables);
+    }
+
+    public int hashCode()
+    {
+        int result = granted.hashCode();
+        result = 31 * result + restricted.hashCode();
+        result = 31 * result + grantables.hashCode();
+        return result;
+    }
+
+    @Override
+    public String toString()
+    {
+        return MoreObjects.toStringHelper(this)
+                          .add("granted", granted)
+                          .add("restricted", restricted)
+                          .add("grantables", grantables)
+                          .toString();
+    }
+
     public static Builder builder()
     {
         return new Builder();
     }
 
+    public boolean hasEffectivePermission(Permission permission)
+    {
+        return granted.contains(permission) && !restricted.contains(permission);
+    }
+
+    @SuppressWarnings("UnusedReturnValue")
     public static final class Builder
     {
         private final Set<Permission> granted = Permissions.setOf();
@@ -152,26 +190,19 @@ public final class PermissionSets
             return this;
         }
 
-        public Builder removeGranted(Permission granted)
+        public Builder add(PermissionSets permissionSets)
         {
-            this.granted.remove(granted);
-            return this;
-        }
-
-        public Builder removeRestricted(Permission restricted)
-        {
-            this.restricted.remove(restricted);
-            return this;
-        }
-
-        public Builder removeGrantable(Permission grantable)
-        {
-            this.grantables.remove(grantable);
+            this.granted.addAll(permissionSets.granted);
+            this.restricted.addAll(permissionSets.restricted);
+            this.grantables.addAll(permissionSets.grantables);
             return this;
         }
 
         public PermissionSets build()
         {
+            if (granted.isEmpty() && restricted.isEmpty() && grantables.isEmpty())
+                return EMPTY;
+
             return new PermissionSets(Permissions.immutableSetOf(granted),
                                       Permissions.immutableSetOf(restricted),
                                       Permissions.immutableSetOf(grantables));

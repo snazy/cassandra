@@ -18,12 +18,48 @@
 package org.apache.cassandra.auth;
 
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
+import org.apache.cassandra.config.DatabaseDescriptor;
+import org.apache.cassandra.db.SystemKeyspace;
+import org.apache.cassandra.db.virtual.VirtualSchemaKeyspace;
+import org.apache.cassandra.schema.SchemaConstants;
+import org.apache.cassandra.schema.SchemaKeyspace;
 import org.apache.cassandra.utils.Hex;
 
 public final class Resources
 {
+    private static final Set<IResource> READABLE_SYSTEM_RESOURCES = new HashSet<>();
+    private static final Set<IResource> PROTECTED_AUTH_RESOURCES = new HashSet<>();
+    private static final Set<IResource> DROPPABLE_SYSTEM_TABLES = new HashSet<>();
+
+    static
+    {
+        // We want these system cfs to be always readable to authenticated users since many tools rely on them
+        // (nodetool, cqlsh, bulkloader, etc.)
+        for (String cf : Arrays.asList(SystemKeyspace.LOCAL, SystemKeyspace.LEGACY_PEERS, SystemKeyspace.PEERS_V2))
+            READABLE_SYSTEM_RESOURCES.add(DataResource.table(SchemaConstants.SYSTEM_KEYSPACE_NAME, cf));
+
+        // make all schema tables readable by default (required by the drivers)
+        SchemaKeyspace.ALL.forEach(table -> READABLE_SYSTEM_RESOURCES.add(DataResource.table(SchemaConstants.SCHEMA_KEYSPACE_NAME, table)));
+
+        // make all virtual schema tables readable by default as well
+        VirtualSchemaKeyspace.instance.tables().forEach(t -> READABLE_SYSTEM_RESOURCES.add(t.metadata().resource));
+
+        // neither clients nor tools need authentication/authorization
+        if (DatabaseDescriptor.isDaemonInitialized())
+        {
+            PROTECTED_AUTH_RESOURCES.addAll(DatabaseDescriptor.getAuthenticator().protectedResources());
+            PROTECTED_AUTH_RESOURCES.addAll(DatabaseDescriptor.getAuthorizer().protectedResources());
+            PROTECTED_AUTH_RESOURCES.addAll(DatabaseDescriptor.getRoleManager().protectedResources());
+        }
+
+        SchemaConstants.OBSOLETE_AUTH_TABLES.forEach(t -> DROPPABLE_SYSTEM_TABLES.add(DataResource.table(SchemaConstants.AUTH_KEYSPACE_NAME, t)));
+    }
+
     /**
      * Construct a chain of resource parents starting with the resource and ending with the root.
      *
@@ -54,14 +90,32 @@ public final class Resources
     {
         if (name.startsWith(RoleResource.root().getName()))
             return RoleResource.fromName(name);
-        else if (name.startsWith(DataResource.root().getName()))
+
+        if (name.startsWith(DataResource.root().getName()))
             return DataResource.fromName(name);
-        else if (name.startsWith(FunctionResource.root().getName()))
+
+        if (name.startsWith(FunctionResource.root().getName()))
             return FunctionResource.fromName(name);
-        else if (name.startsWith(JMXResource.root().getName()))
+
+        if (name.startsWith(JMXResource.root().getName()))
             return JMXResource.fromName(name);
-        else
-            throw new IllegalArgumentException(String.format("Name %s is not valid for any resource type", name));
+
+        throw new IllegalArgumentException(String.format("Name %s is not valid for any resource type", name));
+    }
+
+    public static boolean isAlwaysReadable(IResource resource)
+    {
+        return READABLE_SYSTEM_RESOURCES.contains(resource);
+    }
+
+    public static boolean isProtected(IResource resource)
+    {
+        return PROTECTED_AUTH_RESOURCES.contains(resource);
+    }
+
+    public static boolean isDroppable(IResource resource)
+    {
+        return DROPPABLE_SYSTEM_TABLES.contains(resource);
     }
 
     @Deprecated

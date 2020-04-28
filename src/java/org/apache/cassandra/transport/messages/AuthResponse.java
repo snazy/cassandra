@@ -73,7 +73,7 @@ public class AuthResponse extends Message.Request
     {
         try
         {
-            IAuthenticator.SaslNegotiator negotiator = ((ServerConnection) connection).getSaslNegotiator(queryState);
+            IAuthenticator.SaslNegotiator negotiator = ((ServerConnection) connection).getSaslNegotiator();
             byte[] challenge = negotiator.evaluateResponse(token);
             if (negotiator.isComplete())
             {

@@ -24,7 +24,6 @@ import org.apache.cassandra.cql3.QueryOptions;
 import org.apache.cassandra.exceptions.InvalidRequestException;
 import org.apache.cassandra.exceptions.RequestExecutionException;
 import org.apache.cassandra.exceptions.RequestValidationException;
-import org.apache.cassandra.service.ClientState;
 import org.apache.cassandra.service.QueryState;
 import org.apache.cassandra.transport.messages.ResultMessage;
 import org.apache.commons.lang3.builder.ToStringBuilder;
@@ -32,7 +31,7 @@ import org.apache.commons.lang3.builder.ToStringStyle;
 
 public abstract class AuthorizationStatement extends CQLStatement.Raw implements CQLStatement
 {
-    public AuthorizationStatement prepare(ClientState state)
+    public AuthorizationStatement prepare(QueryState state)
     {
         return this;
     }
@@ -40,24 +39,24 @@ public abstract class AuthorizationStatement extends CQLStatement.Raw implements
     public ResultMessage execute(QueryState state, QueryOptions options, long queryStartNanoTime)
     throws RequestValidationException, RequestExecutionException
     {
-        return execute(state.getClientState());
+        return execute(state);
     }
 
-    public abstract ResultMessage execute(ClientState state) throws RequestValidationException, RequestExecutionException;
+    public abstract ResultMessage execute(QueryState state) throws RequestValidationException, RequestExecutionException;
 
     public ResultMessage executeLocally(QueryState state, QueryOptions options)
     {
         // executeLocally is for local query only, thus altering permission doesn't make sense and is not supported
-        throw new UnsupportedOperationException();
+        throw new UnsupportedOperationException("executeLocally is unsupported for " + getClass().getSimpleName());
     }
 
-    public static IResource maybeCorrectResource(IResource resource, ClientState state) throws InvalidRequestException
+    public static IResource maybeCorrectResource(IResource resource, QueryState state) throws InvalidRequestException
     {
         if (DataResource.class.isInstance(resource))
         {
             DataResource dataResource = (DataResource) resource;
             if (dataResource.isTableLevel() && dataResource.getKeyspace() == null)
-                return DataResource.table(state.getKeyspace(), dataResource.getTable());
+                return DataResource.table(state.getClientState().getKeyspace(), dataResource.getTable());
         }
         return resource;
     }

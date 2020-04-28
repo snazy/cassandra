@@ -26,6 +26,7 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
+import org.apache.cassandra.auth.UserRolesAndPermissions;
 import org.apache.cassandra.db.SystemKeyspace;
 import org.apache.cassandra.db.marshal.Int32Type;
 import org.apache.cassandra.db.marshal.UTF8Type;
@@ -58,21 +59,22 @@ public class PstmtPersistenceTest extends CQLTester
         execute("CREATE TABLE foo.bar (key text PRIMARY KEY, val int)");
 
         ClientState clientState = ClientState.forExternalCalls(InetSocketAddress.createUnresolved("127.0.0.1", 1234));
+        QueryState queryState = new QueryState(clientState, UserRolesAndPermissions.SYSTEM);
 
         createTable("CREATE TABLE %s (pk int PRIMARY KEY, val text)");
 
         List<MD5Digest> stmtIds = new ArrayList<>();
         // #0
-        stmtIds.add(prepareStatement("SELECT * FROM %s WHERE keyspace_name = ?", SchemaConstants.SCHEMA_KEYSPACE_NAME, SchemaKeyspace.TABLES, clientState));
+        stmtIds.add(prepareStatement("SELECT * FROM %s WHERE keyspace_name = ?", SchemaConstants.SCHEMA_KEYSPACE_NAME, SchemaKeyspace.TABLES, queryState));
         // #1
-        stmtIds.add(prepareStatement("SELECT * FROM %s WHERE pk = ?", clientState));
+        stmtIds.add(prepareStatement("SELECT * FROM %s WHERE pk = ?", queryState));
         // #2
-        stmtIds.add(prepareStatement("SELECT * FROM %s WHERE key = ?", "foo", "bar", clientState));
+        stmtIds.add(prepareStatement("SELECT * FROM %s WHERE key = ?", "foo", "bar", queryState));
         clientState.setKeyspace("foo");
         // #3
-        stmtIds.add(prepareStatement("SELECT * FROM %s WHERE pk = ?", clientState));
+        stmtIds.add(prepareStatement("SELECT * FROM %s WHERE pk = ?", queryState));
         // #4
-        stmtIds.add(prepareStatement("SELECT * FROM %S WHERE key = ?", "foo", "bar", clientState));
+        stmtIds.add(prepareStatement("SELECT * FROM %S WHERE key = ?", "foo", "bar", queryState));
 
         assertEquals(5, stmtIds.size());
         assertEquals(5, QueryProcessor.preparedStatementsCount());
@@ -103,7 +105,7 @@ public class PstmtPersistenceTest extends CQLTester
         }
 
         // add anther prepared statement and sync it to table
-        prepareStatement("SELECT * FROM %s WHERE key = ?", "foo", "bar", clientState);
+        prepareStatement("SELECT * FROM %s WHERE key = ?", "foo", "bar", queryState);
         assertEquals(6, numberOfStatementsInMemory());
         assertEquals(6, numberOfStatementsOnDisk());
 
@@ -135,13 +137,13 @@ public class PstmtPersistenceTest extends CQLTester
     @Test
     public void testPstmtInvalidation() throws Throwable
     {
-        ClientState clientState = ClientState.forInternalCalls();
+        QueryState queryState = QueryState.forInternalCalls();
 
         createTable("CREATE TABLE %s (key int primary key, val int)");
 
         for (int cnt = 1; cnt < 10000; cnt++)
         {
-            prepareStatement("INSERT INTO %s (key, val) VALUES (?, ?) USING TIMESTAMP " + cnt, clientState);
+            prepareStatement("INSERT INTO %s (key, val) VALUES (?, ?) USING TIMESTAMP " + cnt, queryState);
 
             if (numberOfEvictedStatements() > 0)
             {
@@ -149,7 +151,7 @@ public class PstmtPersistenceTest extends CQLTester
 
                 // prepare a more statements to trigger more evictions
                 for (int cnt2 = 1; cnt2 < 10; cnt2++)
-                    prepareStatement("INSERT INTO %s (key, val) VALUES (?, ?) USING TIMESTAMP " + cnt2, clientState);
+                    prepareStatement("INSERT INTO %s (key, val) VALUES (?, ?) USING TIMESTAMP " + cnt2, queryState);
 
                 // each new prepared statement should have caused an eviction
                 assertEquals("eviction count didn't increase by the expected number", numberOfEvictedStatements(), 10);
@@ -178,13 +180,13 @@ public class PstmtPersistenceTest extends CQLTester
         return QueryProcessor.metrics.preparedStatementsEvicted.getCount();
     }
 
-    private MD5Digest prepareStatement(String stmt, ClientState clientState)
+    private MD5Digest prepareStatement(String stmt, QueryState queryState)
     {
-        return prepareStatement(stmt, keyspace(), currentTable(), clientState);
+        return prepareStatement(stmt, keyspace(), currentTable(), queryState);
     }
 
-    private MD5Digest prepareStatement(String stmt, String keyspace, String table, ClientState clientState)
+    private MD5Digest prepareStatement(String stmt, String keyspace, String table, QueryState queryState)
     {
-        return QueryProcessor.prepare(String.format(stmt, keyspace + "." + table), clientState).statementId;
+        return QueryProcessor.prepare(String.format(stmt, keyspace + "." + table), queryState).statementId;
     }
 }

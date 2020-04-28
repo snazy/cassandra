@@ -17,9 +17,11 @@
  */
 package org.apache.cassandra.auth;
 
+import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.stream.Collectors;
+import java.util.concurrent.Future;
 
 import org.apache.cassandra.exceptions.ConfigurationException;
 import org.apache.cassandra.exceptions.RequestExecutionException;
@@ -39,9 +41,19 @@ public interface IRoleManager
      * CREATE USER/ALTER USER, which are aliases provided
      * for backwards compatibility).
      */
-    public enum Option
+    enum Option
     {
         SUPERUSER, PASSWORD, LOGIN, OPTIONS
+    }
+
+    default <T extends IRoleManager> T implementation()
+    {
+        return (T) this;
+    }
+
+    default <T extends IRoleManager> boolean isImplementationOf(Class<T> implClass)
+    {
+        return implClass.isAssignableFrom(implementation().getClass());
     }
 
     /**
@@ -136,23 +148,6 @@ public interface IRoleManager
     Set<RoleResource> getRoles(RoleResource grantee, boolean includeInherited) throws RequestValidationException, RequestExecutionException;
 
     /**
-     * Used to retrieve detailed role info on the full set of roles granted to a grantee.
-     * This method was not part of the V1 IRoleManager API, so a default impl is supplied which uses the V1
-     * methods to retrieve the detailed role info for the grantee. This is essentially what clients of this interface
-     * would have to do themselves. Implementations can provide optimized versions of this method where the details
-     * can be retrieved more efficiently.
-     *
-     * @param grantee identifies the role whose granted roles are retrieved
-     * @return A set of Role objects detailing the roles granted to the grantee, either directly or through inheritance.
-     */
-     default Set<Role> getRoleDetails(RoleResource grantee)
-     {
-         return getRoles(grantee, true).stream()
-                                       .map(roleResource -> Roles.fromRoleResource(roleResource, this))
-                                       .collect(Collectors.toSet());
-     }
-
-    /**
      * Called during the execution of an unqualified LIST ROLES query.
      * Returns the total set of distinct roles in the system.
      *
@@ -207,6 +202,31 @@ public interface IRoleManager
     boolean isExistingRole(RoleResource role);
 
     /**
+     * Return {@link RoleResource}s for role names that actually exist.
+     * @param roleNames
+     */
+    Set<RoleResource> filterExistingRoleNames(List<String> roleNames);
+
+    /**
+     * Retrieve a composite of role information about <em>direct</em> memberships, superuser status,
+     * can-login flag and custom options.
+     * <p>The implementation must never returns null. If the  name cannot be found they must return
+     * {@code Role.NULL_ROLL}.</p>
+     */
+    Role getRoleData(RoleResource role);
+
+    /**
+     * Similar to {@link #getRoleData(RoleResource)}, but for multiple roles.
+     */
+    default Map<RoleResource,Role> getRolesData(Iterable<? extends RoleResource> roleResources)
+    {
+        Map<RoleResource, Role> r = new HashMap<>();
+        for (RoleResource roleResource : roleResources)
+            r.put(roleResource, getRoleData(roleResource));
+        return r;
+    }
+
+    /**
      * Set of resources that should be made inaccessible to users and only accessible internally.
      *
      * @return Keyspaces and column families that will be unmodifiable by users; other resources.
@@ -225,5 +245,20 @@ public interface IRoleManager
      *
      * For example, use this method to create any required keyspaces/column families.
      */
-    void setup();
+    Future<?> setup();
+
+    /**
+     * Returns true if the supplied role or any other role granted to it
+     * (directly or indirectly) has superuser status.
+     *
+     * @param role the primary role
+     * @return {@code true} if the role has superuser status, {@code false} otherwise
+     */
+    default boolean hasSuperuserStatus(RoleResource role)
+    {
+        for (RoleResource r : this.getRoles(role, true))
+            if (isSuper(r))
+                return true;
+        return false;
+    }
 }

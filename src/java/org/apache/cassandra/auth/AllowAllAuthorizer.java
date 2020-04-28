@@ -18,6 +18,7 @@
 package org.apache.cassandra.auth;
 
 import java.util.Collections;
+import java.util.Map;
 import java.util.Set;
 
 public class AllowAllAuthorizer implements IAuthorizer
@@ -28,20 +29,17 @@ public class AllowAllAuthorizer implements IAuthorizer
         return false;
     }
 
-    public PermissionSets allPermissionSets(AuthenticatedUser user, IResource resource)
+    public Map<IResource, PermissionSets> allPermissionSets(RoleResource role)
     {
-        return PermissionSets.builder()
-                             .addGranted(applicablePermissions(resource))
-                             .addGrantables(applicablePermissions(resource))
-                             .build();
+        throw new UnsupportedOperationException();
     }
 
-    public void grant(AuthenticatedUser performer, Set<Permission> permissions, IResource resource, RoleResource to, GrantMode grantMode)
+    public void grant(AuthenticatedUser performer, Set<Permission> permissions, IResource resource, RoleResource to, GrantMode... grantModes)
     {
         throw new UnsupportedOperationException("GRANT operation is not supported by AllowAllAuthorizer");
     }
 
-    public void revoke(AuthenticatedUser performer, Set<Permission> permissions, IResource resource, RoleResource from, GrantMode grantMode)
+    public void revoke(AuthenticatedUser performer, Set<Permission> permissions, IResource resource, RoleResource from, GrantMode... grantModes)
     {
         throw new UnsupportedOperationException("REVOKE operation is not supported by AllowAllAuthorizer");
     }

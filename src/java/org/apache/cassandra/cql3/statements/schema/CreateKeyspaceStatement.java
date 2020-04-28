@@ -31,7 +31,7 @@ import org.apache.cassandra.schema.KeyspaceMetadata;
 import org.apache.cassandra.schema.KeyspaceParams.Option;
 import org.apache.cassandra.schema.Keyspaces;
 import org.apache.cassandra.schema.Keyspaces.KeyspacesDiff;
-import org.apache.cassandra.service.ClientState;
+import org.apache.cassandra.service.QueryState;
 import org.apache.cassandra.transport.Event.SchemaChange;
 import org.apache.cassandra.transport.Event.SchemaChange.Change;
 
@@ -77,7 +77,7 @@ public final class CreateKeyspaceStatement extends AlterSchemaStatement
         return new SchemaChange(Change.CREATED, keyspaceName);
     }
 
-    public void authorize(ClientState client)
+    public void authorize(QueryState client)
     {
         client.ensureAllKeyspacesPermission(Permission.CREATE);
     }
@@ -112,7 +112,7 @@ public final class CreateKeyspaceStatement extends AlterSchemaStatement
             this.ifNotExists = ifNotExists;
         }
 
-        public CreateKeyspaceStatement prepare(ClientState state)
+        public CreateKeyspaceStatement prepare(QueryState state)
         {
             return new CreateKeyspaceStatement(keyspaceName, attrs, ifNotExists);
         }

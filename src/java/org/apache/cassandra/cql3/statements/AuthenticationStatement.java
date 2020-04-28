@@ -24,13 +24,12 @@ import org.apache.cassandra.cql3.QueryOptions;
 import org.apache.cassandra.exceptions.RequestExecutionException;
 import org.apache.cassandra.exceptions.RequestValidationException;
 import org.apache.cassandra.exceptions.UnauthorizedException;
-import org.apache.cassandra.service.ClientState;
 import org.apache.cassandra.service.QueryState;
 import org.apache.cassandra.transport.messages.ResultMessage;
 
 public abstract class AuthenticationStatement extends CQLStatement.Raw implements CQLStatement
 {
-    public AuthenticationStatement prepare(ClientState state)
+    public AuthenticationStatement prepare(QueryState state)
     {
         return this;
     }
@@ -38,10 +37,10 @@ public abstract class AuthenticationStatement extends CQLStatement.Raw implement
     public ResultMessage execute(QueryState state, QueryOptions options, long queryStartNanoTime)
     throws RequestExecutionException, RequestValidationException
     {
-        return execute(state.getClientState());
+        return execute(state);
     }
 
-    public abstract ResultMessage execute(ClientState state) throws RequestExecutionException, RequestValidationException;
+    public abstract ResultMessage execute(QueryState state) throws RequestExecutionException, RequestValidationException;
 
     public ResultMessage executeLocally(QueryState state, QueryOptions options)
     {
@@ -49,7 +48,7 @@ public abstract class AuthenticationStatement extends CQLStatement.Raw implement
         throw new UnsupportedOperationException();
     }
 
-    public void checkPermission(ClientState state, Permission required, RoleResource resource) throws UnauthorizedException
+    public void ensurePermission(QueryState state, Permission required, RoleResource resource) throws UnauthorizedException
     {
         try
         {
@@ -60,7 +59,7 @@ public abstract class AuthenticationStatement extends CQLStatement.Raw implement
             // Catch and rethrow with a more friendly message
             throw new UnauthorizedException(String.format("User %s does not have sufficient privileges " +
                                                           "to perform the requested operation",
-                                                          state.getUser().getName()));
+                                                          state.getUserName()));
         }
     }
 }

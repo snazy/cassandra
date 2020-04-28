@@ -32,7 +32,6 @@ import javax.annotation.Nullable;
 
 import org.apache.commons.lang3.StringUtils;
 import org.junit.After;
-import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
@@ -44,6 +43,7 @@ import net.openhft.chronicle.queue.RollCycles;
 import net.openhft.chronicle.wire.ValueIn;
 import net.openhft.chronicle.wire.WireOut;
 import org.apache.cassandra.Util;
+import org.apache.cassandra.auth.UserRolesAndPermissions;
 import org.apache.cassandra.cql3.CQLTester;
 import org.apache.cassandra.cql3.QueryOptions;
 import org.apache.cassandra.cql3.statements.BatchStatement;
@@ -724,12 +724,12 @@ public class FullQueryLoggerTest extends CQLTester
     private QueryState queryState(String keyspace)
     {
         ClientState clientState = ClientState.forInternalCalls(keyspace);
-        return new QueryState(clientState);
+        return new QueryState(clientState, UserRolesAndPermissions.SYSTEM);
     }
 
     private QueryState queryState()
     {
-        return new QueryState(ClientState.forInternalCalls());
+        return QueryState.forInternalCalls();
     }
 }
 

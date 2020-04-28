@@ -23,7 +23,7 @@ import org.apache.cassandra.cql3.CQLStatement;
 import org.apache.cassandra.cql3.QualifiedName;
 import org.apache.cassandra.schema.*;
 import org.apache.cassandra.schema.Keyspaces.KeyspacesDiff;
-import org.apache.cassandra.service.ClientState;
+import org.apache.cassandra.service.QueryState;
 import org.apache.cassandra.transport.Event.SchemaChange;
 import org.apache.cassandra.transport.Event.SchemaChange.Change;
 import org.apache.cassandra.transport.Event.SchemaChange.Target;
@@ -71,7 +71,7 @@ public final class DropTriggerStatement extends AlterSchemaStatement
         return new SchemaChange(Change.UPDATED, Target.TABLE, keyspaceName, tableName);
     }
 
-    public void authorize(ClientState client)
+    public void authorize(QueryState client)
     {
         client.ensureIsSuperuser("Only superusers are allowed to perfrom DROP TRIGGER queries");
     }
@@ -100,9 +100,9 @@ public final class DropTriggerStatement extends AlterSchemaStatement
             this.ifExists = ifExists;
         }
 
-        public DropTriggerStatement prepare(ClientState state)
+        public DropTriggerStatement prepare(QueryState state)
         {
-            String keyspaceName = tableName.hasKeyspace() ? tableName.getKeyspace() : state.getKeyspace();
+            String keyspaceName = tableName.hasKeyspace() ? tableName.getKeyspace() : state.getClientState().getKeyspace();
             return new DropTriggerStatement(keyspaceName, tableName.getName(), triggerName, ifExists);
         }
     }

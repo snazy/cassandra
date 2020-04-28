@@ -27,6 +27,7 @@ import java.util.function.ToLongFunction;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.ImmutableList;
 
+import org.apache.cassandra.auth.RoleInvalidation;
 import org.apache.cassandra.batchlog.Batch;
 import org.apache.cassandra.batchlog.BatchRemoveVerbHandler;
 import org.apache.cassandra.batchlog.BatchStoreVerbHandler;
@@ -173,6 +174,9 @@ public enum Verb
     // generic failure response
     FAILURE_RSP            (99,  P0, noTimeout,       REQUEST_RESPONSE,  () -> RequestFailureReason.serializer,      () -> ResponseVerbHandler.instance                             ),
 
+    // auth
+    INVALIDATE_ROLE        (117, P1, rpcTimeout,      MISC,              () -> RoleInvalidation.serializer,          () -> RoleInvalidation.RoleInvalidationVerbHandler.instance    ),
+
     // dummy verbs
     _TRACE                 (30,  P1, rpcTimeout,      TRACING,           () -> NoPayload.serializer,                 () -> null                                                     ),
     _SAMPLE                (42,  P1, rpcTimeout,      INTERNAL_RESPONSE, () -> NoPayload.serializer,                 () -> null                                                     ),
@@ -184,7 +188,7 @@ public enum Verb
     @Deprecated
     INTERNAL_RSP           (23,  P1, rpcTimeout,      INTERNAL_RESPONSE, () -> null,                                 () -> ResponseVerbHandler.instance                             ),
 
-    // largest used ID: 116
+    // largest used ID: 117
     ;
 
     public static final List<Verb> VERBS = ImmutableList.copyOf(Verb.values());

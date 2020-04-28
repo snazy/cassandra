@@ -32,7 +32,7 @@ import org.apache.cassandra.cql3.functions.*;
 import org.apache.cassandra.db.marshal.AbstractType;
 import org.apache.cassandra.schema.*;
 import org.apache.cassandra.schema.Keyspaces.KeyspacesDiff;
-import org.apache.cassandra.service.ClientState;
+import org.apache.cassandra.service.QueryState;
 import org.apache.cassandra.transport.Event.SchemaChange;
 import org.apache.cassandra.transport.Event.SchemaChange.Change;
 
@@ -128,7 +128,7 @@ public final class DropFunctionStatement extends AlterSchemaStatement
         return SchemaChange.forFunction(Change.DROPPED, (UDFunction) dropped.iterator().next());
     }
 
-    public void authorize(ClientState client)
+    public void authorize(QueryState client)
     {
         KeyspaceMetadata keyspace = Schema.instance.getKeyspaceMetadata(keyspaceName);
         if (null == keyspace)
@@ -178,9 +178,9 @@ public final class DropFunctionStatement extends AlterSchemaStatement
             this.ifExists = ifExists;
         }
 
-        public DropFunctionStatement prepare(ClientState state)
+        public DropFunctionStatement prepare(QueryState state)
         {
-            String keyspaceName = name.hasKeyspace() ? name.keyspace : state.getKeyspace();
+            String keyspaceName = name.hasKeyspace() ? name.keyspace : state.getClientState().getKeyspace();
             return new DropFunctionStatement(keyspaceName, name.name, arguments, argumentsSpecified, ifExists);
         }
     }

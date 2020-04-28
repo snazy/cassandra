@@ -34,7 +34,7 @@ import org.apache.cassandra.cql3.functions.UDAggregate;
 import org.apache.cassandra.db.marshal.AbstractType;
 import org.apache.cassandra.schema.*;
 import org.apache.cassandra.schema.Keyspaces.KeyspacesDiff;
-import org.apache.cassandra.service.ClientState;
+import org.apache.cassandra.service.QueryState;
 import org.apache.cassandra.transport.Event.SchemaChange;
 import org.apache.cassandra.transport.Event.SchemaChange.Change;
 
@@ -120,7 +120,7 @@ public final class DropAggregateStatement extends AlterSchemaStatement
         return SchemaChange.forAggregate(Change.DROPPED, (UDAggregate) dropped.iterator().next());
     }
 
-    public void authorize(ClientState client)
+    public void authorize(QueryState client)
     {
         KeyspaceMetadata keyspace = Schema.instance.getKeyspaceMetadata(keyspaceName);
         if (null == keyspace)
@@ -170,9 +170,9 @@ public final class DropAggregateStatement extends AlterSchemaStatement
             this.ifExists = ifExists;
         }
 
-        public DropAggregateStatement prepare(ClientState state)
+        public DropAggregateStatement prepare(QueryState state)
         {
-            String keyspaceName = name.hasKeyspace() ? name.keyspace : state.getKeyspace();
+            String keyspaceName = name.hasKeyspace() ? name.keyspace : state.getClientState().getKeyspace();
             return new DropAggregateStatement(keyspaceName, name.name, arguments, argumentsSpecified, ifExists);
         }
     }

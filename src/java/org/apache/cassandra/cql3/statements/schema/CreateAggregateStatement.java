@@ -39,7 +39,7 @@ import org.apache.cassandra.schema.Keyspaces;
 import org.apache.cassandra.schema.Keyspaces.KeyspacesDiff;
 import org.apache.cassandra.schema.Schema;
 import org.apache.cassandra.serializers.MarshalException;
-import org.apache.cassandra.service.ClientState;
+import org.apache.cassandra.service.QueryState;
 import org.apache.cassandra.transport.Event.SchemaChange;
 import org.apache.cassandra.transport.Event.SchemaChange.Change;
 import org.apache.cassandra.transport.Event.SchemaChange.Target;
@@ -235,7 +235,7 @@ public final class CreateAggregateStatement extends AlterSchemaStatement
                                 rawArgumentTypes.stream().map(CQL3Type.Raw::toString).collect(toList()));
     }
 
-    public void authorize(ClientState client)
+    public void authorize(QueryState client)
     {
         FunctionName name = new FunctionName(keyspaceName, aggregateName);
 
@@ -316,9 +316,9 @@ public final class CreateAggregateStatement extends AlterSchemaStatement
             this.ifNotExists = ifNotExists;
         }
 
-        public CreateAggregateStatement prepare(ClientState state)
+        public CreateAggregateStatement prepare(QueryState state)
         {
-            String keyspaceName = aggregateName.hasKeyspace() ? aggregateName.keyspace : state.getKeyspace();
+            String keyspaceName = aggregateName.hasKeyspace() ? aggregateName.keyspace : state.getClientState().getKeyspace();
 
             return new CreateAggregateStatement(keyspaceName,
                                                 aggregateName.name,

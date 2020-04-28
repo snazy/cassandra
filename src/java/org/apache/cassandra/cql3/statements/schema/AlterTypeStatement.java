@@ -30,7 +30,7 @@ import org.apache.cassandra.db.marshal.AbstractType;
 import org.apache.cassandra.db.marshal.UserType;
 import org.apache.cassandra.schema.KeyspaceMetadata;
 import org.apache.cassandra.schema.Keyspaces;
-import org.apache.cassandra.service.ClientState;
+import org.apache.cassandra.service.QueryState;
 import org.apache.cassandra.transport.Event.SchemaChange;
 import org.apache.cassandra.transport.Event.SchemaChange.Change;
 import org.apache.cassandra.transport.Event.SchemaChange.Target;
@@ -51,9 +51,9 @@ public abstract class AlterTypeStatement extends AlterSchemaStatement
         this.typeName = typeName;
     }
 
-    public void authorize(ClientState client)
+    public void authorize(QueryState client)
     {
-        client.ensureKeyspacePermission(keyspaceName, Permission.ALTER);
+        client.ensureKeyspacePermission(Permission.ALTER, keyspaceName);
     }
 
     SchemaChange schemaChangeEvent(Keyspaces.KeyspacesDiff diff)
@@ -198,9 +198,9 @@ public abstract class AlterTypeStatement extends AlterSchemaStatement
             this.name = name;
         }
 
-        public AlterTypeStatement prepare(ClientState state)
+        public AlterTypeStatement prepare(QueryState state)
         {
-            String keyspaceName = name.hasKeyspace() ? name.getKeyspace() : state.getKeyspace();
+            String keyspaceName = name.hasKeyspace() ? name.getKeyspace() : state.getClientState().getKeyspace();
             String typeName = name.getStringTypeName();
 
             switch (kind)

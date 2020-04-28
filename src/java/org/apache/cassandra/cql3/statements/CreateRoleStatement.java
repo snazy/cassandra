@@ -23,7 +23,7 @@ import org.apache.cassandra.auth.*;
 import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.cql3.RoleName;
 import org.apache.cassandra.exceptions.*;
-import org.apache.cassandra.service.ClientState;
+import org.apache.cassandra.service.QueryState;
 import org.apache.cassandra.transport.messages.ResultMessage;
 import org.apache.commons.lang3.builder.ToStringBuilder;
 import org.apache.commons.lang3.builder.ToStringStyle;
@@ -43,17 +43,17 @@ public class CreateRoleStatement extends AuthenticationStatement
         this.ifNotExists = ifNotExists;
     }
 
-    public void authorize(ClientState state) throws UnauthorizedException
+    public void authorize(QueryState state) throws UnauthorizedException
     {
-        super.checkPermission(state, Permission.CREATE, RoleResource.root());
+        super.ensurePermission(state, Permission.CREATE, RoleResource.root());
         if (opts.getSuperuser().isPresent())
         {
-            if (opts.getSuperuser().get() && !state.getUser().isSuper())
+            if (opts.getSuperuser().get() && !state.isSuper())
                 throw new UnauthorizedException("Only superusers can create a role with superuser status");
         }
     }
 
-    public void validate(ClientState state) throws RequestValidationException
+    public void validate(QueryState state) throws RequestValidationException
     {
         opts.validate();
 
@@ -72,7 +72,7 @@ public class CreateRoleStatement extends AuthenticationStatement
             throw new InvalidRequestException(String.format("%s already exists", role.getRoleName()));
     }
 
-    public ResultMessage execute(ClientState state) throws RequestExecutionException, RequestValidationException
+    public ResultMessage execute(QueryState state) throws RequestExecutionException, RequestValidationException
     {
         // not rejected in validate()
         if (ifNotExists && DatabaseDescriptor.getRoleManager().isExistingRole(role))
@@ -93,7 +93,7 @@ public class CreateRoleStatement extends AuthenticationStatement
      * of it in subclasses CreateKeyspaceStatement & CreateTableStatement.
      * @param state
      */
-    private void grantPermissionsToCreator(ClientState state)
+    private void grantPermissionsToCreator(QueryState state)
     {
         // The creator of a Role automatically gets ALTER/DROP/AUTHORIZE permissions on it if:
         // * the user is not anonymous
@@ -106,7 +106,7 @@ public class CreateRoleStatement extends AuthenticationStatement
                 DatabaseDescriptor.getAuthorizer().grant(AuthenticatedUser.SYSTEM_USER,
                                                          role.applicablePermissions(),
                                                          role,
-                                                         RoleResource.role(state.getUser().getName()),
+                                                         RoleResource.role(state.getUserName()),
                                                          GrantMode.GRANT);
             }
             catch (UnsupportedOperationException e)
