@@ -1096,13 +1096,28 @@ listPermissionsStatement returns [ListPermissionsStatement stmt]
     ;
 
 permission returns [Permission perm]
-    : p=(K_CREATE | K_ALTER | K_DROP | K_SELECT | K_MODIFY | K_AUTHORIZE | K_DESCRIBE | K_EXECUTE)
-    { $perm = Permission.valueOf($p.text.toUpperCase()); }
+    /*
+    Splitting the permissions looks weird, and it's just a dirty trick to get a proper
+    error message from antlr when the CQL contains an invalid permission name.
+    With just one `p=(K_CREATE...)`, antlr generates a weird and unfriendly message.
+    `org.apache.cassandra.cql3.CqlParsingTest` checks this behavior.
+    */
+    : p=(K_CREATE | K_ALTER | K_DROP)
+    { $perm = Permission.permission($p.text); }
+    | p2=(K_SELECT | K_MODIFY | K_AUTHORIZE | K_DESCRIBE | K_EXECUTE)
+    { $perm = Permission.permission($p2.text); }
     ;
 
 permissionOrAll returns [Set<Permission> perms]
     : K_ALL ( K_PERMISSIONS )?       { $perms = Permission.ALL; }
-    | p=permission ( K_PERMISSION )? { $perms = EnumSet.of($p.perm); }
+    | K_PERMISSIONS { $perms = Permission.ALL; }
+    | (
+        p=permission ( K_PERMISSION )? { $perms = $p.perm == null ? EnumSet.noneOf(Permission.class) : EnumSet.of($p.perm); }
+        (
+            ','
+            px=permission ( K_PERMISSION )? { if ($px.perm != null) $perms.add($px.perm); }
+        )*
+      )
     ;
 
 resource returns [IResource res]

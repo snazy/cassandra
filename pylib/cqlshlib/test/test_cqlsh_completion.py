@@ -828,3 +828,83 @@ class TestCqlshCompletion(CqlshCompletionCase):
         self.trycompletions('ALTER KEYSPACE system_trac', "es WITH replication = {'class': '")
         self.trycompletions("ALTER KEYSPACE system_traces WITH replication = {'class': '", '',
                             choices=['NetworkTopologyStrategy', 'SimpleStrategy'])
+
+    def test_complete_in_grant(self):
+        self.trycompletions(
+            ("GR"),
+            immediate='ANT ')
+        self.trycompletions(
+            ("GRANT "),
+            choices=['ALL', 'ALTER', 'AUTHORIZE', 'CREATE', 'DESCRIBE', 'DROP', 'EXECUTE', 'MODIFY', 'SELECT'],
+            other_choices_ok=True)
+        self.trycompletions(
+            ("GRANT DESCRIBE "),
+            choices=[',', 'ON', 'PERMISSION'])
+        self.trycompletions(
+            ("GRANT DESCRIBE , "),
+            choices=['ALTER', 'AUTHORIZE', 'CREATE', 'DESCRIBE', 'DROP', 'EXECUTE', 'MODIFY', 'SELECT'])
+        self.trycompletions(
+            ("GRANT DESCRIBE , MO"),
+            immediate='DIFY ')
+        self.trycompletions(
+            ("GRANT DESCRIBE , MODIFY "),
+            choices=[',', 'ON', 'PERMISSION'])
+        self.trycompletions(
+            ("GRANT DESCRIBE , MODIFY P"),
+            immediate='ERMISSION ')
+        self.trycompletions(
+            ("GRANT DESCRIBE , MODIFY PERMISSION "),
+            choices=[',', 'ON'])
+        self.trycompletions(
+            ("GRANT DESCRIBE , MODIFY PERMISSION O"),
+            immediate='N ')
+        self.trycompletions(
+            ("GRANT DESCRIBE , MODIFY PERMISSION ON "),
+            choices=['ALL', 'KEYSPACE', 'MBEANS', 'ROLE', 'FUNCTION', 'MBEAN', 'RESOURCE', 'TABLE'],
+            other_choices_ok=True)
+        self.trycompletions(
+            ("GRANT DESCRIBE , MODIFY PERMISSION ON KEY"),
+            immediate='SPACE ')
+        self.trycompletions(
+            ("GRANT DESCRIBE , MODIFY PERMISSION ON KEYSPACE system_tr"),
+            immediate='aces TO ')
+
+    def test_complete_in_revoke(self):
+        self.trycompletions(
+            ("RE"),
+            immediate='VOKE ')
+        self.trycompletions(
+            ("REVOKE "),
+            choices=['ALL', 'ALTER', 'AUTHORIZE', 'CREATE', 'DESCRIBE', 'DROP', 'EXECUTE', 'MODIFY', 'SELECT'],
+            other_choices_ok=True)
+        self.trycompletions(
+            ("REVOKE DESCRIBE "),
+            choices=[',', 'ON', 'PERMISSION'])
+        self.trycompletions(
+            ("REVOKE DESCRIBE , "),
+            choices=['ALTER', 'AUTHORIZE', 'CREATE', 'DESCRIBE', 'DROP', 'EXECUTE', 'MODIFY', 'SELECT'])
+        self.trycompletions(
+            ("REVOKE DESCRIBE , MO"),
+            immediate='DIFY ')
+        self.trycompletions(
+            ("REVOKE DESCRIBE , MODIFY "),
+            choices=[',', 'ON', 'PERMISSION'])
+        self.trycompletions(
+            ("REVOKE DESCRIBE , MODIFY P"),
+            immediate='ERMISSION ')
+        self.trycompletions(
+            ("REVOKE DESCRIBE , MODIFY PERMISSION "),
+            choices=[',', 'ON'])
+        self.trycompletions(
+            ("REVOKE DESCRIBE , MODIFY PERMISSION O"),
+            immediate='N ')
+        self.trycompletions(
+            ("REVOKE DESCRIBE , MODIFY PERMISSION ON "),
+            choices=['ALL', 'KEYSPACE', 'MBEANS', 'ROLE', 'FUNCTION', 'MBEAN', 'RESOURCE', 'TABLE'],
+            other_choices_ok=True)
+        self.trycompletions(
+            ("REVOKE DESCRIBE , MODIFY PERMISSION ON KEY"),
+            immediate='SPACE ')
+        self.trycompletions(
+            ("REVOKE DESCRIBE , MODIFY PERMISSION ON KEYSPACE system_tr"),
+            immediate='aces FROM ')
