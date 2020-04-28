@@ -36,7 +36,6 @@ import org.apache.cassandra.cql3.QueryProcessor;
 import org.apache.cassandra.cql3.UntypedResultSet;
 import org.apache.cassandra.cql3.statements.AlterRoleStatement;
 import org.apache.cassandra.cql3.statements.AuthenticationStatement;
-import org.apache.cassandra.cql3.statements.BatchStatement;
 import org.apache.cassandra.cql3.statements.CreateRoleStatement;
 import org.apache.cassandra.cql3.statements.DropRoleStatement;
 import org.apache.cassandra.cql3.statements.SelectStatement;
@@ -57,20 +56,10 @@ public class CassandraNetworkAuthorizerTest
 {
     private static class LocalCassandraAuthorizer extends CassandraAuthorizer
     {
-        ResultMessage.Rows select(SelectStatement statement, QueryOptions options)
+        UntypedResultSet process(String query, Object... arguments) throws RequestExecutionException
         {
-            return statement.executeLocally(QueryState.forInternalCalls(), options);
-        }
-
-        UntypedResultSet process(String query) throws RequestExecutionException
-        {
-            return QueryProcessor.executeInternal(query);
-        }
-
-        @Override
-        void processBatch(BatchStatement statement)
-        {
-            statement.executeLocally(QueryState.forInternalCalls(), QueryOptions.DEFAULT);
+            String cql = String.format(query, arguments);
+            return QueryProcessor.executeInternal(cql);
         }
     }
 

@@ -21,6 +21,7 @@ import java.util.Set;
 
 import org.apache.cassandra.audit.AuditLogContext;
 import org.apache.cassandra.audit.AuditLogEntryType;
+import org.apache.cassandra.auth.GrantMode;
 import org.apache.cassandra.auth.IResource;
 import org.apache.cassandra.auth.Permission;
 import org.apache.cassandra.config.DatabaseDescriptor;
@@ -34,14 +35,14 @@ import org.apache.commons.lang3.builder.ToStringStyle;
 
 public class RevokePermissionsStatement extends PermissionsManagementStatement
 {
-    public RevokePermissionsStatement(Set<Permission> permissions, IResource resource, RoleName grantee)
+    public RevokePermissionsStatement(Set<Permission> permissions, IResource resource, RoleName grantee, GrantMode grantMode)
     {
-        super(permissions, resource, grantee);
+        super(permissions, resource, grantee, grantMode);
     }
 
     public ResultMessage execute(ClientState state) throws RequestValidationException, RequestExecutionException
     {
-        DatabaseDescriptor.getAuthorizer().revoke(state.getUser(), permissions, resource, grantee);
+        DatabaseDescriptor.getAuthorizer().revoke(state.getUser(), permissions, resource, grantee, grantMode);
         return null;
     }
     

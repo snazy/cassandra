@@ -1490,10 +1490,20 @@ syntax_rules += r'''
 '''
 
 syntax_rules += r'''
-<grantStatement> ::= "GRANT" <permissionExpr> "ON" <resource> "TO" <rolename>
+<grantStatement> ::= "GRANT" ( "AUTHORIZE" "FOR" )? <permissionExpr>
+                     "ON" (<resourceFromInternalName> | <resource>) "TO" <rolename>
                    ;
 
-<revokeStatement> ::= "REVOKE" <permissionExpr> "ON" <resource> "FROM" <rolename>
+<revokeStatement> ::= "REVOKE" ( "AUTHORIZE" "FOR" )? <permissionExpr>
+                      "ON" (<resourceFromInternalName> | <resource>) "FROM" <rolename>
+                    ;
+
+<restrictStatement> ::= "RESTRICT" <permissionExpr>
+                     "ON" (<resourceFromInternalName> | <resource>) "TO" <rolename>
+                   ;
+
+<unrestrictStatement> ::= "UNRESTRICT" <permissionExpr>
+                      "ON" (<resourceFromInternalName> | <resource>) "FROM" <rolename>
                     ;
 
 <listPermissionsStatement> ::= "LIST" <permissionExpr>

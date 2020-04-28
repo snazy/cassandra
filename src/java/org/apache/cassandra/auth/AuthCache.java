@@ -18,6 +18,9 @@
 
 package org.apache.cassandra.auth;
 
+import java.util.Collection;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import java.util.function.BooleanSupplier;
 import java.util.function.Function;
@@ -121,6 +124,23 @@ public class AuthCache<K, V> implements AuthCacheMBean
             return loadFunction.apply(k);
 
         return cache.get(k);
+    }
+
+    public Map<K, V> getAll(Collection<K> keys, boolean retrieveIfMissing)
+    {
+        if (cache == null)
+        {
+            Map<K, V> r = new HashMap<>();
+            if (retrieveIfMissing)
+                keys.forEach(key -> r.put(key, loadFunction.apply(key)));
+            return r;
+        }
+
+        Map<K, V> result = cache.getAllPresent(keys);
+        if (!retrieveIfMissing && result.size() != keys.size())
+            return result;
+
+        return cache.getAll(keys);
     }
 
     /**

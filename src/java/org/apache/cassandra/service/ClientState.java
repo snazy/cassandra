@@ -423,14 +423,23 @@ public class ClientState
 
     private void ensurePermissionOnResourceChain(Permission perm, IResource resource)
     {
-        for (IResource r : Resources.chain(resource))
-            if (authorize(r).contains(perm))
-                return;
+        PermissionSets chainPermissions = resourceChainPermissions(resource);
+        if (!chainPermissions.granted.contains(perm))
+            throw new UnauthorizedException(String.format("User %s has no %s permission on %s or any of its parents",
+                                                          user.getName(),
+                                                          perm,
+                                                          resource));
 
-        throw new UnauthorizedException(String.format("User %s has no %s permission on %s or any of its parents",
-                                                      user.getName(),
-                                                      perm,
-                                                      resource));
+        if (chainPermissions.restricted.contains(perm))
+            throw new UnauthorizedException(String.format("Access for user %s on %s or any of its parents with %s permission is restricted",
+                                                          user.getName(),
+                                                          resource,
+                                                          perm));
+    }
+
+    public boolean hasGrantOption(Permission perm, IResource resource)
+    {
+        return resourceChainPermissions(resource).grantables.contains(perm);
     }
 
     private void preventSystemKSSchemaModification(String keyspace, DataResource resource, Permission perm)
@@ -490,8 +499,8 @@ public class ClientState
         return user;
     }
 
-    private Set<Permission> authorize(IResource resource)
+    private PermissionSets resourceChainPermissions(IResource resource)
     {
-        return user.getPermissions(resource);
+        return user.resourceChainPermissions(resource);
     }
 }
