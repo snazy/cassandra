@@ -87,50 +87,24 @@ public class CassandraAuthorizer implements IAuthorizer
     throws RequestValidationException, RequestExecutionException
     {
         modifyRolePermissions(permissions, resource, grantee, "+");
-        addLookupEntry(resource, grantee);
     }
 
     public void revoke(AuthenticatedUser performer, Set<Permission> permissions, IResource resource, RoleResource revokee)
     throws RequestValidationException, RequestExecutionException
     {
         modifyRolePermissions(permissions, resource, revokee, "-");
-        removeLookupEntry(resource, revokee);
     }
 
     // Called when deleting a role with DROP ROLE query.
     // Internal hook, so no permission checks are needed here.
-    // Executes a logged batch removing the granted premissions
-    // for the role as well as the entries from the reverse index
-    // table
     public void revokeAllFrom(RoleResource revokee)
     {
         try
         {
-            UntypedResultSet rows = process(String.format("SELECT resource FROM %s.%s WHERE role = '%s'",
-                                                          SchemaConstants.AUTH_KEYSPACE_NAME,
-                                                          AuthKeyspace.ROLE_PERMISSIONS,
-                                                          escape(revokee.getRoleName())));
-
-            List<CQLStatement> statements = new ArrayList<>();
-            for (UntypedResultSet.Row row : rows)
-            {
-                statements.add(
-                    QueryProcessor.getStatement(String.format("DELETE FROM %s.%s WHERE resource = '%s' AND role = '%s'",
-                                                              SchemaConstants.AUTH_KEYSPACE_NAME,
-                                                              AuthKeyspace.RESOURCE_ROLE_INDEX,
-                                                              escape(row.getString("resource")),
-                                                              escape(revokee.getRoleName())),
-                                                ClientState.forInternalCalls()));
-
-            }
-
-            statements.add(QueryProcessor.getStatement(String.format("DELETE FROM %s.%s WHERE role = '%s'",
-                                                                     SchemaConstants.AUTH_KEYSPACE_NAME,
-                                                                     AuthKeyspace.ROLE_PERMISSIONS,
-                                                                     escape(revokee.getRoleName())),
-                                                       ClientState.forInternalCalls()));
-
-            executeLoggedBatch(statements);
+            process(String.format("DELETE FROM %s.%s WHERE role = '%s'",
+                                  SchemaConstants.AUTH_KEYSPACE_NAME,
+                                  AuthKeyspace.ROLE_PERMISSIONS,
+                                  escape(revokee.getRoleName())));
         }
         catch (RequestExecutionException | RequestValidationException e)
         {
@@ -140,14 +114,13 @@ public class CassandraAuthorizer implements IAuthorizer
 
     // Called after a resource is removed (DROP KEYSPACE, DROP TABLE, etc.).
     // Execute a logged batch removing all the permissions for the resource
-    // as well as the index table entry
     public void revokeAllOn(IResource droppedResource)
     {
         try
         {
-            UntypedResultSet rows = process(String.format("SELECT role FROM %s.%s WHERE resource = '%s'",
+            UntypedResultSet rows = process(String.format("SELECT role FROM %s.%s WHERE resource = '%s' ALLOW FILTERING",
                                                           SchemaConstants.AUTH_KEYSPACE_NAME,
-                                                          AuthKeyspace.RESOURCE_ROLE_INDEX,
+                                                          AuthKeyspace.ROLE_PERMISSIONS,
                                                           escape(droppedResource.getName())));
 
             List<CQLStatement> statements = new ArrayList<>();
@@ -160,12 +133,6 @@ public class CassandraAuthorizer implements IAuthorizer
                                                                          escape(droppedResource.getName())),
                                                            ClientState.forInternalCalls()));
             }
-
-            statements.add(QueryProcessor.getStatement(String.format("DELETE FROM %s.%s WHERE resource = '%s'",
-                                                                     SchemaConstants.AUTH_KEYSPACE_NAME,
-                                                                     AuthKeyspace.RESOURCE_ROLE_INDEX,
-                                                                     escape(droppedResource.getName())),
-                                                      ClientState.forInternalCalls()));
 
             executeLoggedBatch(statements);
         }
@@ -217,26 +184,6 @@ public class CassandraAuthorizer implements IAuthorizer
                               "'" + StringUtils.join(permissions, "','") + "'",
                               escape(role.getRoleName()),
                               escape(resource.getName())));
-    }
-
-    // Removes an entry from the inverted index table (from resource -> role with defined permissions)
-    private void removeLookupEntry(IResource resource, RoleResource role) throws RequestExecutionException
-    {
-        process(String.format("DELETE FROM %s.%s WHERE resource = '%s' and role = '%s'",
-                              SchemaConstants.AUTH_KEYSPACE_NAME,
-                              AuthKeyspace.RESOURCE_ROLE_INDEX,
-                              escape(resource.getName()),
-                              escape(role.getRoleName())));
-    }
-
-    // Adds an entry to the inverted index table (from resource -> role with defined permissions)
-    private void addLookupEntry(IResource resource, RoleResource role) throws RequestExecutionException
-    {
-        process(String.format("INSERT INTO %s.%s (resource, role) VALUES ('%s','%s')",
-                              SchemaConstants.AUTH_KEYSPACE_NAME,
-                              AuthKeyspace.RESOURCE_ROLE_INDEX,
-                              escape(resource.getName()),
-                              escape(role.getRoleName())));
     }
 
     // 'of' can be null - in that case everyone's permissions have been requested. Otherwise only single user's.

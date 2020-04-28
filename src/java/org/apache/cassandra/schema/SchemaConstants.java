@@ -24,6 +24,7 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.regex.Pattern;
 
+import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
 
 import org.apache.cassandra.db.Digest;
@@ -57,7 +58,15 @@ public final class SchemaConstants
     // 59adb24e-f3cd-3e02-97f0-5b395827453f
     public static final UUID emptyVersion;
 
+    /**
+     * Auth tables that should have been migrated.
+     */
     public static final List<String> LEGACY_AUTH_TABLES = Arrays.asList("credentials", "users", "permissions");
+
+    /**
+     * Obsolete Auth tables that should have been removed.
+     */
+    public static final List<String> OBSOLETE_AUTH_TABLES = ImmutableList.of("resource_role_permissons_index");
 
     public static boolean isValidName(String name)
     {

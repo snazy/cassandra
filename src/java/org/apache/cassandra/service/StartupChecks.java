@@ -27,7 +27,6 @@ import java.nio.file.attribute.BasicFileAttributes;
 import java.util.*;
 import java.util.stream.Collectors;
 
-import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Joiner;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Iterables;
@@ -95,7 +94,8 @@ public class StartupChecks
                                                                       checkSystemKeyspaceState,
                                                                       checkDatacenter,
                                                                       checkRack,
-                                                                      checkLegacyAuthTables);
+                                                                      checkLegacyAuthTables,
+                                                                      checkObsoleteAuthTables);
 
     public StartupChecks withDefaultTests()
     {
@@ -121,12 +121,12 @@ public class StartupChecks
     public void verify() throws StartupException
     {
         for (StartupCheck test : preFlightChecks)
-            test.execute();
+            test.execute(logger);
     }
 
     public static final StartupCheck checkJemalloc = new StartupCheck()
     {
-        public void execute()
+        public void execute(Logger logger)
         {
             if (FBUtilities.isWindows)
                 return;
@@ -148,7 +148,7 @@ public class StartupChecks
          * We use this to ensure the system clock is at least somewhat correct at startup.
          */
         private static final long EARLIEST_LAUNCH_DATE = 1215820800000L;
-        public void execute() throws StartupException
+        public void execute(Logger logger) throws StartupException
         {
             long now = System.currentTimeMillis();
             if (now < EARLIEST_LAUNCH_DATE)
@@ -160,7 +160,7 @@ public class StartupChecks
 
     public static final StartupCheck checkJMXPorts = new StartupCheck()
     {
-        public void execute()
+        public void execute(Logger logger)
         {
             String jmxPort = System.getProperty("cassandra.jmx.remote.port");
             if (jmxPort == null)
@@ -179,19 +179,19 @@ public class StartupChecks
 
     public static final StartupCheck checkJMXProperties = new StartupCheck()
     {
-        public void execute()
+        public void execute(Logger logger)
         {
             if (System.getProperty("com.sun.management.jmxremote.port") != null)
             {
                 logger.warn("Use of com.sun.management.jmxremote.port at startup is deprecated. " +
-                            "Please use cassandra.jmx.remote.port instead.");
+                                          "Please use cassandra.jmx.remote.port instead.");
             }
         }
     };
 
     public static final StartupCheck inspectJvmOptions = new StartupCheck()
     {
-        public void execute()
+        public void execute(Logger logger)
         {
             // log warnings for different kinds of sub-optimal JVMs.  tldr use 64-bit Oracle >= 1.6u32
             if (!DatabaseDescriptor.hasLargeAddressSpace())
@@ -250,7 +250,7 @@ public class StartupChecks
 
     public static final StartupCheck checkNativeLibraryInitialization = new StartupCheck()
     {
-        public void execute() throws StartupException
+        public void execute(Logger logger) throws StartupException
         {
             // Fail-fast if the native library could not be linked.
             if (!NativeLibrary.isAvailable())
@@ -260,7 +260,7 @@ public class StartupChecks
 
     public static final StartupCheck initSigarLibrary = new StartupCheck()
     {
-        public void execute()
+        public void execute(Logger logger)
         {
             SigarLibrary.instance.warnIfRunningInDegradedMode();
         }
@@ -296,7 +296,7 @@ public class StartupChecks
             return -1;
         }
 
-        public void execute()
+        public void execute(Logger logger)
         {
             if (!FBUtilities.isLinux)
                 return;
@@ -313,7 +313,7 @@ public class StartupChecks
         }
     };
 
-    public static final StartupCheck checkDataDirs = () ->
+    public static final StartupCheck checkDataDirs = (Logger logger) ->
     {
         // check all directories(data, commitlog, saved cache) for existence and permission
         Iterable<String> dirs = Iterables.concat(Arrays.asList(DatabaseDescriptor.getAllDataFileLocations()),
@@ -344,7 +344,7 @@ public class StartupChecks
 
     public static final StartupCheck checkSSTablesFormat = new StartupCheck()
     {
-        public void execute() throws StartupException
+        public void execute(Logger logger) throws StartupException
         {
             final Set<String> invalid = new HashSet<>();
             final Set<String> nonSSTablePaths = new HashSet<>();
@@ -408,7 +408,7 @@ public class StartupChecks
 
     public static final StartupCheck checkSystemKeyspaceState = new StartupCheck()
     {
-        public void execute() throws StartupException
+        public void execute(Logger logger) throws StartupException
         {
             // check the system keyspace to keep user from shooting self in foot by changing partitioner, cluster name, etc.
             // we do a one-off scrub of the system keyspace first; we can't load the list of the rest of the keyspaces,
@@ -430,7 +430,7 @@ public class StartupChecks
 
     public static final StartupCheck checkDatacenter = new StartupCheck()
     {
-        public void execute() throws StartupException
+        public void execute(Logger logger) throws StartupException
         {
             if (!Boolean.getBoolean("cassandra.ignore_dc"))
             {
@@ -452,7 +452,7 @@ public class StartupChecks
 
     public static final StartupCheck checkRack = new StartupCheck()
     {
-        public void execute() throws StartupException
+        public void execute(Logger logger) throws StartupException
         {
             if (!Boolean.getBoolean("cassandra.ignore_rack"))
             {
@@ -472,30 +472,42 @@ public class StartupChecks
         }
     };
 
-    public static final StartupCheck checkLegacyAuthTables = () ->
+    public static final StartupCheck checkLegacyAuthTables = (logger) ->
     {
-        Optional<String> errMsg = checkLegacyAuthTablesMessage();
-        if (errMsg.isPresent())
-            throw new StartupException(StartupException.ERR_WRONG_CONFIG, errMsg.get());
+        List<String> existingTables = getExistingAuthTablesFrom(SchemaConstants.LEGACY_AUTH_TABLES);
+        if (!existingTables.isEmpty())
+        {
+            logger.warn("Legacy auth tables {} in keyspace {} still exist and have not been properly migrated.",
+                        Joiner.on(", ").join(existingTables),
+                        SchemaConstants.AUTH_KEYSPACE_NAME);
+        }
     };
 
-    @VisibleForTesting
-    static Optional<String> checkLegacyAuthTablesMessage()
+    public static final StartupCheck checkObsoleteAuthTables = (logger) ->
     {
-        List<String> existing = new ArrayList<>(SchemaConstants.LEGACY_AUTH_TABLES).stream().filter((legacyAuthTable) ->
-            {
-                UntypedResultSet result = QueryProcessor.executeOnceInternal(String.format("SELECT table_name FROM %s.%s WHERE keyspace_name='%s' AND table_name='%s'",
-                                                                                           SchemaConstants.SCHEMA_KEYSPACE_NAME,
-                                                                                           "tables",
-                                                                                           SchemaConstants.AUTH_KEYSPACE_NAME,
-                                                                                           legacyAuthTable));
-                return result != null && !result.isEmpty();
-            }).collect(Collectors.toList());
-
-        if (!existing.isEmpty())
-            return Optional.of(String.format("Legacy auth tables %s in keyspace %s still exist and have not been properly migrated.",
-                        Joiner.on(", ").join(existing), SchemaConstants.AUTH_KEYSPACE_NAME));
-        else
-            return Optional.empty();
+        List<String> existingTables = getExistingAuthTablesFrom(SchemaConstants.OBSOLETE_AUTH_TABLES);
+        if (!existingTables.isEmpty())
+            logger.warn("Auth tables {} in keyspace {} exist but can safely be dropped.",
+                        Joiner.on(", ").join(existingTables),
+                        SchemaConstants.AUTH_KEYSPACE_NAME);
     };
+
+    /**
+     * Returns the specified tables that exists in the Auth keyspace.
+     * @param tables the tables to check for existence
+     * @return the specified tables that exists in the Auth keyspace
+     */
+    private static List<String> getExistingAuthTablesFrom(List<String> tables)
+    {
+        return tables.stream().filter((table) ->
+                                      {
+                                          String cql = String.format("SELECT table_name FROM %s.%s WHERE keyspace_name='%s' AND table_name='%s'",
+                                                                     SchemaConstants.SCHEMA_KEYSPACE_NAME,
+                                                                     "tables",
+                                                                     SchemaConstants.AUTH_KEYSPACE_NAME,
+                                                                     table);
+                                          UntypedResultSet result = QueryProcessor.executeOnceInternal(cql);
+                                          return result != null && !result.isEmpty();
+                                      }).collect(Collectors.toList());
+    }
 }

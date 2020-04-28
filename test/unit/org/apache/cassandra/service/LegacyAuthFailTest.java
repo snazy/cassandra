@@ -19,71 +19,145 @@
 package org.apache.cassandra.service;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
-import java.util.Optional;
 
 import com.google.common.base.Joiner;
 import org.junit.Test;
+import org.slf4j.Logger;
+import org.slf4j.helpers.MessageFormatter;
+import org.slf4j.helpers.NOPLogger;
 
+import org.apache.cassandra.ForwardingLogger;
 import org.apache.cassandra.cql3.CQLTester;
 import org.apache.cassandra.schema.SchemaConstants;
 
 import static java.lang.String.format;
 import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertTrue;
 
 public class LegacyAuthFailTest extends CQLTester
 {
     @Test
-    public void testStartupChecks() throws Throwable
+    public void testLegacyTablesCheck() throws Throwable
     {
         createKeyspace();
 
-        List<String> legacyTables = new ArrayList<>(SchemaConstants.LEGACY_AUTH_TABLES);
+        // no legacy tables found
+        MockLogger l = new MockLogger();
+        StartupChecks.checkLegacyAuthTables.execute(l);
+        assertTrue(l.warnings.isEmpty());
 
-        // test reporting for individual tables
-        for (String legacyTable : legacyTables)
+        FailureTester tester = (tables) ->
         {
-            createLegacyTable(legacyTable);
+            MockLogger logger = new MockLogger();
+            StartupChecks.checkLegacyAuthTables.execute(logger);
+            assertEquals(1, logger.warnings.size());
+            String msg = logger.warnings.get(0);
+            String expectedMsg = String.format("Legacy auth tables %s in keyspace "
+                                               + SchemaConstants.AUTH_KEYSPACE_NAME
+                                               + " still exist and have not been properly migrated.",
+                                               Joiner.on(", ").join(tables));
+            assertEquals(expectedMsg, msg);
+        };
 
-            Optional<String> errMsg = StartupChecks.checkLegacyAuthTablesMessage();
-            assertEquals(format("Legacy auth tables %s in keyspace %s still exist and have not been properly migrated.",
-                                legacyTable,
-                                SchemaConstants.AUTH_KEYSPACE_NAME), errMsg.get());
-            dropLegacyTable(legacyTable);
+        testCheckFailure(new ArrayList<>(SchemaConstants.LEGACY_AUTH_TABLES), tester);
+    }
+
+    @Test
+    public void testObsoleteTablesCheck() throws Throwable
+    {
+        createKeyspace();
+
+        // no obsolete tables found
+        MockLogger l = new MockLogger();
+        StartupChecks.checkObsoleteAuthTables.execute(l);
+        assertTrue(l.warnings.isEmpty());
+
+        FailureTester tester = (tables) ->
+        {
+            MockLogger logger = new MockLogger();
+            StartupChecks.checkObsoleteAuthTables.execute(logger);
+            assertEquals(1, logger.warnings.size());
+            String msg = logger.warnings.get(0);
+            String expectedMsg = String.format("Auth tables %s in keyspace "
+                                               + SchemaConstants.AUTH_KEYSPACE_NAME
+                                               + " exist but can safely be dropped.",
+                                               Joiner.on(", ").join(tables));
+            assertEquals(expectedMsg, msg);
+        };
+
+        testCheckFailure(new ArrayList<>(SchemaConstants.OBSOLETE_AUTH_TABLES), tester);
+    }
+
+    public void testCheckFailure(List<String> tables, FailureTester tester) throws Throwable
+    {
+        // test reporting for individual tables
+        for (String table : tables)
+        {
+            createLegacyTable(table);
+            tester.executeCheckAndValidateOutput(table);
+            dropLegacyTable(table);
         }
 
         // test reporting of multiple existing tables
-        for (String legacyTable : legacyTables)
+        for (String legacyTable : tables)
             createLegacyTable(legacyTable);
 
-        while (!legacyTables.isEmpty())
+        while (!tables.isEmpty())
         {
-            Optional<String> errMsg = StartupChecks.checkLegacyAuthTablesMessage();
-            assertEquals(format("Legacy auth tables %s in keyspace %s still exist and have not been properly migrated.",
-                                Joiner.on(", ").join(legacyTables),
-                                SchemaConstants.AUTH_KEYSPACE_NAME), errMsg.get());
-
-            dropLegacyTable(legacyTables.remove(0));
+            tester.executeCheckAndValidateOutput(tables);
+            dropLegacyTable(tables.remove(0));
         }
-
-        // no legacy tables found
-        Optional<String> errMsg = StartupChecks.checkLegacyAuthTablesMessage();
-        assertFalse(errMsg.isPresent());
     }
 
-    private void dropLegacyTable(String legacyTable) throws Throwable
+    private void dropLegacyTable(String table) throws Throwable
     {
-        execute(format("DROP TABLE %s.%s", SchemaConstants.AUTH_KEYSPACE_NAME, legacyTable));
+        execute(format("DROP TABLE %s.%s", SchemaConstants.AUTH_KEYSPACE_NAME, table));
     }
 
-    private void createLegacyTable(String legacyTable) throws Throwable
+    private void createLegacyTable(String table) throws Throwable
     {
-        execute(format("CREATE TABLE %s.%s (id int PRIMARY KEY, val text)", SchemaConstants.AUTH_KEYSPACE_NAME, legacyTable));
+        execute(format("CREATE TABLE %s.%s (id int PRIMARY KEY, val text)", SchemaConstants.AUTH_KEYSPACE_NAME, table));
     }
 
     private void createKeyspace() throws Throwable
     {
-        execute(format("CREATE KEYSPACE %s WITH replication = {'class': 'SimpleStrategy', 'replication_factor': 1}", SchemaConstants.AUTH_KEYSPACE_NAME));
+        execute(format("CREATE KEYSPACE IF NOT EXISTS %s WITH replication = {'class': 'SimpleStrategy', 'replication_factor': 1}", SchemaConstants.AUTH_KEYSPACE_NAME));
+    }
+
+    private interface FailureTester
+    {
+        default void executeCheckAndValidateOutput(String legacyTable) throws Exception
+        {
+            executeCheckAndValidateOutput(Collections.singletonList(legacyTable));
+        }
+
+        void executeCheckAndValidateOutput(List<String> legacyTables) throws Exception;
+    }
+
+    /**
+     * Mock Logger used to capture the warnings written by the checks
+     */
+    private static class MockLogger extends ForwardingLogger
+    {
+        public List<String> warnings = new ArrayList<>();
+
+        public MockLogger()
+        {
+        }
+
+        @Override
+        public void warn(String format, Object arg1, Object arg2)
+        {
+            warnings.add(MessageFormatter.format(format, arg1, arg2).getMessage());
+            super.warn(format, arg1, arg2);
+        }
+
+        @Override
+        protected Logger delegate()
+        {
+            return NOPLogger.NOP_LOGGER;
+        }
     }
 }

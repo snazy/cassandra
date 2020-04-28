@@ -17,6 +17,8 @@
  */
 package org.apache.cassandra.service;
 
+import org.slf4j.Logger;
+
 import org.apache.cassandra.exceptions.StartupException;
 
 /**
@@ -40,8 +42,9 @@ public interface StartupCheck
      * test should log a message regarding the reason for the failure and
      * ideally the steps required to remedy the problem.
      *
+     * @param logger The logger to use to report problems
      * @throws org.apache.cassandra.exceptions.StartupException if the test determines
      * that the environement or system is not in a safe state to startup
      */
-    void execute() throws StartupException;
+    void execute(Logger logger) throws StartupException;
 }
