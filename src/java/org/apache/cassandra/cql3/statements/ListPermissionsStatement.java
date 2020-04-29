@@ -36,6 +36,8 @@ import org.apache.cassandra.transport.messages.ResultMessage;
 import org.apache.commons.lang3.builder.ToStringBuilder;
 import org.apache.commons.lang3.builder.ToStringStyle;
 
+import static org.apache.cassandra.cql3.statements.RequestValidations.invalidRequest;
+
 public class ListPermissionsStatement extends AuthorizationStatement
 {
     private static final String KS = SchemaConstants.AUTH_KEYSPACE_NAME;
@@ -71,6 +73,10 @@ public class ListPermissionsStatement extends AuthorizationStatement
 
     public void validate(QueryState state) throws RequestValidationException
     {
+        if (!DatabaseDescriptor.getAuthorizer().requireAuthorization())
+            throw invalidRequest("LIST PERMISSIONS operation is not supported by the %s if it is not enabled",
+                                 DatabaseDescriptor.getAuthorizer().implementation().getClass().getSimpleName());
+
         // a check to ensure the existence of the user isn't being leaked by user existence check.
         state.ensureNotAnonymous();
 

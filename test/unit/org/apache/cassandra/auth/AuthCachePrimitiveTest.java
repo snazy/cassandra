@@ -54,7 +54,7 @@ public class AuthCachePrimitiveTest
     @Before
     public void setup()
     {
-        System.setProperty("dse.authCache.recordStats", "true");
+        System.setProperty("cassandra.authCache.recordStats", "true");
         // limit the number of background I/O threads - 5 should be exactly sufficient
         System.setProperty("cassandra.io.background.max_pool_size", "5");
 
@@ -122,9 +122,6 @@ public class AuthCachePrimitiveTest
         boolean error = false;
         try
         {
-            // verify that without subscribing the cache is not invoked
-            authCache.get("null");
-
             assertTrue(loadedKeys.isEmpty());
             assertEquals(0, loadCalls.getAndSet(0));
             assertEquals(0, loadAllCalls.getAndSet(0));
@@ -157,7 +154,7 @@ public class AuthCachePrimitiveTest
             assertEquals(1, loadAllCalls.getAndSet(0));
             // the expected value 0 is an implementation detail !!!
         }
-        catch (Exception e)
+        catch (Throwable e)
         {
             error = true;
             throw e;
@@ -232,8 +229,8 @@ public class AuthCachePrimitiveTest
             assertEquals(loadAllKeys.size(), loadAllCalls.getAndSet(0));
             // Make sure that we do not have more loads.
             // Seems that the cache statistics are not that reliable and can undercount.
-            assertThat(authCache.getCacheStats().get("loadCount").intValue()).isLessThanOrEqualTo(1 + loadAllKeys.size());
-            assertThat(authCache.getCacheStats().get("loadSuccessCount").intValue()).isLessThanOrEqualTo(1 + loadAllKeys.size());
+            assertThat(authCache.getCacheStats().get("loadCount").intValue()).isLessThanOrEqualTo(1 + loadAllKeys.size()).isGreaterThan(0);
+            assertThat(authCache.getCacheStats().get("loadSuccessCount").intValue()).isLessThanOrEqualTo(1 + loadAllKeys.size()).isGreaterThan(0);
 
             loadAllKeys.clear();
             loadAllKeysIndex.set(0);

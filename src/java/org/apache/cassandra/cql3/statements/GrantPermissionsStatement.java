@@ -18,16 +18,20 @@
 package org.apache.cassandra.cql3.statements;
 
 import java.util.Set;
+import java.util.TreeSet;
+import java.util.stream.Collectors;
 
 import org.apache.cassandra.audit.AuditLogContext;
 import org.apache.cassandra.audit.AuditLogEntryType;
 import org.apache.cassandra.auth.GrantMode;
+import org.apache.cassandra.auth.IAuthorizer;
 import org.apache.cassandra.auth.IResource;
 import org.apache.cassandra.auth.Permission;
 import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.cql3.RoleName;
 import org.apache.cassandra.exceptions.RequestExecutionException;
 import org.apache.cassandra.exceptions.RequestValidationException;
+import org.apache.cassandra.service.ClientWarn;
 import org.apache.cassandra.service.QueryState;
 import org.apache.cassandra.transport.messages.ResultMessage;
 
@@ -40,8 +44,29 @@ public class GrantPermissionsStatement extends PermissionsManagementStatement
 
     public ResultMessage execute(QueryState state) throws RequestValidationException, RequestExecutionException
     {
-        DatabaseDescriptor.getAuthorizer().grant(state.getUser(), permissions, resource, grantee, grantMode);
+        IAuthorizer authorizer = DatabaseDescriptor.getAuthorizer();
+        Set<Permission> granted = authorizer.grant(state.getUser(), permissions, resource, grantee, grantMode);
+
+        // We want to warn the client if all the specified permissions have not been granted and the client did
+        // not specified ALL in the query.
+        if (granted.size() != permissions.size() && !permissions.equals(authorizer.applicablePermissions(resource)))
+        {
+            // We use a TreeSet to guarantee the order for testing
+            String permissionsStr = new TreeSet<>(permissions).stream()
+                                                              .filter(permission -> !granted.contains(permission))
+                                                              .map(Permission::name)
+                                                              .collect(Collectors.joining(", "));
+
+            ClientWarn.instance.warn(grantMode.grantWarningMessage(grantee.getRoleName(),
+                                                                   resource,
+                                                                   permissionsStr));
+        }
         return null;
+    }
+
+    protected String operation()
+    {
+        return grantMode.grantOperationName();
     }
 
     @Override

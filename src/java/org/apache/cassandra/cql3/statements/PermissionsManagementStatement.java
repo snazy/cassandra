@@ -32,12 +32,14 @@ import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.builder.ToStringBuilder;
 import org.apache.commons.lang3.builder.ToStringStyle;
 
+import static org.apache.cassandra.cql3.statements.RequestValidations.invalidRequest;
+
 public abstract class PermissionsManagementStatement extends AuthorizationStatement
 {
-    protected final Set<Permission> permissions;
-    protected IResource resource;
-    protected final RoleResource grantee;
-    protected final GrantMode grantMode;
+    public final Set<Permission> permissions;
+    public IResource resource;
+    public final RoleResource grantee;
+    public final GrantMode grantMode;
 
     protected PermissionsManagementStatement(Set<Permission> permissions, IResource resource, RoleName grantee, GrantMode grantMode)
     {
@@ -49,6 +51,11 @@ public abstract class PermissionsManagementStatement extends AuthorizationStatem
 
     public void validate(QueryState state) throws RequestValidationException
     {
+        if (!DatabaseDescriptor.getAuthorizer().requireAuthorization())
+            throw invalidRequest("%s operation is not supported by the %s if it is not enabled",
+                                 operation(),
+                                 DatabaseDescriptor.getAuthorizer().implementation().getClass().getSimpleName());
+
         // validate login here before authorize to avoid leaking user existence to anonymous users.
         state.ensureNotAnonymous();
 
@@ -70,15 +77,24 @@ public abstract class PermissionsManagementStatement extends AuthorizationStatem
             throw new InvalidRequestException(String.format("Resource %s doesn't exist", resource));
     }
 
+    protected abstract String operation();
+
     public void authorize(QueryState state) throws UnauthorizedException
     {
         // if a keyspace is omitted when GRANT/REVOKE ON TABLE <table>, we need to correct the resource.
         resource = maybeCorrectResource(resource, state);
 
-        if (grantMode == GrantMode.RESTRICT)
-            state.ensureIsSuperuser("Only superusers are allowed to RESTRICT/UNRESTRICT");
+        if (state.isSuper())
+            // Nobody can stop superman
+            return;
 
-        Set<Permission> missingPermissions = Permissions.setOf();
+        // validate login here to avoid leaking user existence to anonymous users.
+        state.ensureNotAnonymous();
+
+        if (grantMode == GrantMode.RESTRICT)
+            throw new UnauthorizedException("Only superusers are allowed to RESTRICT/UNRESTRICT");
+
+        Set<Permission> missingPermissions = Permission.setOf();
         try
         {
             // check that the user has AUTHORIZE permission on the resource or its parents, otherwise reject GRANT/REVOKE.
@@ -110,7 +126,7 @@ public abstract class PermissionsManagementStatement extends AuthorizationStatem
                                                               resource));
             }
 
-            Set<Permission> missingGrantables = Permissions.setOf();
+            Set<Permission> missingGrantables = Permission.setOf();
 
             // Check that the user has grant-option on all permissions to be
             // granted for the resource

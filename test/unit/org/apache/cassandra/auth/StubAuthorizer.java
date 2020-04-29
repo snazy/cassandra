@@ -43,58 +43,91 @@ public class StubAuthorizer implements IAuthorizer
                               .collect(Collectors.toMap(e -> e.getKey().right, Map.Entry::getValue));
     }
 
-    public void grant(AuthenticatedUser performer,
-                      Set<Permission> permissions,
-                      IResource resource,
-                      RoleResource grantee,
-                      GrantMode... grantModes) throws RequestValidationException, RequestExecutionException
+    public Set<Permission> grant(AuthenticatedUser performer,
+                                 Set<Permission> permissions,
+                                 IResource resource,
+                                 RoleResource grantee,
+                                 GrantMode... grantModes)
     {
         Pair<String, IResource> key = Pair.create(grantee.getRoleName(), resource);
+        PermissionSets oldPermissions = userPermissions.get(key);
+
+        if (oldPermissions == null)
+            oldPermissions = PermissionSets.EMPTY;
+
+        PermissionSets.Builder builder = oldPermissions.unbuild();
+        Set<Permission> granted = new HashSet<>();
         for (GrantMode grantMode : grantModes)
+        {
+            Set<Permission> nonExisting = new HashSet<>(permissions);
             switch (grantMode)
             {
                 case GRANT:
-                    userPermissions.compute(key, (k, old) ->
-                            (old != null ? old.unbuild() : PermissionSets.builder()).addGranted(permissions).build());
+                    nonExisting.removeAll(oldPermissions.granted);
+                    builder.addGranted(nonExisting);
                     break;
                 case RESTRICT:
-                    userPermissions.compute(key, (k, old) ->
-                            (old != null ? old.unbuild() : PermissionSets.builder()).addRestricted(permissions).build());
+                    nonExisting.removeAll(oldPermissions.restricted);
+                    builder.addRestricted(nonExisting);
                     break;
                 case GRANTABLE:
-                    userPermissions.compute(key, (k, old) ->
-                            (old != null ? old.unbuild() : PermissionSets.builder()).addGrantables(permissions).build());
+                    nonExisting.removeAll(oldPermissions.grantables);
+                    builder.addGrantables(nonExisting);
                     break;
             }
+            granted.addAll(nonExisting);
+        }
+
+        PermissionSets newPermissions = builder.build();
+        if (!newPermissions.isEmpty())
+            userPermissions.put(key, newPermissions);
+        return granted;
     }
 
-    public void revoke(AuthenticatedUser performer,
-                       Set<Permission> permissions,
-                       IResource resource,
-                       RoleResource revokee,
-                       GrantMode... grantModes) throws RequestValidationException, RequestExecutionException
+    public Set<Permission> revoke(AuthenticatedUser performer,
+                                  Set<Permission> permissions,
+                                  IResource resource,
+                                  RoleResource revokee,
+                                  GrantMode... grantModes)
     {
         Pair<String, IResource> key = Pair.create(revokee.getRoleName(), resource);
-        PermissionSets perms = null;
+        PermissionSets oldPermissions = userPermissions.get(key);
+        if (oldPermissions == null)
+            return Collections.emptySet();
+
+        PermissionSets.Builder builder = oldPermissions.unbuild();
+        Set<Permission> revoked = new HashSet<>();
         for (GrantMode grantMode : grantModes)
+        {
+            Set<Permission> existing = new HashSet<>(permissions);
             switch (grantMode)
             {
                 case GRANT:
-                    perms = userPermissions.compute(key, (k, old) ->
-                            (old != null ? old.unbuild() : PermissionSets.builder()).removeGranted(permissions).build());
+                    existing.retainAll(oldPermissions.granted);
+                    builder.removeGranted(existing);
                     break;
                 case RESTRICT:
-                    perms = userPermissions.compute(key, (k, old) ->
-                            (old != null ? old.unbuild() : PermissionSets.builder()).removeRestricted(permissions).build());
+                    existing.retainAll(oldPermissions.restricted);
+                    builder.removeRestricted(existing);
                     break;
                 case GRANTABLE:
-                    perms = userPermissions.compute(key, (k, old) ->
-                            (old != null ? old.unbuild() : PermissionSets.builder()).removeGrantables(permissions).build());
+                    existing.retainAll(oldPermissions.grantables);
+                    builder.removeGrantables(existing);
                     break;
             }
+            revoked.addAll(existing);
+        }
 
-        if (perms != null && perms.granted.isEmpty() && perms.restricted.isEmpty() && perms.grantables.isEmpty())
+        PermissionSets newPermissions = builder.build();
+        if (newPermissions.isEmpty())
+        {
             userPermissions.remove(key);
+        }
+        else
+        {
+            userPermissions.put(key, newPermissions);
+        }
+        return revoked;
     }
 
     public Set<PermissionDetails> list(Set<Permission> permissions,

@@ -35,8 +35,10 @@ import Parser,Lexer;
     import java.util.List;
     import java.util.Map;
     import java.util.Set;
+    import java.util.stream.Collectors;
 
     import org.apache.cassandra.auth.*;
+    import org.apache.cassandra.config.DatabaseDescriptor;
     import org.apache.cassandra.cql3.conditions.*;
     import org.apache.cassandra.cql3.functions.*;
     import org.apache.cassandra.cql3.restrictions.CustomIndexExpression;

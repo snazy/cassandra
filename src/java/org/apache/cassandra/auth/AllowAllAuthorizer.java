@@ -34,12 +34,12 @@ public class AllowAllAuthorizer implements IAuthorizer
         throw new UnsupportedOperationException();
     }
 
-    public void grant(AuthenticatedUser performer, Set<Permission> permissions, IResource resource, RoleResource to, GrantMode... grantModes)
+    public Set<Permission> grant(AuthenticatedUser performer, Set<Permission> permissions, IResource resource, RoleResource to, GrantMode... grantModes)
     {
         throw new UnsupportedOperationException("GRANT operation is not supported by AllowAllAuthorizer");
     }
 
-    public void revoke(AuthenticatedUser performer, Set<Permission> permissions, IResource resource, RoleResource from, GrantMode... grantModes)
+    public Set<Permission> revoke(AuthenticatedUser performer, Set<Permission> permissions, IResource resource, RoleResource from, GrantMode... grantModes)
     {
         throw new UnsupportedOperationException("REVOKE operation is not supported by AllowAllAuthorizer");
     }

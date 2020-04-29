@@ -29,9 +29,9 @@ import com.google.common.base.MoreObjects;
  */
 public final class PermissionSets
 {
-    public static final PermissionSets EMPTY = new PermissionSets(Permissions.immutableSetOf(Collections.emptySet()),
-                                                                  Permissions.immutableSetOf(Collections.emptySet()),
-                                                                  Permissions.immutableSetOf(Collections.emptySet()));
+    public static final PermissionSets EMPTY = new PermissionSets(Permission.immutableSetOf(Collections.emptySet()),
+                                                                  Permission.immutableSetOf(Collections.emptySet()),
+                                                                  Permission.immutableSetOf(Collections.emptySet()));
 
     /**
      * Immutable set of granted permissions.
@@ -71,7 +71,7 @@ public final class PermissionSets
      */
     public Set<Permission> allContainedPermissions()
     {
-        Set<Permission> all = Permissions.setOf();
+        Set<Permission> all = Permission.setOf();
         all.addAll(granted);
         all.addAll(restricted);
         all.addAll(grantables);
@@ -105,6 +105,11 @@ public final class PermissionSets
         return result;
     }
 
+    public boolean isEmpty()
+    {
+        return granted.isEmpty() && grantables.isEmpty() && restricted.isEmpty();
+    }
+
     @Override
     public String toString()
     {
@@ -128,9 +133,9 @@ public final class PermissionSets
     @SuppressWarnings("UnusedReturnValue")
     public static final class Builder
     {
-        private final Set<Permission> granted = Permissions.setOf();
-        private final Set<Permission> restricted = Permissions.setOf();
-        private final Set<Permission> grantables = Permissions.setOf();
+        private final Set<Permission> granted = Permission.setOf();
+        private final Set<Permission> restricted = Permission.setOf();
+        private final Set<Permission> grantables = Permission.setOf();
 
         private Builder()
         {
@@ -203,9 +208,9 @@ public final class PermissionSets
             if (granted.isEmpty() && restricted.isEmpty() && grantables.isEmpty())
                 return EMPTY;
 
-            return new PermissionSets(Permissions.immutableSetOf(granted),
-                                      Permissions.immutableSetOf(restricted),
-                                      Permissions.immutableSetOf(grantables));
+            return new PermissionSets(Permission.immutableSetOf(granted),
+                                      Permission.immutableSetOf(restricted),
+                                      Permission.immutableSetOf(grantables));
         }
     }
 }

@@ -283,59 +283,85 @@ public class QueryStateTest
             return rolePerms;
         }
 
-        public void grant(AuthenticatedUser performer, Set<Permission> permissions, IResource resource, RoleResource grantee, GrantMode... grantModes) throws RequestValidationException, RequestExecutionException
+        public Set<Permission> grant(AuthenticatedUser performer,
+                                     Set<Permission> permissions,
+                                     IResource resource,
+                                     RoleResource grantee,
+                                     GrantMode... grantModes)
         {
             Map<IResource, PermissionSets> resourcePermissions = roleResourcePermissions.computeIfAbsent(grantee, (k) -> new HashMap<>());
             resourcePermissions = new HashMap<>(resourcePermissions);
-            PermissionSets permissionSets = resourcePermissions.computeIfAbsent(resource, (k) -> PermissionSets.EMPTY);
+            PermissionSets originalPermissionSets = resourcePermissions.computeIfAbsent(resource, (k) -> PermissionSets.EMPTY);
 
-            PermissionSets.Builder builder = permissionSets.unbuild();
+            PermissionSets.Builder builder = originalPermissionSets.unbuild();
+            Set<Permission> granted = new HashSet<>();
             for (GrantMode grantMode : grantModes)
             {
+                Set<Permission> nonExisting = new HashSet<>(permissions);
                 switch (grantMode)
                 {
                     case GRANT:
-                        builder.addGranted(permissions);
+                        nonExisting.removeAll(originalPermissionSets.granted);
+                        builder.addGranted(nonExisting);
                         break;
                     case GRANTABLE:
-                        builder.addGrantables(permissions);
+                        nonExisting.removeAll(originalPermissionSets.grantables);
+                        builder.addGrantables(nonExisting);
                         break;
                     case RESTRICT:
-                        builder.addRestricted(permissions);
+                        nonExisting.removeAll(originalPermissionSets.restricted);
+                        builder.addRestricted(nonExisting);
                         break;
                 }
+                granted.addAll(nonExisting);
             }
-            resourcePermissions.put(resource, builder.build());
-            roleResourcePermissions.put(grantee, Collections.unmodifiableMap(resourcePermissions));
+            PermissionSets permissionSets = builder.build();
+            if (!permissionSets.isEmpty())
+            {
+                resourcePermissions.put(resource, builder.build());
+                roleResourcePermissions.put(grantee, Collections.unmodifiableMap(resourcePermissions));
+            }
+            return granted;
         }
 
-        public void revoke(AuthenticatedUser performer, Set<Permission> permissions, IResource resource, RoleResource revokee, GrantMode... grantModes) throws RequestValidationException, RequestExecutionException
+        public Set<Permission> revoke(AuthenticatedUser performer,
+                                      Set<Permission> permissions,
+                                      IResource resource,
+                                      RoleResource revokee,
+                                      GrantMode... grantModes)
         {
             Map<IResource, PermissionSets> resourcePermissions = roleResourcePermissions.computeIfAbsent(revokee, (k) -> new HashMap<>());
-            resourcePermissions = new HashMap<>(resourcePermissions);
-            PermissionSets permissionSets = resourcePermissions.computeIfAbsent(resource, (k) -> PermissionSets.EMPTY);
+            if (resourcePermissions.isEmpty())
+                return Collections.emptySet();
 
-            PermissionSets.Builder builder = permissionSets.unbuild();
+            resourcePermissions = new HashMap<>(resourcePermissions);
+            PermissionSets originalPermissionSets = resourcePermissions.computeIfAbsent(resource, (k) -> PermissionSets.EMPTY);
+
+            PermissionSets.Builder builder = originalPermissionSets.unbuild();
+            Set<Permission> revoked = new HashSet<>();
             for (GrantMode grantMode : grantModes)
             {
+                Set<Permission> existing = new HashSet<>(permissions);
                 switch (grantMode)
                 {
                     case GRANT:
-                        builder.removeGranted(permissions);
+                        existing.retainAll(originalPermissionSets.granted);
+                        builder.removeGranted(existing);
                         break;
                     case GRANTABLE:
-                        builder.removeGrantables(permissions);
+                        existing.retainAll(originalPermissionSets.grantables);
+                        builder.removeGrantables(existing);
                         break;
                     case RESTRICT:
-                        builder.removeRestricted(permissions);
+                        existing.retainAll(originalPermissionSets.restricted);
+                        builder.removeRestricted(existing);
                         break;
                 }
+                revoked.addAll(existing);
             }
 
-            permissionSets = builder.build();
-            if (permissionSets.granted.isEmpty()
-                && permissionSets.grantables.isEmpty()
-                && permissionSets.restricted.isEmpty())
+            PermissionSets permissionSets = builder.build();
+            if (permissionSets.isEmpty())
                 resourcePermissions.remove(resource);
             else
                 resourcePermissions.put(resource, permissionSets);
@@ -344,6 +370,8 @@ public class QueryStateTest
                 roleResourcePermissions.remove(revokee);
             else
                 roleResourcePermissions.put(revokee, Collections.unmodifiableMap(resourcePermissions));
+
+            return revoked;
         }
 
         public Set<PermissionDetails> list(Set<Permission> permissions, IResource resource, RoleResource grantee) throws RequestValidationException, RequestExecutionException

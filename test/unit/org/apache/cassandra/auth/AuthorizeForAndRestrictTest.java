@@ -23,17 +23,69 @@ import org.junit.Test;
 
 import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.cql3.CQLTester;
+import org.apache.cassandra.transport.ProtocolVersion;
 
 public class AuthorizeForAndRestrictTest extends CQLTester
 {
     @BeforeClass
-    public static void setup() throws Throwable
+    public static void setup()
     {
         requireAuthentication();
         DatabaseDescriptor.setPermissionsValidity(9999);
         DatabaseDescriptor.setPermissionsUpdateInterval(9999);
         requireNetwork();
     }
+    @Test
+    public void testWarnings() throws Throwable
+    {
+        useSuperUser();
+
+        executeNet("CREATE KEYSPACE revoke_yeah WITH replication = {'class': 'SimpleStrategy', 'replication_factor': '1'}");
+        executeNet("CREATE TABLE revoke_yeah.t1 (id int PRIMARY KEY, val text)");
+        executeNet("CREATE USER revoked WITH PASSWORD 'pass1'");
+
+        // verify that noop REVOKEs & UNRESTRICTs error out (APOLLO-1083)
+
+        assertClientWarning(ProtocolVersion.CURRENT,
+                            "Role 'revoked' was not granted CREATE on <keyspace revoke_yeah>",
+                            "REVOKE CREATE ON KEYSPACE revoke_yeah FROM revoked");
+        assertClientWarning(ProtocolVersion.CURRENT,
+                            "Role 'revoked' was not granted AUTHORIZE FOR CREATE on <keyspace revoke_yeah>",
+                            "REVOKE AUTHORIZE FOR CREATE ON KEYSPACE revoke_yeah FROM revoked");
+        assertClientWarning(ProtocolVersion.CURRENT,
+                            "Role 'revoked' was not restricted SELECT on <table revoke_yeah.t1>",
+                            "UNRESTRICT SELECT ON TABLE revoke_yeah.t1 FROM revoked");
+
+        executeNet("GRANT SELECT ON KEYSPACE revoke_yeah TO revoked");
+        executeNet("GRANT AUTHORIZE FOR SELECT ON KEYSPACE revoke_yeah TO revoked");
+        executeNet("RESTRICT SELECT ON KEYSPACE revoke_yeah TO revoked");
+
+        assertClientWarning("Role 'revoked' was already granted SELECT on <keyspace revoke_yeah>",
+                            "GRANT SELECT ON KEYSPACE revoke_yeah TO revoked");
+        assertClientWarning("Role 'revoked' was already granted AUTHORIZE FOR SELECT on <keyspace revoke_yeah>",
+                            "GRANT AUTHORIZE FOR SELECT, MODIFY ON KEYSPACE revoke_yeah TO revoked");
+        assertClientWarning("Role 'revoked' was already granted AUTHORIZE FOR SELECT, MODIFY on <keyspace revoke_yeah>",
+                            "GRANT AUTHORIZE FOR MODIFY, SELECT, DROP ON KEYSPACE revoke_yeah TO revoked");
+        assertClientWarning("Role 'revoked' was already restricted SELECT on <keyspace revoke_yeah>",
+                            "RESTRICT SELECT ON KEYSPACE revoke_yeah TO revoked");
+        assertNoClientWarning("RESTRICT ALL ON KEYSPACE revoke_yeah TO revoked");
+
+        assertClientWarning("Role 'revoked' was not granted SELECT on <table revoke_yeah.t1>",
+                            "REVOKE SELECT ON TABLE revoke_yeah.t1 FROM revoked");
+        assertClientWarning("Role 'revoked' was not granted AUTHORIZE FOR SELECT on <table revoke_yeah.t1>",
+                            "REVOKE AUTHORIZE FOR SELECT ON TABLE revoke_yeah.t1 FROM revoked");
+        assertClientWarning("Role 'revoked' was not restricted SELECT on <table revoke_yeah.t1>",
+                            "UNRESTRICT SELECT ON TABLE revoke_yeah.t1 FROM revoked");
+
+        // revert all the stuff above
+        assertClientWarning("Role 'revoked' was not granted MODIFY on <keyspace revoke_yeah>",
+                            "REVOKE SELECT, MODIFY ON KEYSPACE revoke_yeah FROM revoked");
+        assertNoClientWarning("REVOKE AUTHORIZE FOR ALL ON KEYSPACE revoke_yeah FROM revoked");
+        assertNoClientWarning("UNRESTRICT ALL ON KEYSPACE revoke_yeah FROM revoked");
+        assertClientWarning("Role 'revoked' was not restricted SELECT, MODIFY on <keyspace revoke_yeah>",
+                            "UNRESTRICT SELECT, MODIFY ON KEYSPACE revoke_yeah FROM revoked");
+    }
+
 
     @Test
     public void testAuthorizeFor() throws Throwable
@@ -48,6 +100,11 @@ public class AuthorizeForAndRestrictTest extends CQLTester
         executeNet("CREATE KEYSPACE authfor_test WITH replication = {'class': 'SimpleStrategy', 'replication_factor': '1'}");
         executeNet("CREATE TABLE authfor_test.t1 (id int PRIMARY KEY, val text)");
         executeNet("CREATE TABLE authfor_test.t2 (id int PRIMARY KEY, val text)");
+
+        assertInvalidSyntaxMessage("no viable alternative at input 'UPDATE' (GRANT AUTHORIZE FOR [UPDATE]...)",
+                                   "GRANT AUTHORIZE FOR UPDATE ON KEYSPACE authfor_test TO authfor1");
+        assertInvalidSyntaxMessage("no viable alternative at input 'UPDATE' (GRANT AUTHORIZE FOR SELECT, [UPDATE]...)",
+                                   "GRANT AUTHORIZE FOR SELECT, UPDATE ON KEYSPACE authfor_test TO authfor1");
 
         executeNet("GRANT AUTHORIZE FOR SELECT ON KEYSPACE authfor_test TO authfor1");
         executeNet("GRANT MODIFY ON TABLE authfor_test.t1 TO authfor1");

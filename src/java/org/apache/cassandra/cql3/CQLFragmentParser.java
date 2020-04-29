@@ -23,6 +23,9 @@ import org.antlr.runtime.CharStream;
 import org.antlr.runtime.CommonTokenStream;
 import org.antlr.runtime.RecognitionException;
 import org.antlr.runtime.TokenStream;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import org.apache.cassandra.exceptions.SyntaxException;
 
 /**
@@ -30,6 +33,7 @@ import org.apache.cassandra.exceptions.SyntaxException;
  */
 public final class CQLFragmentParser
 {
+    private static final Logger logger = LoggerFactory.getLogger(CQLFragmentParser.class);
 
     @FunctionalInterface
     public interface CQLParserFunction<R>
@@ -45,6 +49,12 @@ public final class CQLFragmentParser
         }
         catch (RuntimeException re)
         {
+            // Log with stack trace at debug level to ease finding issues during CQL parsing
+            logger.debug("Failed parsing {}: [{}] reason: {}",
+                         meaning,
+                         input,
+                         re.getClass().getSimpleName(),
+                         re);
             throw new SyntaxException(String.format("Failed parsing %s: [%s] reason: %s %s",
                                                     meaning,
                                                     input,

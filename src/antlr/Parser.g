@@ -146,15 +146,27 @@ options {
         operations.add(Pair.create(key, update));
     }
 
-    public Set<Permission> filterPermissions(Set<Permission> permissions, IResource resource)
+    public Set<Permission> filterPermissions(Set<Permission> permissions, IResource resource, boolean allIsAll)
     {
         if (resource == null)
-            return Collections.emptySet();
-        Set<Permission> filtered = new HashSet<>(permissions);
-        filtered.retainAll(resource.applicablePermissions());
-        if (filtered.isEmpty())
+            return Permission.ALL;
+
+        IAuthorizer authorizer = DatabaseDescriptor.getAuthorizer();
+
+        if (permissions.isEmpty()) // ALL PERMISSIONS
+            return allIsAll ? Permission.ALL : authorizer.applicablePermissions(resource);
+
+        Set<Permission> filtered = authorizer.filterApplicablePermissions(resource, permissions);
+
+        if (filtered.size() != permissions.size())
+        {
+            String unsupported = permissions.stream()
+                                            .filter(p -> !filtered.contains(p))
+                                            .map(Permission::name)
+                                            .collect(Collectors.joining(","));
             addRecognitionError("Resource type " + resource.getClass().getSimpleName() +
-                                    " does not support any of the requested permissions");
+                                " does not support the requested permissions: " + unsupported);
+        }
 
         return filtered;
     }
@@ -1049,7 +1061,7 @@ grantPermissionsStatement returns [GrantPermissionsStatement stmt]
           resource
       K_TO
           grantee=userOrRoleName
-      { $stmt = new GrantPermissionsStatement(filterPermissions($permissionOrAll.perms, $resource.res), $resource.res, grantee, grantMode); }
+      { $stmt = new GrantPermissionsStatement(filterPermissions($permissionOrAll.perms, $resource.res, false), $resource.res, grantee, grantMode); }
     ;
 
 /**
@@ -1066,7 +1078,7 @@ revokePermissionsStatement returns [RevokePermissionsStatement stmt]
           resource
       K_FROM
           revokee=userOrRoleName
-      { $stmt = new RevokePermissionsStatement(filterPermissions($permissionOrAll.perms, $resource.res), $resource.res, revokee, grantMode); }
+      { $stmt = new RevokePermissionsStatement(filterPermissions($permissionOrAll.perms, $resource.res, false), $resource.res, revokee, grantMode); }
     ;
 
 /**
@@ -1079,7 +1091,7 @@ restrictPermissionsStatement returns [GrantPermissionsStatement stmt]
           resource
       K_TO
           grantee=userOrRoleName
-      { $stmt = new GrantPermissionsStatement(filterPermissions($permissionOrAll.perms, $resource.res), $resource.res, grantee, GrantMode.RESTRICT); }
+      { $stmt = new GrantPermissionsStatement(filterPermissions($permissionOrAll.perms, $resource.res, false), $resource.res, grantee, GrantMode.RESTRICT); }
     ;
 
 /**
@@ -1092,7 +1104,7 @@ unrestrictPermissionsStatement returns [RevokePermissionsStatement stmt]
           resource
       K_FROM
           revokee=userOrRoleName
-      { $stmt = new RevokePermissionsStatement(filterPermissions($permissionOrAll.perms, $resource.res), $resource.res, revokee, GrantMode.RESTRICT); }
+      { $stmt = new RevokePermissionsStatement(filterPermissions($permissionOrAll.perms, $resource.res, false), $resource.res, revokee, GrantMode.RESTRICT); }
     ;
 
 /**
@@ -1128,7 +1140,7 @@ listPermissionsStatement returns [ListPermissionsStatement stmt]
       ( K_ON resource { resource = $resource.res; } )?
       ( K_OF roleName[grantee] )?
       ( K_NORECURSIVE { recursive = false; } )?
-      { $stmt = new ListPermissionsStatement($permissionOrAll.perms, resource, grantee, recursive); }
+      { $stmt = new ListPermissionsStatement(filterPermissions($permissionOrAll.perms, resource, true), resource, grantee, recursive); }
     ;
 
 permission returns [Permission perm]
@@ -1145,10 +1157,13 @@ permission returns [Permission perm]
     ;
 
 permissionOrAll returns [Set<Permission> perms]
-    : K_ALL ( K_PERMISSIONS )?       { $perms = Permission.ALL; }
-    | K_PERMISSIONS { $perms = Permission.ALL; }
+    @init {
+        $perms = EnumSet.noneOf(Permission.class);
+    }
+    : ( K_ALL ( K_PERMISSIONS )? )
+    |           K_PERMISSIONS
     | (
-        p=permission ( K_PERMISSION )? { $perms = $p.perm == null ? EnumSet.noneOf(Permission.class) : EnumSet.of($p.perm); }
+        p=permission ( K_PERMISSION )? { if ($p.perm != null) $perms.add($p.perm); }
         (
             ','
             px=permission ( K_PERMISSION )? { if ($px.perm != null) $perms.add($px.perm); }
