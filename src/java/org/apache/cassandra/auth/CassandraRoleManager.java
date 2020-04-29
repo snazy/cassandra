@@ -255,6 +255,23 @@ public class CassandraRoleManager implements IRoleManager
         return roles;
     }
 
+    public Set<RoleResource> getRoleMemberOf(RoleResource role)
+    {
+        // Get the membership list of the the given role
+        UntypedResultSet rows = process(String.format("SELECT member FROM %s.%s WHERE role = '%s'",
+                                                      SchemaConstants.AUTH_KEYSPACE_NAME,
+                                                      AuthKeyspace.ROLE_MEMBERS,
+                                                      escape(role.getRoleName())),
+                                        consistencyForRole(role.getRoleName()));
+
+        // Update each member in the list, removing this role from its own list of granted roles
+        Set<RoleResource> memberOf = new HashSet<>();
+        for (UntypedResultSet.Row row : rows)
+            memberOf.add(RoleResource.role(row.getString("member")));
+
+        return memberOf;
+    }
+
     public Set<RoleResource> getAllRoles() throws RequestValidationException, RequestExecutionException
     {
         UntypedResultSet rows = process(String.format("SELECT role FROM %s.%s", SchemaConstants.AUTH_KEYSPACE_NAME, AuthKeyspace.ROLES), ConsistencyLevel.QUORUM);

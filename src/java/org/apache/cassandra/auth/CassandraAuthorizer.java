@@ -87,16 +87,18 @@ public class CassandraAuthorizer implements IAuthorizer
 
     // Called after a resource is removed (DROP KEYSPACE, DROP TABLE, etc.).
     // Execute a logged batch removing all the permissions for the resource
-    public void revokeAllOn(IResource droppedResource)
+    public Set<RoleResource> revokeAllOn(IResource droppedResource)
     {
         try
         {
             Set<String> roles = fetchRolesWithPermissionsOn(droppedResource);
             deletePermissionsFor(droppedResource, roles);
+            return roles.stream().map(RoleResource::role).collect(Collectors.toSet());
         }
         catch (RequestExecutionException | RequestValidationException e)
         {
             logger.warn("CassandraAuthorizer failed to revoke all permissions on {}: {}", droppedResource, e.getMessage());
+            return Collections.emptySet();
         }
     }
 

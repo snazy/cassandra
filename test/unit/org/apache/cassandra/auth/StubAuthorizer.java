@@ -161,12 +161,18 @@ public class StubAuthorizer implements IAuthorizer
                                                  .filter(key -> key.left.equals(revokee.getRoleName())).collect(Collectors.toList()));
     }
 
-    public void revokeAllOn(IResource droppedResource)
+    public Set<RoleResource> revokeAllOn(IResource droppedResource)
     {
+        Set<RoleResource> roles = userPermissions.keySet()
+                                                 .stream()
+                                                 .filter(key -> key.right.equals(droppedResource))
+                                                 .map(key -> RoleResource.role(key.left))
+                                                 .collect(Collectors.toSet());
         userPermissions.keySet()
                        .removeAll(userPermissions.keySet()
                                                  .stream()
                                                  .filter(key -> key.right.equals(droppedResource)).collect(Collectors.toList()));
+        return roles;
     }
 
     public Set<? extends IResource> protectedResources()
