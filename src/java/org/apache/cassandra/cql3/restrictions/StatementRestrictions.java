@@ -35,7 +35,9 @@ import org.apache.cassandra.index.Index;
 import org.apache.cassandra.index.IndexRegistry;
 import org.apache.cassandra.schema.ColumnMetadata;
 import org.apache.cassandra.schema.TableMetadata;
+import org.apache.cassandra.service.QueryState;
 import org.apache.cassandra.utils.btree.BTreeSet;
+
 import org.apache.commons.lang3.builder.ToStringBuilder;
 import org.apache.commons.lang3.builder.ToStringStyle;
 
@@ -83,7 +85,12 @@ public final class StatementRestrictions
     /**
      * The restrictions used to build the row filter
      */
-    private final IndexRestrictions filterRestrictions = new IndexRestrictions();
+    private final IndexRestrictions filterRestrictions;
+
+    /**
+     * The restrictions used to control row level access
+     */
+    private final List<AuthRestriction> authRestrictions;
 
     /**
      * <code>true</code> if the secondary index need to be queried, <code>false</code> otherwise
@@ -121,6 +128,8 @@ public final class StatementRestrictions
         this.clusteringColumnsRestrictions = new ClusteringColumnRestrictions(table, allowFiltering);
         this.nonPrimaryKeyRestrictions = new RestrictionSet();
         this.notNullColumns = new HashSet<>();
+        this.filterRestrictions = new IndexRestrictions();
+        this.authRestrictions = new ArrayList<>();
     }
 
     public StatementRestrictions(StatementType type,
@@ -266,6 +275,8 @@ public final class StatementRestrictions
 
         if (usesSecondaryIndexing)
             validateSecondaryIndexSelections();
+
+        maybeAddAuthRestrictions(table, type);
     }
 
     private void addRestriction(Restriction restriction)
@@ -277,6 +288,16 @@ public final class StatementRestrictions
             clusteringColumnsRestrictions = clusteringColumnsRestrictions.mergeWith(restriction);
         else
             nonPrimaryKeyRestrictions = nonPrimaryKeyRestrictions.addRestriction((SingleRestriction) restriction);
+    }
+
+    private void maybeAddAuthRestrictions(TableMetadata table, StatementType type)
+    {
+        if (!type.isSelect())
+            return;
+
+        AuthRestriction restriction = SystemKeyspacesFilteringRestrictions.restrictionsForTable(table);
+        if (restriction != null)
+            authRestrictions.add(restriction);
     }
 
     public void addFunctionsTo(List<Function> functions)
@@ -602,9 +623,11 @@ public final class StatementRestrictions
         filterRestrictions.add(expression);
     }
 
-    public RowFilter getRowFilter(IndexRegistry indexRegistry, QueryOptions options)
+    public RowFilter getRowFilter(IndexRegistry indexRegistry,
+                                  QueryState state,
+                                  QueryOptions options)
     {
-        if (filterRestrictions.isEmpty())
+        if (filterRestrictions.isEmpty() && authRestrictions.isEmpty())
             return RowFilter.NONE;
 
         RowFilter filter = RowFilter.create();
@@ -613,6 +636,9 @@ public final class StatementRestrictions
 
         for (CustomIndexExpression expression : filterRestrictions.getCustomIndexExpressions())
             expression.addToRowFilter(filter, table, options);
+
+        for (AuthRestriction restriction : authRestrictions)
+            restriction.addRowFilterTo(filter, state);
 
         return filter;
     }

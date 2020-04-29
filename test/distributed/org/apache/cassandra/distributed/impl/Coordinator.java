@@ -145,7 +145,8 @@ public class Coordinator implements ICoordinator
 
             SelectStatement selectStatement = (SelectStatement) prepared;
 
-            QueryPager pager = selectStatement.getQuery(QueryOptions.create(toCassandraCL(consistencyLevel),
+            QueryPager pager = selectStatement.getQuery(QueryState.forInternalCalls(),
+                                                        QueryOptions.create(toCassandraCL(consistencyLevel),
                                                                             boundBBValues,
                                                                             false,
                                                                             pageSize,

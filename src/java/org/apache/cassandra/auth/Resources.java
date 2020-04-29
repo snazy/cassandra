@@ -40,6 +40,7 @@ public final class Resources
     {
         // We want these system cfs to be always readable to authenticated users since many tools rely on them
         // (nodetool, cqlsh, bulkloader, etc.)
+        // Also expose prepared statements and size+range information for drivers.
         for (String cf : Arrays.asList(SystemKeyspace.LOCAL, SystemKeyspace.LEGACY_PEERS, SystemKeyspace.PEERS_V2))
             READABLE_SYSTEM_RESOURCES.add(DataResource.table(SchemaConstants.SYSTEM_KEYSPACE_NAME, cf));
 
@@ -58,6 +59,11 @@ public final class Resources
         }
 
         SchemaConstants.OBSOLETE_AUTH_TABLES.forEach(t -> DROPPABLE_SYSTEM_TABLES.add(DataResource.table(SchemaConstants.AUTH_KEYSPACE_NAME, t)));
+    }
+
+    public static void addReadableSystemResource(IResource resource)
+    {
+        READABLE_SYSTEM_RESOURCES.add(resource);
     }
 
     /**

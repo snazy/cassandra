@@ -161,8 +161,9 @@ public class BatchStatement implements CQLStatement
 
     public void authorize(QueryState state) throws InvalidRequestException, UnauthorizedException
     {
-        for (ModificationStatement statement : statements)
-            statement.authorize(state);
+        if (state.hasUser())
+            for (ModificationStatement statement : statements)
+                statement.authorize(state);
     }
 
     // Validates a prepared batch statement without validating its nested statements.

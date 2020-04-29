@@ -128,6 +128,15 @@ authorizer: AllowAllAuthorizer
 #   increase system_auth keyspace replication factor if you use this role manager.
 role_manager: CassandraRoleManager
 
+
+# Whether to enable system keyspace filtering so that users can access and view
+# only schema information for rows in the system and system_schema keyspaces to
+# which they have access. Security requirements and user permissions apply.
+# Enable this feature only after appropriate user permissions are granted.
+#
+# Default: false
+system_keyspaces_filtering: false
+
 # Network authorization backend, implementing INetworkAuthorizer; used to restrict user
 # access to certain DCs
 # Out of the box, Cassandra provides org.apache.cassandra.auth.{AllowAllNetworkAuthorizer,

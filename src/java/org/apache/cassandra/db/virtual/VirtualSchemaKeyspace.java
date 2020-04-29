@@ -25,16 +25,19 @@ import org.apache.cassandra.db.marshal.UTF8Type;
 import org.apache.cassandra.dht.LocalPartitioner;
 import org.apache.cassandra.schema.ColumnMetadata;
 import org.apache.cassandra.schema.KeyspaceMetadata;
-import org.apache.cassandra.schema.Schema;
 import org.apache.cassandra.schema.TableMetadata;
 
 import static org.apache.cassandra.schema.TableMetadata.builder;
 
 public final class VirtualSchemaKeyspace extends VirtualKeyspace
 {
-    private static final String NAME = "system_virtual_schema";
-
     public static final VirtualSchemaKeyspace instance = new VirtualSchemaKeyspace();
+
+    public static final String NAME = "system_virtual_schema";
+
+    public static final String KEYSPACES = "keyspaces";
+    public static final String TABLES = "tables";
+    public static final String COLUMNS = "columns";
 
     private VirtualSchemaKeyspace()
     {
@@ -47,7 +50,7 @@ public final class VirtualSchemaKeyspace extends VirtualKeyspace
 
         private VirtualKeyspaces(String keyspace)
         {
-            super(builder(keyspace, "keyspaces")
+            super(builder(keyspace, KEYSPACES)
                  .comment("virtual keyspace definitions")
                  .kind(TableMetadata.Kind.VIRTUAL)
                  .partitioner(new LocalPartitioner(UTF8Type.instance))
@@ -72,7 +75,7 @@ public final class VirtualSchemaKeyspace extends VirtualKeyspace
 
         private VirtualTables(String keyspace)
         {
-            super(builder(keyspace, "tables")
+            super(builder(keyspace, TABLES)
                  .comment("virtual table definitions")
                  .kind(TableMetadata.Kind.VIRTUAL)
                  .partitioner(new LocalPartitioner(UTF8Type.instance))
@@ -112,7 +115,7 @@ public final class VirtualSchemaKeyspace extends VirtualKeyspace
 
         private VirtualColumns(String keyspace)
         {
-            super(builder(keyspace, "columns")
+            super(builder(keyspace, COLUMNS)
                  .comment("virtual column definitions")
                  .kind(TableMetadata.Kind.VIRTUAL)
                  .partitioner(new LocalPartitioner(UTF8Type.instance))

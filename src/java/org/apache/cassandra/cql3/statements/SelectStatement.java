@@ -240,7 +240,7 @@ public class SelectStatement implements CQLStatement
         int pageSize = options.getPageSize();
 
         Selectors selectors = selection.newSelectors(options);
-        ReadQuery query = getQuery(options, selectors.getColumnFilter(), nowInSec, userLimit, userPerPartitionLimit, pageSize);
+        ReadQuery query = getQuery(state, options, selectors.getColumnFilter(), nowInSec, userLimit, userPerPartitionLimit, pageSize);
 
         if (aggregationSpec == null && (pageSize <= 0 || (query.limits().count() <= pageSize)))
             return execute(query, options, state, selectors, nowInSec, userLimit, queryStartNanoTime);
@@ -256,10 +256,11 @@ public class SelectStatement implements CQLStatement
                        queryStartNanoTime);
     }
 
-    public ReadQuery getQuery(QueryOptions options, int nowInSec) throws RequestValidationException
+    public ReadQuery getQuery(QueryState queryState, QueryOptions options, int nowInSec) throws RequestValidationException
     {
         Selectors selectors = selection.newSelectors(options);
-        return getQuery(options,
+        return getQuery(queryState,
+                        options,
                         selectors.getColumnFilter(),
                         nowInSec,
                         getLimit(options),
@@ -267,7 +268,8 @@ public class SelectStatement implements CQLStatement
                         options.getPageSize());
     }
 
-    public ReadQuery getQuery(QueryOptions options,
+    public ReadQuery getQuery(QueryState queryState,
+                              QueryOptions options,
                               ColumnFilter columnFilter,
                               int nowInSec,
                               int userLimit,
@@ -279,9 +281,9 @@ public class SelectStatement implements CQLStatement
         DataLimits limit = getDataLimits(userLimit, perPartitionLimit, pageSize);
 
         if (isPartitionRangeQuery)
-            return getRangeCommand(options, columnFilter, limit, nowInSec);
+            return getRangeCommand(queryState, options, columnFilter, limit, nowInSec);
 
-        return getSliceCommands(options, columnFilter, limit, nowInSec);
+        return getSliceCommands(queryState, options, columnFilter, limit, nowInSec);
     }
 
     private ResultMessage.Rows execute(ReadQuery query,
@@ -438,7 +440,7 @@ public class SelectStatement implements CQLStatement
         int pageSize = options.getPageSize();
 
         Selectors selectors = selection.newSelectors(options);
-        ReadQuery query = getQuery(options, selectors.getColumnFilter(), nowInSec, userLimit, userPerPartitionLimit, pageSize);
+        ReadQuery query = getQuery(state, options, selectors.getColumnFilter(), nowInSec, userLimit, userPerPartitionLimit, pageSize);
 
         try (ReadExecutionController executionController = query.executionController())
         {
@@ -505,7 +507,11 @@ public class SelectStatement implements CQLStatement
         return restrictions;
     }
 
-    private ReadQuery getSliceCommands(QueryOptions options, ColumnFilter columnFilter, DataLimits limit, int nowInSec)
+    private ReadQuery getSliceCommands(QueryState queryState,
+                                       QueryOptions options,
+                                       ColumnFilter columnFilter,
+                                       DataLimits limit,
+                                       int nowInSec)
     {
         Collection<ByteBuffer> keys = restrictions.getPartitionKeys(options);
         if (keys.isEmpty())
@@ -515,7 +521,7 @@ public class SelectStatement implements CQLStatement
         if (filter == null)
             return ReadQuery.empty(table);
 
-        RowFilter rowFilter = getRowFilter(options);
+        RowFilter rowFilter = getRowFilter(queryState, options);
 
         List<DecoratedKey> decoratedKeys = new ArrayList<>(keys.size());
         for (ByteBuffer key : keys)
@@ -558,7 +564,7 @@ public class SelectStatement implements CQLStatement
         QueryOptions options = QueryOptions.forInternalCalls(Collections.emptyList());
         ColumnFilter columnFilter = selection.newSelectors(options).getColumnFilter();
         ClusteringIndexFilter filter = makeClusteringIndexFilter(options, columnFilter);
-        RowFilter rowFilter = getRowFilter(options);
+        RowFilter rowFilter = getRowFilter(QueryState.forInternalCalls(), options);
         return SinglePartitionReadCommand.create(table, nowInSec, columnFilter, rowFilter, DataLimits.NONE, key, filter);
     }
 
@@ -567,16 +573,20 @@ public class SelectStatement implements CQLStatement
      */
     public RowFilter rowFilterForInternalCalls()
     {
-        return getRowFilter(QueryOptions.forInternalCalls(Collections.emptyList()));
+        return getRowFilter(QueryState.forInternalCalls(), QueryOptions.forInternalCalls(Collections.emptyList()));
     }
 
-    private ReadQuery getRangeCommand(QueryOptions options, ColumnFilter columnFilter, DataLimits limit, int nowInSec)
+    private ReadQuery getRangeCommand(QueryState queryState,
+                                      QueryOptions options,
+                                      ColumnFilter columnFilter,
+                                      DataLimits limit,
+                                      int nowInSec)
     {
         ClusteringIndexFilter clusteringIndexFilter = makeClusteringIndexFilter(options, columnFilter);
         if (clusteringIndexFilter == null)
             return ReadQuery.empty(table);
 
-        RowFilter rowFilter = getRowFilter(options);
+        RowFilter rowFilter = getRowFilter(queryState, options);
 
         // The LIMIT provided by the user is the number of CQL row he wants returned.
         // We want to have getRangeSlice to count the number of columns, not the number of keys.
@@ -759,10 +769,10 @@ public class SelectStatement implements CQLStatement
     /**
      * May be used by custom QueryHandler implementations
      */
-    public RowFilter getRowFilter(QueryOptions options) throws InvalidRequestException
+    public RowFilter getRowFilter(QueryState queryState, QueryOptions options) throws InvalidRequestException
     {
         IndexRegistry indexRegistry = IndexRegistry.obtain(table);
-        return restrictions.getRowFilter(indexRegistry, options);
+        return restrictions.getRowFilter(indexRegistry, queryState, options);
     }
 
     private ResultSet process(PartitionIterator partitions,

@@ -244,14 +244,16 @@ public class QueryProcessor implements QueryHandler
     public ResultMessage process(CQLStatement prepared, QueryState queryState, QueryOptions options, long queryStartNanoTime)
     throws RequestExecutionException, RequestValidationException
     {
+        QueryState state = queryState.cloneWithKeyspaceIfSet(options.getKeyspace());
+
         options.prepare(prepared.getBindVariables());
         if (prepared.getBindVariables().size() != options.getValues().size())
             throw new InvalidRequestException("Invalid amount of bind variables");
 
-        if (!queryState.getClientState().isInternal)
+        if (!state.getClientState().isInternal)
             metrics.regularStatementsExecuted.inc();
 
-        return processStatement(prepared, queryState, options, queryStartNanoTime);
+        return processStatement(prepared, state, options, queryStartNanoTime);
     }
 
     public static CQLStatement parseStatement(String queryStr, QueryState queryState) throws RequestValidationException
@@ -353,7 +355,7 @@ public class QueryProcessor implements QueryHandler
             throw new IllegalArgumentException("Only SELECTs can be paged");
 
         SelectStatement select = (SelectStatement)prepared.statement;
-        QueryPager pager = select.getQuery(makeInternalOptions(prepared.statement, values), FBUtilities.nowInSeconds()).getPager(null, ProtocolVersion.CURRENT);
+        QueryPager pager = select.getQuery(QueryState.forInternalCalls(), makeInternalOptions(prepared.statement, values), FBUtilities.nowInSeconds()).getPager(null, ProtocolVersion.CURRENT);
         return UntypedResultSet.create(select, pager, pageSize);
     }
 

@@ -174,6 +174,14 @@ public final class Schema
         SchemaDiagnostics.metadataReloaded(this, previous, updated, tablesDiff, viewsDiff, indexesDiff);
     }
 
+    public void registerListenerEarly(SchemaChangeListener listener)
+    {
+        if (!changeListeners.isEmpty())
+            changeListeners.add(0, listener);
+        else
+            changeListeners.add(listener);
+    }
+
     public void registerListener(SchemaChangeListener listener)
     {
         changeListeners.add(listener);

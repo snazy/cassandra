@@ -36,8 +36,6 @@ import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.apache.cassandra.SchemaLoader;
 import org.apache.cassandra.schema.ColumnMetadata;
 import org.apache.cassandra.schema.TableMetadata;
@@ -77,8 +75,6 @@ import org.apache.cassandra.utils.btree.BTreeSet;
 
 public class SinglePartitionSliceCommandTest
 {
-    private static final Logger logger = LoggerFactory.getLogger(SinglePartitionSliceCommandTest.class);
-
     private static final String KEYSPACE = "ks";
     private static final String TABLE = "tbl";
 
@@ -340,7 +336,7 @@ public class SinglePartitionSliceCommandTest
         SelectStatement stmt = (SelectStatement) QueryProcessor.parseStatement(q).prepare(QueryState.forInternalCalls());
 
         List<Unfiltered> unfiltereds = new ArrayList<>();
-        SinglePartitionReadQuery.Group<SinglePartitionReadCommand> query = (SinglePartitionReadQuery.Group<SinglePartitionReadCommand>) stmt.getQuery(QueryOptions.DEFAULT, 0);
+        SinglePartitionReadQuery.Group<SinglePartitionReadCommand> query = (SinglePartitionReadQuery.Group<SinglePartitionReadCommand>) stmt.getQuery(QueryState.forInternalCalls(), QueryOptions.DEFAULT, 0);
         Assert.assertEquals(1, query.queries.size());
         SinglePartitionReadCommand command = Iterables.getOnlyElement(query.queries);
         try (ReadExecutionController controller = ReadExecutionController.forCommand(command);

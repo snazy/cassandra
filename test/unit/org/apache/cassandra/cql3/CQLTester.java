@@ -127,6 +127,7 @@ public abstract class CQLTester
     public static final String DATA_CENTER = "datacenter1";
     public static final String DATA_CENTER_REMOTE = "datacenter2";
     public static final String RACK1 = "rack1";
+    private static final User SUPER_USER = new User("cassandra", "cassandra");
 
     private static org.apache.cassandra.transport.Server server;
     protected static int nativePort;
@@ -483,6 +484,21 @@ public abstract class CQLTester
         else
             builder = builder.withProtocolVersion(com.datastax.driver.core.ProtocolVersion.fromInt(version.asInt()));
         return builder;
+    }
+
+    public static Cluster createClientCluster(ProtocolVersion version, String clusterName, NettyOptions nettyOptions,
+                                              String username, String password)
+    {
+        Cluster.Builder builder = Cluster.builder()
+                                         .addContactPoints(nativeAddr)
+                                         .withClusterName(clusterName)
+                                         .withPort(nativePort)
+                                         .withProtocolVersion(com.datastax.driver.core.ProtocolVersion.fromInt(version.asInt()))
+                                         .withNettyOptions(nettyOptions)
+                                         .withoutMetrics();
+        if (username != null)
+            builder.withAuthProvider(new PlainTextAuthProvider(username, password));
+        return builder.build();
     }
 
     protected void dropPerTestKeyspace() throws Throwable
@@ -964,7 +980,12 @@ public abstract class CQLTester
      */
     public void useSuperUser()
     {
-        useUser("cassandra", "cassandra");
+        this.user = SUPER_USER;
+    }
+
+    public boolean isSuperUser()
+    {
+        return SUPER_USER.equals(user);
     }
 
     protected Session sessionNet()

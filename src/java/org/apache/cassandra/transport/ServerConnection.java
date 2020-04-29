@@ -48,6 +48,7 @@ public class ServerConnection extends Connection
 
         clientState = ClientState.forExternalCalls(channel.remoteAddress());
         stage = ConnectionStage.ESTABLISHED;
+        channel.attr(Server.ATTR_KEY_CLIENT_STATE).set(clientState);
     }
 
     public ClientState getClientState()

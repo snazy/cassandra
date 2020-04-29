@@ -28,6 +28,7 @@ import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import io.netty.util.AttributeKey;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -44,7 +45,6 @@ import io.netty.channel.socket.nio.NioServerSocketChannel;
 import io.netty.handler.codec.ByteToMessageDecoder;
 import io.netty.handler.ssl.SslContext;
 import io.netty.handler.ssl.SslHandler;
-import io.netty.handler.timeout.IdleState;
 import io.netty.handler.timeout.IdleStateEvent;
 import io.netty.handler.timeout.IdleStateHandler;
 import io.netty.util.Version;
@@ -55,6 +55,7 @@ import io.netty.util.internal.logging.Slf4JLoggerFactory;
 import org.apache.cassandra.auth.AuthenticatedUser;
 import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.config.EncryptionOptions;
+import org.apache.cassandra.cql3.SystemKeyspacesFilteringRestrictions;
 import org.apache.cassandra.db.marshal.AbstractType;
 import org.apache.cassandra.locator.InetAddressAndPort;
 import org.apache.cassandra.net.ResourceLimits;
@@ -73,6 +74,9 @@ public class Server implements CassandraDaemon.Server
     }
 
     private static final Logger logger = LoggerFactory.getLogger(Server.class);
+
+    public static final AttributeKey<ClientState> ATTR_KEY_CLIENT_STATE = AttributeKey.newInstance("clientState");
+
     private static final boolean useEpoll = NativeTransportService.useEpoll();
 
     private final ConnectionTracker connectionTracker = new ConnectionTracker();
@@ -296,9 +300,21 @@ public class Server implements CassandraDaemon.Server
             groups.get(type).add(ch);
         }
 
-        public void send(Event event)
+        public void send(Event event, ChannelFilter filter)
         {
-            groups.get(event.type).writeAndFlush(new EventMessage(event));
+            // Optimization if we know that the event must be send to all channels
+            if (ChannelFilter.NOOP_FILTER.equals(filter))
+            {
+                groups.get(event.type).writeAndFlush(new EventMessage(event));
+            }
+            else
+            {
+                groups.get(event.type).stream()
+                      .map(filter::accept)
+                      .filter(Optional::isPresent)
+                      .map(Optional::get)
+                      .forEach(channel -> channel.writeAndFlush(new EventMessage(event)));
+            }
         }
 
         void closeAll()
@@ -624,12 +640,12 @@ public class Server implements CassandraDaemon.Server
                 event.nodeAddress().equals(FBUtilities.getJustBroadcastNativeAddress()))
                 return;
 
-            send(event);
+            send(event, ChannelFilter.NOOP_FILTER);
         }
 
-        private void send(Event event)
+        private void send(Event event, ChannelFilter filter)
         {
-            server.connectionTracker.send(event);
+            server.connectionTracker.send(event, filter);
         }
 
         public void onJoinCluster(InetAddressAndPort endpoint)
@@ -771,5 +787,28 @@ public class Server implements CassandraDaemon.Server
             send(new Event.SchemaChange(Event.SchemaChange.Change.DROPPED, Event.SchemaChange.Target.AGGREGATE,
                                         ksName, aggregateName, AbstractType.asCQLTypeStringList(argTypes)));
         }
+
+        private void send(Event.SchemaChange event)
+        {
+            send(event, SystemKeyspacesFilteringRestrictions.getChannelFilter(event));
+        }
+    }
+
+    /**
+     * Filter used to control to which channel the events must be sent.
+     */
+    public static interface ChannelFilter
+    {
+        /**
+         * A filter that accept all channels.
+         */
+        public static final ChannelFilter NOOP_FILTER = Optional::of;
+
+        /**
+         * Checks if an event must be sent on the specified Channel.
+         * @param channel the channel to check
+         * @return a {@code Maybe} that will return the channel if an event sent on that channel.
+         */
+        Optional<Channel> accept(Channel channel);
     }
 }

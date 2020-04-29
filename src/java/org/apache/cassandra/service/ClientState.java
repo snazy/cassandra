@@ -319,4 +319,9 @@ public class ClientState
     {
         return user;
     }
+
+    public boolean hasUser()
+    {
+        return user != null;
+    }
 }
