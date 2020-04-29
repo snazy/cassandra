@@ -273,7 +273,7 @@ public final class AuthManager
         invalidate(invalidation.roles);
     }
 
-    private void invalidateRoles(Collection<RoleResource> roles)
+    public void invalidateRoles(Collection<RoleResource> roles)
     {
         invalidate(roles);
         pushRoleInvalidation(roles);
