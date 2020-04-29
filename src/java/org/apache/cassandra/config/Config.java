@@ -56,12 +56,12 @@ public class Config
     public String authorizer;
     public String role_manager;
     public String network_authorizer;
-    public volatile int permissions_validity_in_ms = 2000;
-    public volatile int permissions_cache_max_entries = 1000;
+    public volatile int permissions_validity_in_ms = 120_000;
+    public volatile int permissions_cache_max_entries = 1_000;
     public volatile int permissions_cache_initial_capacity = 128;
     public volatile int permissions_update_interval_in_ms = -1;
-    public volatile int roles_validity_in_ms = 2000;
-    public volatile int roles_cache_max_entries = 1000;
+    public volatile int roles_validity_in_ms = 120_000;
+    public volatile int roles_cache_max_entries = 1_000;
     public volatile int roles_cache_initial_capacity = 128;
     public volatile int roles_update_interval_in_ms = -1;
 

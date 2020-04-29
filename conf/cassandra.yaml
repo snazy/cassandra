@@ -142,9 +142,9 @@ network_authorizer: AllowAllNetworkAuthorizer
 # operation depending on the role manager, CassandraRoleManager is one example)
 # Granted roles are cached for authenticated sessions in AuthenticatedUser and
 # after the period specified here, become eligible for (async) reload.
-# Defaults to 2000, set to 0 to disable caching entirely.
+# Defaults to 120000, set to 0 to disable caching entirely.
 # Will be disabled automatically for AllowAllAuthenticator.
-roles_validity_in_ms: 2000
+roles_validity_in_ms: 120000
 
 # Refresh interval for roles cache (if enabled).
 # After this interval, cache entries become eligible for refresh. Upon next
@@ -156,9 +156,9 @@ roles_validity_in_ms: 2000
 
 # Validity period for permissions cache (fetching permissions can be an
 # expensive operation depending on the authorizer, CassandraAuthorizer is
-# one example). Defaults to 2000, set to 0 to disable.
+# one example). Defaults to 120000, set to 0 to disable.
 # Will be disabled automatically for AllowAllAuthorizer.
-permissions_validity_in_ms: 2000
+permissions_validity_in_ms: 120000
 
 # Refresh interval for permissions cache (if enabled).
 # After this interval, cache entries become eligible for refresh. Upon next
