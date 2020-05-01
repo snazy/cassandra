@@ -66,6 +66,52 @@ public final class PermissionSets
     }
 
     /**
+     * Checks if this set allow to grant the specified permission or the one it supersedes..
+     *
+     * @param permission the permission to check
+     * @return {@code true} if this set allow to grant the specified permission, {@code false} otherwise.
+     */
+    public boolean hasGrantPermission(Permission permission)
+    {
+        return contains(grantables, permission);
+    }
+
+    /**
+     * Checks if this set has the specified permission or the one it supersedes.
+     *
+     * @param permission the permission to check
+     * @return {@code true} if this set has the specified permission, {@code false} otherwise.
+     */
+    public boolean hasPermission(Permission permission)
+    {
+        return contains(granted, permission);
+    }
+
+    /**
+     * Checks if this set restricts the specified permission or the one it supersedes.
+     *
+     * @param permission the permission to check
+     * @return {@code true} if this set restricts the specified permission, {@code false} otherwise.
+     */
+    public boolean hasRestriction(Permission permission)
+    {
+        return contains(restricted, permission);
+    }
+
+    /**
+     * Checks if the set of permissions contains the specified one.
+     *
+     * @param permissions the permission set
+     * @param permission the permission
+     * @return {@code true} if the set contains the permission or the one it supersedes, {@code false} otherwise.
+     */
+    private static boolean contains(Set<Permission> permissions, Permission permission)
+    {
+        Permission supersedes = permission.supersedes();
+        return permissions.contains(permission) || (supersedes != null && permissions.contains(supersedes));
+    }
+
+    /**
      * Returns all permissions that are contained in {@link #granted}, {@link #restricted}
      * and {@link #grantables}.
      */

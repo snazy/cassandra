@@ -103,11 +103,12 @@ public class CreateRoleStatement extends AuthenticationStatement
         {
             try
             {
-                DatabaseDescriptor.getAuthorizer().grant(AuthenticatedUser.SYSTEM_USER,
-                                                         role.applicablePermissions(),
-                                                         role,
-                                                         RoleResource.role(state.getUserName()),
-                                                         GrantMode.GRANT);
+                IAuthorizer authorizer = DatabaseDescriptor.getAuthorizer();
+                authorizer.grant(AuthenticatedUser.SYSTEM_USER,
+                                 authorizer.applicableNonDeprecatedPermissions(role),
+                                 role,
+                                 RoleResource.role(state.getUserName()),
+                                 GrantMode.GRANT);
             }
             catch (UnsupportedOperationException e)
             {

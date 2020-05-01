@@ -575,7 +575,7 @@ public class UFAuthTest extends CQLTester
                                RoleResource.role(roleName),
                                new RoleOptions());
         DatabaseDescriptor.getAuthorizer().grant(AuthenticatedUser.SYSTEM_USER,
-                                                 ImmutableSet.of(Permission.SELECT, Permission.MODIFY),
+                                                 ImmutableSet.of(Permission.SELECT, Permission.UPDATE),
                                                  DataResource.table(KEYSPACE, currentTable()),
                                                  role,
                                                  GrantMode.GRANT);

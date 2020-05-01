@@ -63,9 +63,9 @@ public class AuthorizeForAndRestrictTest extends CQLTester
         assertClientWarning("Role 'revoked' was already granted SELECT on <keyspace revoke_yeah>",
                             "GRANT SELECT ON KEYSPACE revoke_yeah TO revoked");
         assertClientWarning("Role 'revoked' was already granted AUTHORIZE FOR SELECT on <keyspace revoke_yeah>",
-                            "GRANT AUTHORIZE FOR SELECT, MODIFY ON KEYSPACE revoke_yeah TO revoked");
-        assertClientWarning("Role 'revoked' was already granted AUTHORIZE FOR SELECT, MODIFY on <keyspace revoke_yeah>",
-                            "GRANT AUTHORIZE FOR MODIFY, SELECT, DROP ON KEYSPACE revoke_yeah TO revoked");
+                            "GRANT AUTHORIZE FOR SELECT, UPDATE ON KEYSPACE revoke_yeah TO revoked");
+        assertClientWarning("Role 'revoked' was already granted AUTHORIZE FOR SELECT, UPDATE on <keyspace revoke_yeah>",
+                            "GRANT AUTHORIZE FOR UPDATE, SELECT, DROP ON KEYSPACE revoke_yeah TO revoked");
         assertClientWarning("Role 'revoked' was already restricted SELECT on <keyspace revoke_yeah>",
                             "RESTRICT SELECT ON KEYSPACE revoke_yeah TO revoked");
         assertNoClientWarning("RESTRICT ALL ON KEYSPACE revoke_yeah TO revoked");
@@ -78,12 +78,12 @@ public class AuthorizeForAndRestrictTest extends CQLTester
                             "UNRESTRICT SELECT ON TABLE revoke_yeah.t1 FROM revoked");
 
         // revert all the stuff above
-        assertClientWarning("Role 'revoked' was not granted MODIFY on <keyspace revoke_yeah>",
-                            "REVOKE SELECT, MODIFY ON KEYSPACE revoke_yeah FROM revoked");
+        assertClientWarning("Role 'revoked' was not granted UPDATE on <keyspace revoke_yeah>",
+                            "REVOKE SELECT, UPDATE ON KEYSPACE revoke_yeah FROM revoked");
         assertNoClientWarning("REVOKE AUTHORIZE FOR ALL ON KEYSPACE revoke_yeah FROM revoked");
         assertNoClientWarning("UNRESTRICT ALL ON KEYSPACE revoke_yeah FROM revoked");
-        assertClientWarning("Role 'revoked' was not restricted SELECT, MODIFY on <keyspace revoke_yeah>",
-                            "UNRESTRICT SELECT, MODIFY ON KEYSPACE revoke_yeah FROM revoked");
+        assertClientWarning("Role 'revoked' was not restricted SELECT, UPDATE on <keyspace revoke_yeah>",
+                            "UNRESTRICT SELECT, UPDATE ON KEYSPACE revoke_yeah FROM revoked");
     }
 
 
@@ -101,15 +101,10 @@ public class AuthorizeForAndRestrictTest extends CQLTester
         executeNet("CREATE TABLE authfor_test.t1 (id int PRIMARY KEY, val text)");
         executeNet("CREATE TABLE authfor_test.t2 (id int PRIMARY KEY, val text)");
 
-        assertInvalidSyntaxMessage("no viable alternative at input 'UPDATE' (GRANT AUTHORIZE FOR [UPDATE]...)",
-                                   "GRANT AUTHORIZE FOR UPDATE ON KEYSPACE authfor_test TO authfor1");
-        assertInvalidSyntaxMessage("no viable alternative at input 'UPDATE' (GRANT AUTHORIZE FOR SELECT, [UPDATE]...)",
-                                   "GRANT AUTHORIZE FOR SELECT, UPDATE ON KEYSPACE authfor_test TO authfor1");
-
         executeNet("GRANT AUTHORIZE FOR SELECT ON KEYSPACE authfor_test TO authfor1");
-        executeNet("GRANT MODIFY ON TABLE authfor_test.t1 TO authfor1");
-        executeNet("GRANT AUTHORIZE FOR MODIFY ON TABLE authfor_test.t2 TO authfor2");
-        executeNet("GRANT MODIFY ON TABLE authfor_test.t2 TO authfor2");
+        executeNet("GRANT UPDATE ON TABLE authfor_test.t1 TO authfor1");
+        executeNet("GRANT AUTHORIZE FOR UPDATE ON TABLE authfor_test.t2 TO authfor2");
+        executeNet("GRANT UPDATE ON TABLE authfor_test.t2 TO authfor2");
 
 
         useUser("authfor1", "pass1");
@@ -126,9 +121,9 @@ public class AuthorizeForAndRestrictTest extends CQLTester
         assertUnauthorizedQuery("User authfor1 has grant privilege for SELECT permission(s) on <table authfor_test.t1> but must not grant/revoke for him/herself",
                                 "GRANT SELECT ON TABLE authfor_test.t1 TO authfor_role1");
 
-        // authfor1 has MODIFIY permission on t1 but not the privilege to grant the MODIFY permission
-        assertUnauthorizedQuery("User authfor1 has no AUTHORIZE permission nor AUTHORIZE FOR MODIFY permission on <table authfor_test.t1> or any of its parents",
-                                "GRANT MODIFY ON TABLE authfor_test.t1 to authfor2");
+        // authfor1 has MODIFIY permission on t1 but not the privilege to grant the UPDATE permission
+        assertUnauthorizedQuery("User authfor1 has no AUTHORIZE permission nor AUTHORIZE FOR UPDATE permission on <table authfor_test.t1> or any of its parents",
+                                "GRANT UPDATE ON TABLE authfor_test.t1 to authfor2");
 
         assertUnauthorizedQuery("User authfor1 must not grant AUTHORIZE FOR AUTHORIZE permission on <keyspace authfor_test>",
                                 "GRANT AUTHORIZE FOR SELECT ON KEYSPACE authfor_test TO authfor2");
@@ -139,7 +134,7 @@ public class AuthorizeForAndRestrictTest extends CQLTester
         executeNet("GRANT SELECT ON TABLE authfor_test.t2 TO authfor2");
 
         // authfor1 has no MODIFIY permission on t2
-        assertUnauthorizedQuery("User authfor1 has no MODIFY permission on <table authfor_test.t2> or any of its parents",
+        assertUnauthorizedQuery("User authfor1 has no UPDATE permission on <table authfor_test.t2> or any of its parents",
                                 "INSERT INTO authfor_test.t2 (id, val) VALUES (1, 'foo')");
 
         useUser("authfor2", "pass2");
@@ -147,14 +142,14 @@ public class AuthorizeForAndRestrictTest extends CQLTester
         // authfor2 has SELECT permission on t1
         executeNet("SELECT * FROM authfor_test.t1");
 
-        // authfor2 has no MODIFY permission on t1
-        assertUnauthorizedQuery("User authfor2 has no MODIFY permission on <table authfor_test.t1> or any of its parents",
+        // authfor2 has no UPDATE permission on t1
+        assertUnauthorizedQuery("User authfor2 has no UPDATE permission on <table authfor_test.t1> or any of its parents",
                                 "INSERT INTO authfor_test.t1 (id, val) VALUES (1, 'foo')");
 
-        // authfor2 has the privilege to grant the MODIFY permission
-        executeNet("GRANT MODIFY ON TABLE authfor_test.t2 TO authfor1");
+        // authfor2 has the privilege to grant the UPDATE permission
+        executeNet("GRANT UPDATE ON TABLE authfor_test.t2 TO authfor1");
 
-        // authfor2 has MODIFY permission on t2
+        // authfor2 has UPDATE permission on t2
         executeNet("INSERT INTO authfor_test.t2 (id, val) VALUES (1, 'foo')");
 
         // authfor2 has SElECT permission on t2
@@ -176,13 +171,13 @@ public class AuthorizeForAndRestrictTest extends CQLTester
         useSuperUser();
         assertRowsNet(executeNet("LIST PERMISSIONS OF authfor1"),
                       row("authfor1", "authfor1", "<keyspace authfor_test>", "SELECT", false, false, true),
-                      row("authfor1", "authfor1", "<table authfor_test.t1>", "MODIFY", true, false, false),
-                      row("authfor1", "authfor1", "<table authfor_test.t2>", "MODIFY", true, false, false));
+                      row("authfor1", "authfor1", "<table authfor_test.t1>", "UPDATE", true, false, false),
+                      row("authfor1", "authfor1", "<table authfor_test.t2>", "UPDATE", true, false, false));
         assertRowsNet(executeNet("LIST PERMISSIONS OF authfor2"),
                       row("authfor2", "authfor2", "<keyspace authfor_test>", "SELECT", true, false, false),
                       row("authfor2", "authfor2", "<table authfor_test.t1>", "SELECT", true, false, false),
                       row("authfor2", "authfor2", "<table authfor_test.t2>", "SELECT", true, false, false),
-                      row("authfor2", "authfor2", "<table authfor_test.t2>", "MODIFY", true, false, true));
+                      row("authfor2", "authfor2", "<table authfor_test.t2>", "UPDATE", true, false, true));
 
         // all permissions and grant options must have been removed
         executeNet("DROP ROLE authfor1");
@@ -193,7 +188,7 @@ public class AuthorizeForAndRestrictTest extends CQLTester
                       row("authfor2", "authfor2", "<keyspace authfor_test>", "SELECT", true, false, false),
                       row("authfor2", "authfor2", "<table authfor_test.t1>", "SELECT", true, false, false),
                       row("authfor2", "authfor2", "<table authfor_test.t2>", "SELECT", true, false, false),
-                      row("authfor2", "authfor2", "<table authfor_test.t2>", "MODIFY", true, false, true));
+                      row("authfor2", "authfor2", "<table authfor_test.t2>", "UPDATE", true, false, true));
 
         // all permissions and grant options must have been removed
         executeNet("DROP ROLE authfor2");

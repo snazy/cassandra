@@ -233,7 +233,7 @@ public abstract class ModificationStatement implements CQLStatement
 
     public void authorize(QueryState state) throws InvalidRequestException, UnauthorizedException
     {
-        state.ensureTablePermission(Permission.MODIFY, metadata);
+        state.ensureTablePermission(Permission.UPDATE, metadata);
 
         // CAS updates can be used to simulate a SELECT query, so should require Permission.SELECT as well.
         if (hasConditions())
@@ -247,7 +247,7 @@ public abstract class ModificationStatement implements CQLStatement
             state.ensureTablePermission(Permission.SELECT, metadata);
             do
             {
-                state.ensureTablePermission(Permission.MODIFY, views.next().metadata);
+                state.ensureTablePermission(Permission.UPDATE, views.next().metadata);
             } while (views.hasNext());
         }
 

@@ -23,6 +23,7 @@ import com.google.common.collect.ImmutableSet;
 
 import org.apache.cassandra.auth.AuthenticatedUser;
 import org.apache.cassandra.auth.GrantMode;
+import org.apache.cassandra.auth.IAuthorizer;
 import org.apache.cassandra.auth.IResource;
 import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.cql3.CQLStatement;
@@ -134,12 +135,12 @@ abstract class AlterSchemaStatement implements CQLStatement, SchemaTransformatio
     {
         try
         {
-            DatabaseDescriptor.getAuthorizer()
-                              .grant(AuthenticatedUser.SYSTEM_USER,
-                                     resource.applicablePermissions(),
-                                     resource,
-                                     user.getPrimaryRole(),
-                                     GrantMode.GRANT);
+            IAuthorizer authorizer = DatabaseDescriptor.getAuthorizer();
+            authorizer.grant(AuthenticatedUser.SYSTEM_USER,
+                             authorizer.applicableNonDeprecatedPermissions(resource),
+                             resource,
+                             user.getPrimaryRole(),
+                             GrantMode.GRANT);
         }
         catch (UnsupportedOperationException e)
         {

@@ -82,36 +82,36 @@ public class CqlParsingTest extends CQLTester
     @Test
     public void grantInvalidPermission()
     {
-        invalidQuery("GRANT UPDATE ON KEYSPACE ks_name TO the_grantee",
+        invalidQuery("GRANT INSERT ON KEYSPACE ks_name TO the_grantee",
                      SyntaxException.class,
-                     a -> a.extracting(Throwable::getMessage).isEqualTo("Failed parsing query: [GRANT UPDATE ON KEYSPACE ks_name TO the_grantee] reason: SyntaxException line 1:6 no viable alternative at input 'UPDATE' ([GRANT] UPDATE...)")
+                     a -> a.extracting(Throwable::getMessage).isEqualTo("Failed parsing query: [GRANT INSERT ON KEYSPACE ks_name TO the_grantee] reason: SyntaxException line 1:6 no viable alternative at input 'INSERT' ([GRANT] INSERT...)")
                     );
     }
 
     @Test
     public void grantInvalidPermission2()
     {
-        invalidQuery("GRANT SELECT, UPDATE ON KEYSPACE ks_name TO the_grantee",
+        invalidQuery("GRANT SELECT, INSERT ON KEYSPACE ks_name TO the_grantee",
                      SyntaxException.class,
-                     a -> a.extracting(Throwable::getMessage).isEqualTo("Failed parsing query: [GRANT SELECT, UPDATE ON KEYSPACE ks_name TO the_grantee] reason: SyntaxException line 1:14 no viable alternative at input 'UPDATE' (GRANT SELECT, [UPDATE]...)")
+                     a -> a.extracting(Throwable::getMessage).isEqualTo("Failed parsing query: [GRANT SELECT, INSERT ON KEYSPACE ks_name TO the_grantee] reason: SyntaxException line 1:14 no viable alternative at input 'INSERT' (GRANT SELECT, [INSERT]...)")
                     );
     }
 
     @Test
     public void grantAuthorizeForInvalidPermission()
     {
-        invalidQuery("GRANT AUTHORIZE FOR UPDATE ON KEYSPACE ks_name TO the_grantee",
+        invalidQuery("GRANT AUTHORIZE FOR INSERT ON KEYSPACE ks_name TO the_grantee",
                      SyntaxException.class,
-                     a -> a.extracting(Throwable::getMessage).isEqualTo("Failed parsing query: [GRANT AUTHORIZE FOR UPDATE ON KEYSPACE ks_name TO the_grantee] reason: SyntaxException line 1:20 no viable alternative at input 'UPDATE' (GRANT AUTHORIZE FOR [UPDATE]...)")
+                     a -> a.extracting(Throwable::getMessage).isEqualTo("Failed parsing query: [GRANT AUTHORIZE FOR INSERT ON KEYSPACE ks_name TO the_grantee] reason: SyntaxException line 1:20 no viable alternative at input 'INSERT' (GRANT AUTHORIZE FOR [INSERT]...)")
                     );
     }
 
     @Test
     public void grantAuthorizeForInvalidPermission2()
     {
-        invalidQuery("GRANT AUTHORIZE FOR SELECT, UPDATE ON KEYSPACE ks_name TO the_grantee",
+        invalidQuery("GRANT AUTHORIZE FOR SELECT, INSERT ON KEYSPACE ks_name TO the_grantee",
                      SyntaxException.class,
-                     a -> a.extracting(Throwable::getMessage).isEqualTo("Failed parsing query: [GRANT AUTHORIZE FOR SELECT, UPDATE ON KEYSPACE ks_name TO the_grantee] reason: SyntaxException line 1:28 no viable alternative at input 'UPDATE' (GRANT AUTHORIZE FOR SELECT, [UPDATE]...)")
+                     a -> a.extracting(Throwable::getMessage).isEqualTo("Failed parsing query: [GRANT AUTHORIZE FOR SELECT, INSERT ON KEYSPACE ks_name TO the_grantee] reason: SyntaxException line 1:28 no viable alternative at input 'INSERT' (GRANT AUTHORIZE FOR SELECT, [INSERT]...)")
                     );
     }
 

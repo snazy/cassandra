@@ -35,9 +35,9 @@ import com.google.common.collect.Sets;
 public enum Permission
 {
     @Deprecated
-    READ,
+    READ(true),
     @Deprecated
-    WRITE,
+    WRITE(true),
 
     // schema and role management
     // CREATE, ALTER and DROP permissions granted on an appropriate DataResource are required for
@@ -56,7 +56,10 @@ public enum Permission
 
     // data access
     SELECT, // required for SELECT on a table
-    MODIFY, // required for INSERT, UPDATE, DELETE, TRUNCATE on a DataResource.
+    @Deprecated
+    MODIFY(true), // required for INSERT, UPDATE, DELETE, TRUNCATE on a DataResource.
+    UPDATE(MODIFY), // required for INSERT, UPDATE, DELETE on a DataResource.
+    TRUNCATE(MODIFY), // required for TRUNCATE on a DataResource.
 
     // permission management
     AUTHORIZE, // required for GRANT and REVOKE of permissions or roles.
@@ -69,6 +72,40 @@ public enum Permission
     public static final Set<Permission> ALL =
             Sets.immutableEnumSet(EnumSet.range(Permission.CREATE, Permission.EXECUTE));
     public static final Set<Permission> NONE = ImmutableSet.of();
+
+    private final Permission supersedes;
+    private final boolean deprecated;
+
+    Permission()
+    {
+        this(null);
+    }
+
+    Permission(boolean deprecated)
+    {
+        this(deprecated, null);
+    }
+
+    Permission(Permission supersedes)
+    {
+        this(false, supersedes);
+    }
+
+    Permission(boolean deprecated, Permission supersedes)
+    {
+        this.supersedes = supersedes;
+        this.deprecated = deprecated;
+    }
+
+    public boolean deprecated()
+    {
+        return deprecated;
+    }
+
+    public Permission supersedes()
+    {
+        return supersedes;
+    }
 
     public static Permission byName(String name)
     {
@@ -89,7 +126,7 @@ public enum Permission
 
     public static Set<Permission> setOf()
     {
-        return new HashSet<>();
+        return EnumSet.noneOf(Permission.class);
     }
 
     public static Set<Permission> immutableSetOf(Set<Permission> granted)

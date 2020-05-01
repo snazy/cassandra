@@ -625,7 +625,7 @@ public abstract class UserRolesAndPermissions
         {
             for (PermissionSets permissions : getAllPermissionSetsFor(resource))
             {
-                if (permissions.grantables.contains(perm))
+                if (permissions.hasGrantPermission(perm))
                     return true;
             }
             return false;
@@ -637,8 +637,8 @@ public abstract class UserRolesAndPermissions
             boolean granted = false;
             for (PermissionSets permissions : getAllPermissionSetsFor(resource))
             {
-                granted |= permissions.granted.contains(perm);
-                if (permissions.restricted.contains(perm))
+                granted |= permissions.hasPermission(perm);
+                if (permissions.hasRestriction(perm))
                     throw new UnauthorizedException(String.format("Access for user %s on %s or any of its parents with %s permission is restricted",
                                                                   getName(),
                                                                   resource,
@@ -677,8 +677,8 @@ public abstract class UserRolesAndPermissions
             boolean granted = false;
             for (PermissionSets permissions : getAllPermissionSetsFor(resource))
             {
-                granted |= permissions.granted.contains(perm);
-                if (permissions.restricted.contains(perm))
+                granted |= permissions.hasPermission(perm);
+                if (permissions.hasRestriction(perm))
                     return false;
             }
             return granted;
@@ -698,13 +698,13 @@ public abstract class UserRolesAndPermissions
                 PermissionSets rootPerms = permissionsPerResource.get(JMXResource.root());
                 if (rootPerms != null)
                 {
-                    if (rootPerms.restricted.contains(permission))
+                    if (rootPerms.hasRestriction(permission))
                     {
                         // this role is _restricted_ the required permission on the JMX root resource
                         // I.e. restricted 'permission' on _any_ JMX resource.
                         return false;
                     }
-                    if (rootPerms.granted.contains(permission))
+                    if (rootPerms.hasPermission(permission))
                     {
                         // This role is _granted_ (and not restricted) the required permission on the JMX resource root.
                         // I.e. granted 'permission' on _any_ JMX resource.

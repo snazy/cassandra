@@ -143,22 +143,22 @@ public class JMXAuthTest extends CQLTester
         MBeanAction action = () -> proxy.setMinimumCompactionThreshold(4);
 
         // grant MODIFY on a single specific Table mbean
-        assertPermissionOnResource(Permission.MODIFY, tableMBean, action);
+        assertPermissionOnResource(Permission.UPDATE, tableMBean, action);
 
         // grant MODIFY on all Table mbeans in named keyspace
         clearAllPermissions();
         JMXResource allTablesInKeyspace = JMXResource.mbean(String.format("org.apache.cassandra.db:type=Tables,keyspace=%s,*",
                                                                           KEYSPACE));
-        assertPermissionOnResource(Permission.MODIFY, allTablesInKeyspace, action);
+        assertPermissionOnResource(Permission.UPDATE, allTablesInKeyspace, action);
 
         // grant MODIFY on all Table mbeans
         clearAllPermissions();
         JMXResource allTables = JMXResource.mbean("org.apache.cassandra.db:type=Tables,*");
-        assertPermissionOnResource(Permission.MODIFY, allTables, action);
+        assertPermissionOnResource(Permission.UPDATE, allTables, action);
 
         // grant MODIFY ON ALL MBEANS
         clearAllPermissions();
-        assertPermissionOnResource(Permission.MODIFY, JMXResource.root(), action);
+        assertPermissionOnResource(Permission.UPDATE, JMXResource.root(), action);
     }
 
     @Test

@@ -19,6 +19,7 @@ package org.apache.cassandra.cql3.statements;
 
 import java.util.Set;
 import java.util.TreeSet;
+import java.util.function.Consumer;
 import java.util.stream.Collectors;
 
 import org.apache.cassandra.audit.AuditLogContext;
@@ -37,19 +38,35 @@ import org.apache.cassandra.transport.messages.ResultMessage;
 
 public class GrantPermissionsStatement extends PermissionsManagementStatement
 {
-    public GrantPermissionsStatement(Set<Permission> permissions, IResource resource, RoleName grantee, GrantMode grantMode)
+    public GrantPermissionsStatement(boolean allPermissions,
+                                     Set<Permission> permissions,
+                                     IResource resource,
+                                     RoleName grantee,
+                                     GrantMode grantMode,
+                                     Consumer<String> recognitionError)
     {
-        super(permissions, resource, grantee, grantMode);
+        super(allPermissions, permissions, resource, grantee, grantMode, recognitionError);
     }
 
     public ResultMessage execute(QueryState state) throws RequestValidationException, RequestExecutionException
     {
         IAuthorizer authorizer = DatabaseDescriptor.getAuthorizer();
+
+        Set<Permission> permissions = filteredPermissions;
+
         Set<Permission> granted = authorizer.grant(state.getUser(), permissions, resource, grantee, grantMode);
+
+        permissions.stream().
+                filter(Permission::deprecated).
+                           map(perm -> "The permission " + perm.name() +
+                                       " is deprecated and has been replaced with the " +
+                                       Permission.ALL.stream().filter(p -> perm.equals(p.supersedes())).map(Permission::name).collect(Collectors.joining(", ")) +
+                                       " permissions. Please migrate to the new permission(s).").
+                           forEach(msg -> ClientWarn.instance.warn(msg));
 
         // We want to warn the client if all the specified permissions have not been granted and the client did
         // not specified ALL in the query.
-        if (granted.size() != permissions.size() && !permissions.equals(authorizer.applicablePermissions(resource)))
+        if (granted.size() != permissions.size() && !allPermissions)
         {
             // We use a TreeSet to guarantee the order for testing
             String permissionsStr = new TreeSet<>(permissions).stream()
@@ -67,6 +84,12 @@ public class GrantPermissionsStatement extends PermissionsManagementStatement
     protected String operation()
     {
         return grantMode.grantOperationName();
+    }
+
+    @Override
+    protected Set<Permission> allPermissions()
+    {
+        return authorizer().applicableNonDeprecatedPermissions(resource);
     }
 
     @Override

@@ -255,6 +255,7 @@ public class SystemKeyspacesFilteringTest extends CQLTester
         return sessionNet().getCluster().getMetadata();
     }
 
+    @SuppressWarnings("deprecation")
     @Test
     public void testQueriesOnSystemTables() throws Throwable
     {
@@ -335,8 +336,8 @@ public class SystemKeyspacesFilteringTest extends CQLTester
         useUser("one", "one");
 
         verifyUnauthorized("SELECT", "t_one", "SELECT id, val, drop_one FROM ks_one.t_one");
-        verifyUnauthorized("MODIFY", "t_one", "UPDATE ks_one.t_one SET val = ? WHERE id = ?", "foo", 1);
-        verifyUnauthorized("MODIFY", "t_one", "DELETE FROM ks_one.t_one WHERE id = ?", 1);
+        verifyUnauthorized("UPDATE", "t_one", "UPDATE ks_one.t_one SET val = ? WHERE id = ?", "foo", 1);
+        verifyUnauthorized("UPDATE", "t_one", "DELETE FROM ks_one.t_one WHERE id = ?", 1);
     }
 
     /**
@@ -366,6 +367,7 @@ public class SystemKeyspacesFilteringTest extends CQLTester
      *
      * @param allowed the allowed tables per keyspaces
      */
+    @SuppressWarnings("deprecation")
     private void checkAccess(Multimap<String, String> allowed, Multimap<String, String> allowedVirtualSchema) throws Throwable
     {
         checkKeyspacesVisibility(SchemaConstants.SYSTEM_KEYSPACE_NAME, SystemKeyspace.LEGACY_AVAILABLE_RANGES, allowed.keySet());
@@ -408,7 +410,7 @@ public class SystemKeyspacesFilteringTest extends CQLTester
      * @param keyspace the table keyspace
      * @param table the table
      */
-    private void checkUnauthorized(String keyspace, String table) throws Throwable
+    private void checkUnauthorized(String keyspace, String table)
     {
         try
         {
@@ -424,7 +426,7 @@ public class SystemKeyspacesFilteringTest extends CQLTester
     /**
      * Checks that executing the specified cause an {@code UnauthorizedException}.
      */
-    private void verifyUnauthorized(String perm, String table, String query, Object... arguments) throws Throwable
+    private void verifyUnauthorized(String perm, String table, String query, Object... arguments)
     {
         try
         {
@@ -447,7 +449,7 @@ public class SystemKeyspacesFilteringTest extends CQLTester
      * @param keyspace the table keyspace
      * @param table the table
      */
-    private void checkAuthorized(String keyspace, String table) throws Throwable
+    private void checkAuthorized(String keyspace, String table)
     {
         fetchDataFrom(keyspace, table);
     }
@@ -515,7 +517,7 @@ public class SystemKeyspacesFilteringTest extends CQLTester
      *
      * @return all the tables visible for the current user in the specified system table
      */
-    private Multimap<String, String> fetchKeyspacesAndTables(String keyspace, String table) throws Throwable
+    private Multimap<String, String> fetchKeyspacesAndTables(String keyspace, String table)
     {
         Multimap<String, String> tables = HashMultimap.create();
         for (Row row : fetchDataFrom(keyspace, table))
@@ -531,7 +533,7 @@ public class SystemKeyspacesFilteringTest extends CQLTester
      *
      * @return all the keyspaces visible for the current user in the specified system table
      */
-    private Set<String> fetchKeyspaces(String keyspace, String table) throws Throwable
+    private Set<String> fetchKeyspaces(String keyspace, String table)
     {
         // see definition of that table in SystemKeyspace, table_name there is the keyspace name
         String col = SystemKeyspace.BUILT_INDEXES.equals(table) ? "table_name" : "keyspace_name";
@@ -541,7 +543,7 @@ public class SystemKeyspacesFilteringTest extends CQLTester
                             .collect(Collectors.toSet());
     }
 
-    private Set<String> fetchRoleNames() throws Throwable
+    private Set<String> fetchRoleNames()
     {
         return StreamSupport.stream(fetchDataFrom(SchemaConstants.AUTH_KEYSPACE_NAME, AuthKeyspace.ROLES).spliterator(), false)
                             .map(row -> row.getString(0))

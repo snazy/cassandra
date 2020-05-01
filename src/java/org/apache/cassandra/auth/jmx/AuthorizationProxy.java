@@ -297,7 +297,7 @@ public class AuthorizationProxy implements InvocationHandler
                 return Permission.SELECT;
             case "setAttribute":
             case "setAttributes":
-                return Permission.MODIFY;
+                return Permission.UPDATE;
             case "invoke":
                 return Permission.EXECUTE;
             case "getInstanceOf":

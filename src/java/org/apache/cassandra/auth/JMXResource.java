@@ -40,10 +40,12 @@ public class JMXResource implements IResource
     private final String name;
 
     // permissions which may be granted on Mbeans
+    @SuppressWarnings("deprecation")
     private static final Set<Permission> JMX_PERMISSIONS = Sets.immutableEnumSet(Permission.AUTHORIZE,
                                                                                  Permission.DESCRIBE,
                                                                                  Permission.EXECUTE,
                                                                                  Permission.MODIFY,
+                                                                                 Permission.UPDATE,
                                                                                  Permission.SELECT);
 
     private JMXResource()

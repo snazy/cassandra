@@ -18,6 +18,7 @@
 package org.apache.cassandra.cql3.statements;
 
 import java.util.Set;
+import java.util.function.Consumer;
 
 import org.apache.cassandra.auth.*;
 import org.apache.cassandra.config.DatabaseDescriptor;
@@ -26,6 +27,7 @@ import org.apache.cassandra.cql3.RoleName;
 import org.apache.cassandra.exceptions.InvalidRequestException;
 import org.apache.cassandra.exceptions.RequestValidationException;
 import org.apache.cassandra.exceptions.UnauthorizedException;
+import org.apache.cassandra.service.ClientWarn;
 import org.apache.cassandra.service.QueryState;
 
 import org.apache.commons.lang3.StringUtils;
@@ -34,18 +36,18 @@ import org.apache.commons.lang3.builder.ToStringStyle;
 
 import static org.apache.cassandra.cql3.statements.RequestValidations.invalidRequest;
 
-public abstract class PermissionsManagementStatement extends AuthorizationStatement
+public abstract class PermissionsManagementStatement extends PermissionsRelatedStatement
 {
-    public final Set<Permission> permissions;
-    public IResource resource;
-    public final RoleResource grantee;
     public final GrantMode grantMode;
 
-    protected PermissionsManagementStatement(Set<Permission> permissions, IResource resource, RoleName grantee, GrantMode grantMode)
+    protected PermissionsManagementStatement(boolean allPermissions,
+                                             Set<Permission> permissions,
+                                             IResource resource,
+                                             RoleName grantee,
+                                             GrantMode grantMode,
+                                             Consumer<String> recognitionError)
     {
-        this.permissions = permissions;
-        this.resource = resource;
-        this.grantee = RoleResource.role(grantee.getName());
+        super(allPermissions, permissions, resource, grantee, recognitionError);
         this.grantMode = grantMode;
     }
 
@@ -101,15 +103,37 @@ public abstract class PermissionsManagementStatement extends AuthorizationStatem
             state.ensurePermission(Permission.AUTHORIZE, resource);
 
             // check that the user has [a single permission or all in case of ALL] on the resource or its parents.
-            for (Permission p : permissions)
+            Set<Permission> supersededGranted = Permission.setOf();
+            for (Permission p : filteredPermissions)
+            {
                 try
                 {
                     state.ensurePermission(p, resource);
+                    if (p.supersedes() != null)
+                        supersededGranted.add(p.supersedes());
                 }
                 catch (UnauthorizedException noAuthorizePermission)
                 {
                     missingPermissions.add(p);
                 }
+            }
+
+            // In case we are dealing with a statement using ALL permissions, we can safely ignore.
+            //
+            // A REVOKE ALL FROM KEYSPACE ... has 'Permissions.all()' in 'filteredPermissions' (really all permissions).
+            // However, GRANT ALL ON KEYSPACE ... only has the applicable and non-deprecated permissions.
+            //
+            // I.e. a GRANT ALL ON KEYSPACE followed by a REVOKE ALL ON KEYSPACE would fail, because the MODIFY
+            // permission hasn't been granted, but is checked during revoke. So we do a simple trick here and
+            // ignore the missing and superseded permissions for the missing-permisssions check.
+            //
+            // In other words, the 'REVOKE ALL ON KEYSPACE ks_user1 FROM roleX' statement in
+            // org.apache.cassandra.auth.GrantAndRevokeTest.testGrantRevokeAll would otherwise fail.
+            if (!missingPermissions.isEmpty() && allPermissions && !supersededGranted.isEmpty())
+            {
+                ClientWarn.instance.warn(String.format("Not considering permission %s for %s ALL statement", supersededGranted, operation()));
+                missingPermissions.removeAll(supersededGranted);
+            }
         }
         catch (UnauthorizedException noAuthorizePermission)
         {
@@ -130,7 +154,7 @@ public abstract class PermissionsManagementStatement extends AuthorizationStatem
 
             // Check that the user has grant-option on all permissions to be
             // granted for the resource
-            for (Permission p : permissions)
+            for (Permission p : filteredPermissions)
                 if (!state.hasGrantPermission(p, resource))
                 {
                     missingGrantables.add(p);

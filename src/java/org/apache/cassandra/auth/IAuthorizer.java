@@ -21,6 +21,7 @@ import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 import org.apache.cassandra.exceptions.ConfigurationException;
 import org.apache.cassandra.exceptions.RequestExecutionException;
@@ -214,4 +215,15 @@ public interface IAuthorizer
         EnumSet<Permission> filtered = EnumSet.copyOf(permissions);
         filtered.retainAll(applicablePermissions(resource));
         return filtered;
-    }}
+    }
+
+    /**
+     * Permissions that are granted to the creator of the given resource.
+     * This is (usually) the same set of permissions as {@link #applicablePermissions(IResource)} but with the
+     * {@link Permission#deprecated()} ones removed.
+     */
+    default Set<Permission> applicableNonDeprecatedPermissions(IResource resource)
+    {
+        return resource.applicablePermissions().stream().filter(p -> !p.deprecated()).collect(Collectors.toCollection(Permission::setOf));
+    }
+}

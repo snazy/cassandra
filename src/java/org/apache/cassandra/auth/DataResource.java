@@ -41,17 +41,23 @@ public class DataResource implements IResource
     }
 
     // permissions which may be granted on tables
+    @SuppressWarnings("deprecation")
     private static final Set<Permission> TABLE_LEVEL_PERMISSIONS = Sets.immutableEnumSet(Permission.ALTER,
                                                                                          Permission.DROP,
                                                                                          Permission.SELECT,
                                                                                          Permission.MODIFY,
+                                                                                         Permission.UPDATE,
+                                                                                         Permission.TRUNCATE,
                                                                                          Permission.AUTHORIZE);
     // permissions which may be granted on one or all keyspaces
+    @SuppressWarnings("deprecation")
     private static final Set<Permission> KEYSPACE_LEVEL_PERMISSIONS = Sets.immutableEnumSet(Permission.CREATE,
                                                                                             Permission.ALTER,
                                                                                             Permission.DROP,
                                                                                             Permission.SELECT,
                                                                                             Permission.MODIFY,
+                                                                                            Permission.UPDATE,
+                                                                                            Permission.TRUNCATE,
                                                                                             Permission.AUTHORIZE,
                                                                                             Permission.DESCRIBE);
     private static final String ROOT_NAME = "data";

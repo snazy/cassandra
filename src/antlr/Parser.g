@@ -146,31 +146,6 @@ options {
         operations.add(Pair.create(key, update));
     }
 
-    public Set<Permission> filterPermissions(Set<Permission> permissions, IResource resource, boolean allIsAll)
-    {
-        if (resource == null)
-            return Permission.ALL;
-
-        IAuthorizer authorizer = DatabaseDescriptor.getAuthorizer();
-
-        if (permissions.isEmpty()) // ALL PERMISSIONS
-            return allIsAll ? Permission.ALL : authorizer.applicablePermissions(resource);
-
-        Set<Permission> filtered = authorizer.filterApplicablePermissions(resource, permissions);
-
-        if (filtered.size() != permissions.size())
-        {
-            String unsupported = permissions.stream()
-                                            .filter(p -> !filtered.contains(p))
-                                            .map(Permission::name)
-                                            .collect(Collectors.joining(","));
-            addRecognitionError("Resource type " + resource.getClass().getSimpleName() +
-                                " does not support the requested permissions: " + unsupported);
-        }
-
-        return filtered;
-    }
-
     public String canonicalizeObjectName(String s, boolean enforcePattern)
     {
         // these two conditions are here because technically they are valid
@@ -1061,7 +1036,7 @@ grantPermissionsStatement returns [GrantPermissionsStatement stmt]
           resource
       K_TO
           grantee=userOrRoleName
-      { $stmt = new GrantPermissionsStatement(filterPermissions($permissionOrAll.perms, $resource.res, false), $resource.res, grantee, grantMode); }
+      { $stmt = new GrantPermissionsStatement($permissionOrAll.allPermissions, $permissionOrAll.perms, $resource.res, grantee, grantMode, this::addRecognitionError); }
     ;
 
 /**
@@ -1078,7 +1053,7 @@ revokePermissionsStatement returns [RevokePermissionsStatement stmt]
           resource
       K_FROM
           revokee=userOrRoleName
-      { $stmt = new RevokePermissionsStatement(filterPermissions($permissionOrAll.perms, $resource.res, false), $resource.res, revokee, grantMode); }
+      { $stmt = new RevokePermissionsStatement($permissionOrAll.allPermissions, $permissionOrAll.perms, $resource.res, revokee, grantMode, this::addRecognitionError); }
     ;
 
 /**
@@ -1091,7 +1066,7 @@ restrictPermissionsStatement returns [GrantPermissionsStatement stmt]
           resource
       K_TO
           grantee=userOrRoleName
-      { $stmt = new GrantPermissionsStatement(filterPermissions($permissionOrAll.perms, $resource.res, false), $resource.res, grantee, GrantMode.RESTRICT); }
+      { $stmt = new GrantPermissionsStatement($permissionOrAll.allPermissions, $permissionOrAll.perms, $resource.res, grantee, GrantMode.RESTRICT, this::addRecognitionError); }
     ;
 
 /**
@@ -1104,7 +1079,7 @@ unrestrictPermissionsStatement returns [RevokePermissionsStatement stmt]
           resource
       K_FROM
           revokee=userOrRoleName
-      { $stmt = new RevokePermissionsStatement(filterPermissions($permissionOrAll.perms, $resource.res, false), $resource.res, revokee, GrantMode.RESTRICT); }
+      { $stmt = new RevokePermissionsStatement($permissionOrAll.allPermissions, $permissionOrAll.perms, $resource.res, revokee, GrantMode.RESTRICT, this::addRecognitionError); }
     ;
 
 /**
@@ -1140,7 +1115,7 @@ listPermissionsStatement returns [ListPermissionsStatement stmt]
       ( K_ON resource { resource = $resource.res; } )?
       ( K_OF roleName[grantee] )?
       ( K_NORECURSIVE { recursive = false; } )?
-      { $stmt = new ListPermissionsStatement(filterPermissions($permissionOrAll.perms, resource, true), resource, grantee, recursive); }
+      { $stmt = new ListPermissionsStatement($permissionOrAll.allPermissions, $permissionOrAll.perms, resource, grantee, recursive, this::addRecognitionError); }
     ;
 
 permission returns [Permission perm]
@@ -1152,16 +1127,16 @@ permission returns [Permission perm]
     */
     : p=(K_CREATE | K_ALTER | K_DROP)
     { $perm = Permission.permission($p.text); }
-    | p2=(K_SELECT | K_MODIFY | K_AUTHORIZE | K_DESCRIBE | K_EXECUTE)
+    | p2=(K_SELECT | K_MODIFY | K_UPDATE | K_TRUNCATE | K_AUTHORIZE | K_DESCRIBE | K_EXECUTE)
     { $perm = Permission.permission($p2.text); }
     ;
 
-permissionOrAll returns [Set<Permission> perms]
+permissionOrAll returns [Set<Permission> perms, boolean allPermissions]
     @init {
         $perms = EnumSet.noneOf(Permission.class);
     }
-    : ( K_ALL ( K_PERMISSIONS )? )
-    |           K_PERMISSIONS
+    : ( K_ALL ( K_PERMISSIONS )? )  { $allPermissions = true; }
+    |           K_PERMISSIONS       { $allPermissions = true; }
     | (
         p=permission ( K_PERMISSION )? { if ($p.perm != null) $perms.add($p.perm); }
         (

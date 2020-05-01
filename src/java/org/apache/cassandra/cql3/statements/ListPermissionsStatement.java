@@ -18,6 +18,7 @@
 package org.apache.cassandra.cql3.statements;
 
 import java.util.*;
+import java.util.function.Consumer;
 
 import org.apache.cassandra.audit.AuditLogContext;
 import org.apache.cassandra.audit.AuditLogEntryType;
@@ -38,7 +39,7 @@ import org.apache.commons.lang3.builder.ToStringStyle;
 
 import static org.apache.cassandra.cql3.statements.RequestValidations.invalidRequest;
 
-public class ListPermissionsStatement extends AuthorizationStatement
+public class ListPermissionsStatement extends PermissionsRelatedStatement
 {
     private static final String KS = SchemaConstants.AUTH_KEYSPACE_NAME;
     private static final String CF = "permissions"; // virtual cf to use for now.
@@ -58,17 +59,23 @@ public class ListPermissionsStatement extends AuthorizationStatement
         metadata = Collections.unmodifiableList(columns);
     }
 
-    protected final Set<Permission> permissions;
-    protected IResource resource;
-    protected final boolean recursive;
-    private final RoleResource grantee;
+    private final boolean recursive;
 
-    public ListPermissionsStatement(Set<Permission> permissions, IResource resource, RoleName grantee, boolean recursive)
+    public ListPermissionsStatement(boolean allPermissions,
+                                    Set<Permission> permissions,
+                                    IResource resource,
+                                    RoleName grantee,
+                                    boolean recursive,
+                                    Consumer<String> recognitionError)
     {
-        this.permissions = permissions;
-        this.resource = resource;
+        super(allPermissions, permissions, resource, grantee, recognitionError);
         this.recursive = recursive;
-        this.grantee = grantee.hasName()? RoleResource.role(grantee.getName()) : null;
+    }
+
+    @Override
+    protected String operation()
+    {
+        return "LIST PERMISSIONS";
     }
 
     public void validate(QueryState state) throws RequestValidationException
@@ -127,6 +134,8 @@ public class ListPermissionsStatement extends AuthorizationStatement
     {
         try
         {
+            Set<Permission> permissions = filteredPermissions;
+
             return DatabaseDescriptor.getAuthorizer().list(permissions, resource, grantee);
         }
         catch (UnsupportedOperationException e)

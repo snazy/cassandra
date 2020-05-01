@@ -35,7 +35,7 @@ import org.apache.cassandra.db.marshal.Int32Type;
 
 import static java.util.Collections.emptyMap;
 import static org.apache.cassandra.auth.Permission.EXECUTE;
-import static org.apache.cassandra.auth.Permission.MODIFY;
+import static org.apache.cassandra.auth.Permission.UPDATE;
 import static org.apache.cassandra.auth.Permission.SELECT;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
@@ -84,8 +84,8 @@ public class AuthCacheInvalidationTest extends CQLTester
         execute("CREATE TABLE " + ks + '.' + tab + " (id int PRIMARY KEY)");
         execute("CREATE TABLE " + ks + '.' + tab2 + " (id int PRIMARY KEY)");
 
-        executeNet("GRANT SELECT, MODIFY ON TABLE " + ks + '.' + tab + " TO " + role1.getRoleName());
-        executeNet("GRANT MODIFY ON KEYSPACE " + ks + " TO " + role2.getRoleName());
+        executeNet("GRANT SELECT, UPDATE ON TABLE " + ks + '.' + tab + " TO " + role1.getRoleName());
+        executeNet("GRANT UPDATE ON KEYSPACE " + ks + " TO " + role2.getRoleName());
 
         DatabaseDescriptor.getAuthManager().invalidateCaches();
     }
@@ -106,8 +106,8 @@ public class AuthCacheInvalidationTest extends CQLTester
         assertRolesCacheContains(role2, setOf());
 
         assertPermissionsCacheContains(user1, emptyMap());
-        assertPermissionsCacheContains(role1, permissionPerResource(DataResource.table(ks, tab), SELECT, MODIFY));
-        assertPermissionsCacheContains(role2, permissionPerResource(DataResource.keyspace(ks), MODIFY));
+        assertPermissionsCacheContains(role1, permissionPerResource(DataResource.table(ks, tab), SELECT, UPDATE));
+        assertPermissionsCacheContains(role2, permissionPerResource(DataResource.keyspace(ks), UPDATE));
 
         // Allow the user to execute SELECT on tab2
         useSuperUser();
@@ -119,7 +119,7 @@ public class AuthCacheInvalidationTest extends CQLTester
         assertRolesCacheDoesNotContains(role2);
 
         assertPermissionsCacheContains(user1, emptyMap());
-        assertPermissionsCacheContains(role1, permissionPerResource(DataResource.table(ks, tab), SELECT, MODIFY));
+        assertPermissionsCacheContains(role1, permissionPerResource(DataResource.table(ks, tab), SELECT, UPDATE));
         assertPermissionsCacheDoesNotContains(role2);
 
         // Checks that the user is now allowed to execute SELECT queries on tab2
@@ -130,7 +130,7 @@ public class AuthCacheInvalidationTest extends CQLTester
         // Checks that role2 data been re-populated by the query.
         assertRolesCacheContains(role2, setOf());
 
-        assertPermissionsCacheContains(role2, permissionPerResource(DataResource.keyspace(ks), SELECT, MODIFY));
+        assertPermissionsCacheContains(role2, permissionPerResource(DataResource.keyspace(ks), SELECT, UPDATE));
     }
 
     @Test
@@ -147,8 +147,8 @@ public class AuthCacheInvalidationTest extends CQLTester
         assertRolesCacheContains(role2, setOf());
 
         assertPermissionsCacheContains(user1, emptyMap());
-        assertPermissionsCacheContains(role1, permissionPerResource(DataResource.table(ks, tab), SELECT, MODIFY));
-        assertPermissionsCacheContains(role2, permissionPerResource(DataResource.keyspace(ks), MODIFY));
+        assertPermissionsCacheContains(role1, permissionPerResource(DataResource.table(ks, tab), SELECT, UPDATE));
+        assertPermissionsCacheContains(role2, permissionPerResource(DataResource.keyspace(ks), UPDATE));
 
         // Revoke SELECT on tab
         useSuperUser();
@@ -162,7 +162,7 @@ public class AuthCacheInvalidationTest extends CQLTester
 
         assertPermissionsCacheContains(user1, emptyMap());
         assertPermissionsCacheDoesNotContains(role1);
-        assertPermissionsCacheContains(role2, permissionPerResource(DataResource.keyspace(ks), MODIFY));
+        assertPermissionsCacheContains(role2, permissionPerResource(DataResource.keyspace(ks), UPDATE));
 
         // Checks that the user has no SELECT permissions on tab
         useUser(user1.getRoleName(), userPw);
@@ -175,8 +175,8 @@ public class AuthCacheInvalidationTest extends CQLTester
         assertRolesCacheContains(role2, setOf());
 
         assertPermissionsCacheContains(user1, emptyMap());
-        assertPermissionsCacheContains(role1, permissionPerResource(DataResource.table(ks, tab), MODIFY));
-        assertPermissionsCacheContains(role2, permissionPerResource(DataResource.keyspace(ks), MODIFY));
+        assertPermissionsCacheContains(role1, permissionPerResource(DataResource.table(ks, tab), UPDATE));
+        assertPermissionsCacheContains(role2, permissionPerResource(DataResource.keyspace(ks), UPDATE));
 
         // Revoke SELECT on tab
         useSuperUser();
@@ -190,7 +190,7 @@ public class AuthCacheInvalidationTest extends CQLTester
 
         assertPermissionsCacheContains(user1, emptyMap());
         assertPermissionsCacheDoesNotContains(role1);
-        assertPermissionsCacheContains(role2, permissionPerResource(DataResource.keyspace(ks), MODIFY));
+        assertPermissionsCacheContains(role2, permissionPerResource(DataResource.keyspace(ks), UPDATE));
     }
 
     @Test
@@ -208,8 +208,8 @@ public class AuthCacheInvalidationTest extends CQLTester
         assertRolesCacheContains(role2, setOf());
 
         assertPermissionsCacheContains(user1, emptyMap());
-        assertPermissionsCacheContains(role1, permissionPerResource(DataResource.table(ks, tab), SELECT, MODIFY));
-        assertPermissionsCacheContains(role2, permissionPerResource(DataResource.keyspace(ks), MODIFY));
+        assertPermissionsCacheContains(role1, permissionPerResource(DataResource.table(ks, tab), SELECT, UPDATE));
+        assertPermissionsCacheContains(role2, permissionPerResource(DataResource.keyspace(ks), UPDATE));
 
         // Create new ROLE with SELECT permission on tab2 and grant it to the user
         useSuperUser();
@@ -225,8 +225,8 @@ public class AuthCacheInvalidationTest extends CQLTester
         assertRolesCacheDoesNotContains(role3);
 
         assertPermissionsCacheDoesNotContains(user1);
-        assertPermissionsCacheContains(role1, permissionPerResource(DataResource.table(ks, tab), SELECT, MODIFY));
-        assertPermissionsCacheContains(role2, permissionPerResource(DataResource.keyspace(ks), MODIFY));
+        assertPermissionsCacheContains(role1, permissionPerResource(DataResource.table(ks, tab), SELECT, UPDATE));
+        assertPermissionsCacheContains(role2, permissionPerResource(DataResource.keyspace(ks), UPDATE));
         assertPermissionsCacheDoesNotContains(role3);
 
         // Checks the the user is now allowed to perform the query
@@ -240,8 +240,8 @@ public class AuthCacheInvalidationTest extends CQLTester
         assertRolesCacheContains(role3, setOf());
 
         assertPermissionsCacheContains(user1, emptyMap());
-        assertPermissionsCacheContains(role1, permissionPerResource(DataResource.table(ks, tab), SELECT, MODIFY));
-        assertPermissionsCacheContains(role2, permissionPerResource(DataResource.keyspace(ks), MODIFY));
+        assertPermissionsCacheContains(role1, permissionPerResource(DataResource.table(ks, tab), SELECT, UPDATE));
+        assertPermissionsCacheContains(role2, permissionPerResource(DataResource.keyspace(ks), UPDATE));
         assertPermissionsCacheContains(role3, permissionPerResource(DataResource.keyspace(ks), SELECT));
 
         // Drop the role3
@@ -255,8 +255,8 @@ public class AuthCacheInvalidationTest extends CQLTester
         assertRolesCacheDoesNotContains(role3);
 
         assertPermissionsCacheDoesNotContains(user1);
-        assertPermissionsCacheContains(role1, permissionPerResource(DataResource.table(ks, tab), SELECT, MODIFY));
-        assertPermissionsCacheContains(role2, permissionPerResource(DataResource.keyspace(ks), MODIFY));
+        assertPermissionsCacheContains(role1, permissionPerResource(DataResource.table(ks, tab), SELECT, UPDATE));
+        assertPermissionsCacheContains(role2, permissionPerResource(DataResource.keyspace(ks), UPDATE));
         assertPermissionsCacheDoesNotContains(role3);
 
         // Re-create role3 without granting it to the user
@@ -276,8 +276,8 @@ public class AuthCacheInvalidationTest extends CQLTester
         assertRolesCacheDoesNotContains(role3);
 
         assertPermissionsCacheContains(user1, emptyMap());
-        assertPermissionsCacheContains(role1, permissionPerResource(DataResource.table(ks, tab), SELECT, MODIFY));
-        assertPermissionsCacheContains(role2, permissionPerResource(DataResource.keyspace(ks), MODIFY));
+        assertPermissionsCacheContains(role1, permissionPerResource(DataResource.table(ks, tab), SELECT, UPDATE));
+        assertPermissionsCacheContains(role2, permissionPerResource(DataResource.keyspace(ks), UPDATE));
         assertPermissionsCacheDoesNotContains(role3);
     }
 
@@ -296,8 +296,8 @@ public class AuthCacheInvalidationTest extends CQLTester
         assertRolesCacheContains(role2, setOf());
 
         assertPermissionsCacheContains(user1, emptyMap());
-        assertPermissionsCacheContains(role1, permissionPerResource(DataResource.table(ks, tab), SELECT, MODIFY));
-        assertPermissionsCacheContains(role2, permissionPerResource(DataResource.keyspace(ks), MODIFY));
+        assertPermissionsCacheContains(role1, permissionPerResource(DataResource.table(ks, tab), SELECT, UPDATE));
+        assertPermissionsCacheContains(role2, permissionPerResource(DataResource.keyspace(ks), UPDATE));
 
         // Create new ROLE with SELECT permission on tab2 and grant it to the user
         useSuperUser();
@@ -313,8 +313,8 @@ public class AuthCacheInvalidationTest extends CQLTester
         assertRolesCacheDoesNotContains(role3);
 
         assertPermissionsCacheDoesNotContains(user1);
-        assertPermissionsCacheContains(role1, permissionPerResource(DataResource.table(ks, tab), SELECT, MODIFY));
-        assertPermissionsCacheContains(role2, permissionPerResource(DataResource.keyspace(ks), MODIFY));
+        assertPermissionsCacheContains(role1, permissionPerResource(DataResource.table(ks, tab), SELECT, UPDATE));
+        assertPermissionsCacheContains(role2, permissionPerResource(DataResource.keyspace(ks), UPDATE));
         assertPermissionsCacheDoesNotContains(role3);
 
         // Checks the the user is now allowed to perform the query
@@ -328,8 +328,8 @@ public class AuthCacheInvalidationTest extends CQLTester
         assertRolesCacheContains(role3, setOf());
 
         assertPermissionsCacheContains(user1, emptyMap());
-        assertPermissionsCacheContains(role1, permissionPerResource(DataResource.table(ks, tab), SELECT, MODIFY));
-        assertPermissionsCacheContains(role2, permissionPerResource(DataResource.keyspace(ks), MODIFY));
+        assertPermissionsCacheContains(role1, permissionPerResource(DataResource.table(ks, tab), SELECT, UPDATE));
+        assertPermissionsCacheContains(role2, permissionPerResource(DataResource.keyspace(ks), UPDATE));
         assertPermissionsCacheContains(role3, permissionPerResource(DataResource.keyspace(ks), SELECT));
 
         // Revoke the role3
@@ -343,8 +343,8 @@ public class AuthCacheInvalidationTest extends CQLTester
         assertRolesCacheContains(role3, setOf());
 
         assertPermissionsCacheDoesNotContains(user1);
-        assertPermissionsCacheContains(role1, permissionPerResource(DataResource.table(ks, tab), SELECT, MODIFY));
-        assertPermissionsCacheContains(role2, permissionPerResource(DataResource.keyspace(ks), MODIFY));
+        assertPermissionsCacheContains(role1, permissionPerResource(DataResource.table(ks, tab), SELECT, UPDATE));
+        assertPermissionsCacheContains(role2, permissionPerResource(DataResource.keyspace(ks), UPDATE));
         assertPermissionsCacheContains(role3, permissionPerResource(DataResource.keyspace(ks), SELECT));
 
         // Checks that the user has no SELECT permissions on tab2
@@ -369,8 +369,8 @@ public class AuthCacheInvalidationTest extends CQLTester
         assertRolesCacheContains(role2, setOf());
 
         assertPermissionsCacheContains(user1, emptyMap());
-        assertPermissionsCacheContains(role1, permissionPerResource(DataResource.table(ks, tab), SELECT, MODIFY));
-        assertPermissionsCacheContains(role2, permissionPerResource(DataResource.keyspace(ks), MODIFY));
+        assertPermissionsCacheContains(role1, permissionPerResource(DataResource.table(ks, tab), SELECT, UPDATE));
+        assertPermissionsCacheContains(role2, permissionPerResource(DataResource.keyspace(ks), UPDATE));
 
         // Create new ROLE with SELECT permission on tab2 and grant it to the user
         useSuperUser();
@@ -386,7 +386,7 @@ public class AuthCacheInvalidationTest extends CQLTester
         assertRolesCacheDoesNotContains(role3);
 
         assertPermissionsCacheContains(user1, emptyMap());
-        assertPermissionsCacheContains(role1, permissionPerResource(DataResource.table(ks, tab), SELECT, MODIFY));
+        assertPermissionsCacheContains(role1, permissionPerResource(DataResource.table(ks, tab), SELECT, UPDATE));
         assertPermissionsCacheDoesNotContains(role2);
         assertPermissionsCacheDoesNotContains(role3);
 
@@ -401,8 +401,8 @@ public class AuthCacheInvalidationTest extends CQLTester
         assertRolesCacheContains(role3, setOf());
 
         assertPermissionsCacheContains(user1, emptyMap());
-        assertPermissionsCacheContains(role1, permissionPerResource(DataResource.table(ks, tab), SELECT, MODIFY));
-        assertPermissionsCacheContains(role2, permissionPerResource(DataResource.keyspace(ks), MODIFY));
+        assertPermissionsCacheContains(role1, permissionPerResource(DataResource.table(ks, tab), SELECT, UPDATE));
+        assertPermissionsCacheContains(role2, permissionPerResource(DataResource.keyspace(ks), UPDATE));
         assertPermissionsCacheContains(role3, permissionPerResource(DataResource.keyspace(ks), SELECT));
 
         // Drop the role3
@@ -416,7 +416,7 @@ public class AuthCacheInvalidationTest extends CQLTester
         assertRolesCacheDoesNotContains(role3);
 
         assertPermissionsCacheContains(user1, emptyMap());
-        assertPermissionsCacheContains(role1, permissionPerResource(DataResource.table(ks, tab), SELECT, MODIFY));
+        assertPermissionsCacheContains(role1, permissionPerResource(DataResource.table(ks, tab), SELECT, UPDATE));
         assertPermissionsCacheDoesNotContains(role2);
         assertPermissionsCacheDoesNotContains(role3);
 
@@ -437,8 +437,8 @@ public class AuthCacheInvalidationTest extends CQLTester
         assertRolesCacheDoesNotContains(role3);
 
         assertPermissionsCacheContains(user1, emptyMap());
-        assertPermissionsCacheContains(role1, permissionPerResource(DataResource.table(ks, tab), SELECT, MODIFY));
-        assertPermissionsCacheContains(role2, permissionPerResource(DataResource.keyspace(ks), MODIFY));
+        assertPermissionsCacheContains(role1, permissionPerResource(DataResource.table(ks, tab), SELECT, UPDATE));
+        assertPermissionsCacheContains(role2, permissionPerResource(DataResource.keyspace(ks), UPDATE));
         assertPermissionsCacheDoesNotContains(role3);
     }
 
@@ -453,8 +453,8 @@ public class AuthCacheInvalidationTest extends CQLTester
 
         // permissions are checked against all roles
         assertPermissionsCacheContains(user1, emptyMap());
-        assertPermissionsCacheContains(role1, permissionPerResource(DataResource.table(ks, tab), SELECT, MODIFY));
-        assertPermissionsCacheContains(role2, permissionPerResource(DataResource.keyspace(ks), MODIFY));
+        assertPermissionsCacheContains(role1, permissionPerResource(DataResource.table(ks, tab), SELECT, UPDATE));
+        assertPermissionsCacheContains(role2, permissionPerResource(DataResource.keyspace(ks), UPDATE));
     }
 
     private void populateCaches() throws Throwable
@@ -481,7 +481,7 @@ public class AuthCacheInvalidationTest extends CQLTester
 
         assertPermissionsCacheContains(user1, emptyMap());
         assertPermissionsCacheDoesNotContains(role1);
-        assertPermissionsCacheContains(role2, permissionPerResource(DataResource.keyspace(ks), MODIFY));
+        assertPermissionsCacheContains(role2, permissionPerResource(DataResource.keyspace(ks), UPDATE));
 
         // Re-create the dropped table
         execute("CREATE TABLE " + ks + '.' + tab + " (id int PRIMARY KEY)");
@@ -499,7 +499,7 @@ public class AuthCacheInvalidationTest extends CQLTester
 
         assertPermissionsCacheContains(user1, emptyMap());
         assertPermissionsCacheContains(role1, emptyMap());
-        assertPermissionsCacheContains(role2, permissionPerResource(DataResource.keyspace(ks), MODIFY));
+        assertPermissionsCacheContains(role2, permissionPerResource(DataResource.keyspace(ks), UPDATE));
     }
 
     @Test
@@ -560,11 +560,11 @@ public class AuthCacheInvalidationTest extends CQLTester
         IResource aggregateResource = FunctionResource.function(ks, aggr, Arrays.asList(Int32Type.instance));
 
         Map<IResource, PermissionSets> role1Permissions = new HashMap<>();
-        role1Permissions.put(DataResource.table(ks, tab), permissionSet(SELECT, MODIFY));
+        role1Permissions.put(DataResource.table(ks, tab), permissionSet(SELECT, UPDATE));
         role1Permissions.put(aggregateResource, permissionSet(EXECUTE));
 
         Map<IResource, PermissionSets> role2Permissions = new HashMap<>();
-        role2Permissions.put(DataResource.keyspace(ks), permissionSet(MODIFY));
+        role2Permissions.put(DataResource.keyspace(ks), permissionSet(UPDATE));
         role2Permissions.put(functionResource, permissionSet(EXECUTE));
 
         populateCaches();

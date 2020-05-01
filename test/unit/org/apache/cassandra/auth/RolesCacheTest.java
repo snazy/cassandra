@@ -38,8 +38,8 @@ import static org.apache.cassandra.auth.RoleResource.role;
 import static org.apache.cassandra.auth.Permission.ALTER;
 import static org.apache.cassandra.auth.Permission.CREATE;
 import static org.apache.cassandra.auth.Permission.DROP;
-import static org.apache.cassandra.auth.Permission.MODIFY;
 import static org.apache.cassandra.auth.Permission.SELECT;
+import static org.apache.cassandra.auth.Permission.UPDATE;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
@@ -231,14 +231,14 @@ public class RolesCacheTest
         // also verify that permission checks work with "crazy" role hierarchies
 
         Map<RoleResource, Map<IResource, PermissionSets>> permissions = new HashMap<>();
-        addPermissions(permissions, "role_f", DataResource.keyspace("ks_1"), SELECT, MODIFY);
+        addPermissions(permissions, "role_f", DataResource.keyspace("ks_1"), SELECT, UPDATE);
         addPermissions(permissions, "role_e", DataResource.keyspace("ks_2"), ALTER);
         addPermissions(permissions, "role_8", DataResource.keyspace("ks_3"), DROP);
         addPermissions(permissions, "user_5", DataResource.keyspace("ks_4"), CREATE);
         UserRolesAndPermissions urp = UserRolesAndPermissions.newNormalUserRolesAndPermissions("user_5", roles.keySet(), DCPermissions.all(), permissions);
 
         assertTrue(urp.hasPermission(SELECT, DataResource.keyspace("ks_1")));
-        assertTrue(urp.hasPermission(MODIFY, DataResource.keyspace("ks_1")));
+        assertTrue(urp.hasPermission(UPDATE, DataResource.keyspace("ks_1")));
         assertFalse(urp.hasPermission(ALTER, DataResource.keyspace("ks_1")));
         assertTrue(urp.hasPermission(ALTER, DataResource.keyspace("ks_2")));
         assertFalse(urp.hasPermission(DROP, DataResource.keyspace("ks_2")));

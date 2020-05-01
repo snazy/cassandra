@@ -19,6 +19,7 @@ package org.apache.cassandra.cql3.statements;
 
 import java.util.Set;
 import java.util.TreeSet;
+import java.util.function.Consumer;
 import java.util.stream.Collectors;
 
 import org.apache.cassandra.audit.AuditLogContext;
@@ -39,19 +40,25 @@ import org.apache.commons.lang3.builder.ToStringStyle;
 
 public class RevokePermissionsStatement extends PermissionsManagementStatement
 {
-    public RevokePermissionsStatement(Set<Permission> permissions, IResource resource, RoleName grantee, GrantMode grantMode)
+    public RevokePermissionsStatement(boolean allPermissions,
+                                      Set<Permission> permissions,
+                                      IResource resource,
+                                      RoleName grantee,
+                                      GrantMode grantMode,
+                                      Consumer<String> recognitionError)
     {
-        super(permissions, resource, grantee, grantMode);
+        super(allPermissions, permissions, resource, grantee, grantMode, recognitionError);
     }
 
     public ResultMessage execute(QueryState state) throws RequestValidationException, RequestExecutionException
     {
-        IAuthorizer authorizer = DatabaseDescriptor.getAuthorizer();
-        Set<Permission> revoked = authorizer.revoke(state.getUser(), permissions, resource, grantee, grantMode);
+        Set<Permission> permissions = filteredPermissions;
+
+        Set<Permission> revoked = authorizer().revoke(state.getUser(), permissions, resource, grantee, grantMode);
 
         // We want to warn the client if all the specified permissions have not been revoked and the client did
         // not specified ALL in the query.
-        if (revoked.size() != permissions.size() && permissions.size() != authorizer.filterApplicablePermissions(resource, Permission.ALL).size())
+        if (revoked.size() != permissions.size() && !allPermissions)
         {
             // We use a TreeSet to guarantee the order for testing
             String permissionsStr = new TreeSet<>(permissions).stream()
@@ -71,6 +78,12 @@ public class RevokePermissionsStatement extends PermissionsManagementStatement
     protected String operation()
     {
         return grantMode.revokeOperationName();
+    }
+
+    @Override
+    protected Set<Permission> allPermissions()
+    {
+        return authorizer().applicablePermissions(resource);
     }
 
     @Override
