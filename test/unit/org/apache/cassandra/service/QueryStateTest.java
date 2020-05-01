@@ -151,10 +151,10 @@ public class QueryStateTest
         {
             Role r = new Role(role.getRoleName(),
                               ImmutableSet.of(),
-                              options.getSuperuser().or(false),
-                              options.getLogin().or(false),
+                              options.getSuperuser().orElse(false),
+                              options.getLogin().orElse(false),
                               ImmutableMap.of(),
-                              options.getPassword().or(""));
+                              options.getHashedPassword().orElse(options.getPassword().orElse("")));
             roles.put(role, r);
         }
 

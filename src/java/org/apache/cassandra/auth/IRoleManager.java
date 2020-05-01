@@ -43,7 +43,7 @@ public interface IRoleManager
      */
     enum Option
     {
-        SUPERUSER, PASSWORD, LOGIN, OPTIONS
+        SUPERUSER, PASSWORD, LOGIN, OPTIONS, HASHED_PASSWORD
     }
 
     default <T extends IRoleManager> T implementation()
