@@ -97,10 +97,13 @@ public class ListPermissionsStatement extends PermissionsRelatedStatement
         if ((grantee != null) && !DatabaseDescriptor.getRoleManager().isExistingRole(grantee))
             throw new InvalidRequestException(String.format("%s doesn't exist", grantee));
 
-        // If the user requesting 'LIST PERMISSIONS' is not a superuser OR their username doesn't match 'grantee', we
-        // throw UnauthorizedException. So only a superuser can view everybody's permissions. Regular users are only
-        // allowed to see their own permissions.
-        if (!(state.isSuper() || state.isSystem()) && !state.hasRole(grantee))
+        // If the user requesting 'LIST PERMISSIONS' is not a superuser OR their username doesn't match 'grantee' OR
+        // has no DESCRIBE permission on the role or all roles, we throw UnauthorizedException.
+        // So only a superuser, system user can view everybody's permissions. Regular users are only
+        // allowed to see their own permissions and those of roles for which they have DESCRIBE permission.
+        if (!(state.isSuper() || state.isSystem())
+            && !state.hasRole(grantee)
+            && !state.hasPermission(Permission.DESCRIBE, grantee != null ? grantee : RoleResource.root()))
             throw new UnauthorizedException(String.format("You are not authorized to view %s's permissions",
                                                           grantee == null ? "everyone" : grantee.getRoleName()));
    }

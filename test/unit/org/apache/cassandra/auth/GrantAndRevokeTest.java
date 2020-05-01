@@ -204,7 +204,7 @@ public class GrantAndRevokeTest extends CQLTester
 
         executeNet(String.format("GRANT ALL ON ROLE %s TO %s", role, user));
         assertListPermissionsPermutations(String.format("ON ROLE %s", role),
-                                          user, roleRes, ALTER, DROP, AUTHORIZE);
+                                          user, roleRes, ALTER, DROP, AUTHORIZE, DESCRIBE);
 
         executeNet(String.format("REVOKE ALL ON ROLE %s FROM %s", role, user));
         assertListPermissionsPermutations(String.format("ON ROLE %s", role),

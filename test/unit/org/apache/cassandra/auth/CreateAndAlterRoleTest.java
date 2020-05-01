@@ -36,6 +36,49 @@ public class CreateAndAlterRoleTest extends CQLTester
     }
 
     @Test
+    public void nestedCreateRole() throws Throwable
+    {
+        String mainRole = "nested_main";
+        String subRole = "nested_sub";
+        String otherRole = "nested_other";
+        String nopeRole = "nested_nope";
+        String password = "secret";
+
+        useSuperUser();
+
+        executeNet(String.format("CREATE ROLE %s WITH login=true AND password='%s'", mainRole, password));
+        executeNet(String.format("GRANT CREATE ON ALL ROLES TO %s", mainRole));
+        executeNet(String.format("CREATE ROLE %s WITH login=true AND password='%s'", otherRole, password));
+
+        executeNet(String.format("LIST ALL PERMISSIONS OF %s", mainRole));
+        executeNet(String.format("LIST ALL PERMISSIONS OF %s", otherRole));
+
+        useUser(mainRole, password);
+
+        executeNet(String.format("CREATE ROLE %s WITH login = true AND password='%s'", subRole, password));
+
+        executeNet(String.format("LIST ALL PERMISSIONS OF %s", mainRole));
+        executeNet(String.format("LIST ALL PERMISSIONS OF %s", subRole));
+        assertInvalidMessageNet(String.format("You are not authorized to view %s's permissions", otherRole),
+                                String.format("LIST ALL PERMISSIONS OF %s", otherRole));
+
+        useUser(subRole, password);
+
+        assertInvalidMessageNet(String.format("You are not authorized to view %s's permissions", mainRole),
+                                String.format("LIST ALL PERMISSIONS OF %s", mainRole));
+        executeNet(String.format("LIST ALL PERMISSIONS OF %s", subRole));
+        assertInvalidMessageNet(String.format("You are not authorized to view %s's permissions", otherRole),
+                                String.format("LIST ALL PERMISSIONS OF %s", otherRole));
+        assertInvalidMessageNet(String.format("User %s does not have sufficient privileges to perform the requested operation", subRole),
+                                String.format("CREATE ROLE %s WITH login=true AND password='%s'", nopeRole, password));
+
+        useUser(mainRole, password);
+
+        executeNet(String.format("ALTER ROLE %s WITH login = false", subRole));
+        executeNet(String.format("DROP ROLE %s", subRole));
+    }
+
+    @Test
     public void createAlterRoleWithHashedPassword() throws Throwable
     {
         String username = "hashed_pw_role";
