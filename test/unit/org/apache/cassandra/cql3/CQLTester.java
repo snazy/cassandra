@@ -103,8 +103,8 @@ public abstract class CQLTester
     public static final String RACK1 = "rack1";
 
     private static org.apache.cassandra.transport.Server server;
-    protected static final int nativePort;
-    protected static final InetAddress nativeAddr;
+    protected static int nativePort;
+    protected static InetAddress nativeAddr;
     protected static final Set<InetAddressAndPort> remoteAddrs = new HashSet<>();
     private static final Map<ProtocolVersion, Cluster> clusters = new HashMap<>();
     protected static final Map<ProtocolVersion, Session> sessions = new HashMap<>();
@@ -150,8 +150,6 @@ public abstract class CQLTester
             }
         }
 
-        nativeAddr = InetAddress.getLoopbackAddress();
-
         // Register an EndpointSnitch which returns fixed values for test.
         DatabaseDescriptor.setEndpointSnitch(new AbstractEndpointSnitch()
         {
@@ -163,19 +161,6 @@ public abstract class CQLTester
             }
             @Override public int compareEndpoints(InetAddressAndPort target, Replica a1, Replica a2) { return 0; }
         });
-
-        try
-        {
-            try (ServerSocket serverSocket = new ServerSocket(0))
-            {
-                nativePort = serverSocket.getLocalPort();
-            }
-            Thread.sleep(250);
-        }
-        catch (Exception e)
-        {
-            throw new RuntimeException(e);
-        }
     }
 
     public static ResultMessage lastSchemaChangeResult;
@@ -202,6 +187,11 @@ public abstract class CQLTester
             return;
 
         DatabaseDescriptor.daemonInitialization();
+
+        // Use native-transport address and port from OffsetAwareConfigurationLoader
+        nativeAddr = DatabaseDescriptor.getRpcAddress();
+        nativePort = DatabaseDescriptor.getNativeTransportPort();
+
         DatabaseDescriptor.setTransientReplicationEnabledUnsafe(true);
         CommitLog.instance.start();
 
