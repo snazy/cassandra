@@ -12,7 +12,12 @@
                                    based on memory & CPU.
     -PwithSigning              --> Sign generated archives
 
-  Calculation of the test parallel forks:
+  Gradle Enterprise Distributed Testing properties:
+    -PwithDistribution : presence of this property enables Gradle Enterprise Distributed testing
+    -PnoLocalExecutors : presence of this property disables running tests locally
+    -PremoteExecutors=N : number of test-agents for distributed testing (defaults to 20)"""
+
+  Calculation of the test parallel forks (local executors):
   - If the test task explicitly demands single execution (e.g. testDistribution task via noParallelTests=true),
     use exactly one fork.
   - If the test.runners property is specified, use that value
