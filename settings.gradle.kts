@@ -24,6 +24,28 @@ val baseVersion = file("build.xml").readLines()
         .findFirst()
         .get()
 
+pluginManagement {
+    repositories {
+        gradlePluginPortal()
+//        maven { url = uri("https://repo.gradle.org/gradle/libs-releases") }
+//        maven { url = uri("https://repo.gradle.org/gradle/enterprise-libs-release-candidates-local") }
+    }
+    // No plugin marker for plugin RC - can be removed when going to a final version
+//    resolutionStrategy {
+//        eachPlugin {
+//            if (requested.id.id == "com.gradle.enterprise") {
+//                useModule("com.gradle:gradle-enterprise-gradle-plugin:${requested.version}")
+//            }
+//            if (requested.id.id == "com.gradle.enterprise.test-distribution") {
+//                useModule("com.gradle.enterprise.test-distribution:com.gradle.enterprise.test-distribution.gradle.plugin:${requested.version}")
+//            }
+//        }
+//    }
+
+    plugins.id("com.gradle.enterprise.test-distribution") version "1.0.1"
+    plugins.id("org.jetbrains.gradle.plugin.idea-ext") version "0.7"
+}
+
 plugins {
     id("com.gradle.enterprise") version "3.3.1"
 }

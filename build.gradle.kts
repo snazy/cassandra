@@ -38,10 +38,7 @@
  * to let the Gradle build generate the poms.
  */
 
-import org.apache.cassandra.gradle.commonCassandraPom
-import org.apache.cassandra.gradle.configureEach
-import org.apache.cassandra.gradle.generateParentPom
-import org.apache.cassandra.gradle.withJUnitPlatform
+import org.apache.cassandra.gradle.*
 import org.apache.cassandra.gradle.antlr.CAntlrTask
 import org.apache.cassandra.gradle.jflex.JFlexTask
 import org.apache.cassandra.gradle.testrunner.TestRunnerTaskExtension
@@ -58,7 +55,8 @@ plugins {
     id("org.nosphere.apache.rat") version "0.6.0"
     idea
     eclipse
-    id("org.jetbrains.gradle.plugin.idea-ext") version "0.7"
+    id("org.jetbrains.gradle.plugin.idea-ext")
+    id("com.gradle.enterprise.test-distribution")
     // plugins in buildSrc/
     id("org.apache.cassandra.testextensions")
     id("org.apache.cassandra.aggregateTestFailures")
@@ -476,6 +474,12 @@ tasks.configureEach<Test>("test", "testCdc", "testCompressionLZ4", "testCompress
 
 tasks.configureEach<Test>("testUnit", "test", "testLong", "testBurn", "testMemory", "testDistributed", "testFqltool", "testStress", "testCdc", "testCompressionLZ4", "testCompressionZst") {
     filter.isFailOnNoMatchingTests = false
+    distribution {
+        enabled.set(project.hasProperty("withDistribution"))
+        if (project.hasProperty("noLocalExecutors"))
+            maxLocalExecutors.set(0)
+        maxRemoteExecutors.set(project.property("remoteExecutors", "20").toString().toInt())
+    }
 }
 
 tasks.register<DefaultTask>("testAll") {

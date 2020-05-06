@@ -18,11 +18,14 @@
 
 package org.apache.cassandra.gradle.testsummary
 
+import com.gradle.enterprise.gradleplugin.testdistribution.TestDistributionExtension
 import org.gradle.api.Project
 import org.gradle.api.tasks.testing.Test
 import org.gradle.api.tasks.testing.TestDescriptor
 import org.gradle.api.tasks.testing.TestListener
 import org.gradle.api.tasks.testing.TestResult
+import org.gradle.kotlin.dsl.findByType
+import org.gradle.kotlin.dsl.getByType
 import org.gradle.kotlin.dsl.withType
 import java.time.Duration
 import java.util.*
@@ -54,11 +57,18 @@ open class TestSummaryExtension(val project: Project) {
         }
 
         private fun handleResult(test: Test, suite: TestDescriptor, result: TestResult) {
+            val testDistribution = test.extensions.findByType(TestDistributionExtension::class)
+
+            val parallelism = if (testDistribution != null && testDistribution.enabled.getOrElse(false))
+                "local-forks: ${testDistribution.maxLocalExecutors.getOrElse(test.maxParallelForks)} - remote-test-agents: ${testDistribution.maxRemoteExecutors.getOrElse(0)}"
+            else
+                "maxParallelForks: ${test.maxParallelForks}"
+
             val summary = """
                     |  ${suite.name}
                     |  Result: ${result.resultType}  (${result.testCount} tests, ${result.successfulTestCount} successes, ${result.failedTestCount} failures, ${result.skippedTestCount} skipped, ${result.exceptions.size} exceptions)
                     |  Duration: ${Duration.ofMillis(result.endTime - result.startTime).toString().substring(2).toLowerCase(Locale.ENGLISH)}
-                    |  maxParallelForks: ${test.maxParallelForks}
+                    |  $parallelism
                 """.trimIndent()
 
             test.logger.lifecycle("${"-".repeat(120)}\n$summary\n${"-".repeat(120)}")

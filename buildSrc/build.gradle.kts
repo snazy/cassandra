@@ -46,10 +46,12 @@ repositories {
     } else {
         mavenCentral()
     }
+    gradlePluginPortal()
 }
 
 dependencies {
     implementation("de.jflex:jflex:1.7.0")
+    implementation("com.gradle.enterprise.test-distribution:com.gradle.enterprise.test-distribution.gradle.plugin:1.0.1")
 }
 
 gradlePlugin {
