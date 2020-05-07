@@ -31,7 +31,6 @@ import org.junit.Test;
 
 import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.db.marshal.Int32Type;
-import org.apache.cassandra.distributed.impl.IsolatedExecutor;
 import org.apache.cassandra.service.StorageService;
 import org.apache.cassandra.utils.ByteBufferUtil;
 
@@ -609,7 +608,7 @@ public class RangeTombstoneListTest
         }
     }
 
-    private void assertHasException(IsolatedExecutor.ThrowingRunnable block, Consumer<Throwable> verifier)
+    private void assertHasException(ThrowingRunnable block, Consumer<Throwable> verifier)
     {
         try
         {
@@ -749,5 +748,24 @@ public class RangeTombstoneListTest
     private static RangeTombstone greaterThan(int start, long tstamp, int delTime)
     {
         return new RangeTombstone(Slice.make(ClusteringBound.exclusiveStartOf(bb(start)), ClusteringBound.TOP), new DeletionTime(tstamp, delTime));
+    }
+
+    public interface ThrowingRunnable
+    {
+        public void run() throws Throwable;
+
+        public static Runnable toRunnable(ThrowingRunnable runnable)
+        {
+            return () -> {
+                try
+                {
+                    runnable.run();
+                }
+                catch (Throwable throwable)
+                {
+                    throw new RuntimeException(throwable);
+                }
+            };
+        }
     }
 }
