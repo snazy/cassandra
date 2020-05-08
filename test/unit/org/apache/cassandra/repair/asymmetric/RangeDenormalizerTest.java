@@ -24,14 +24,17 @@ import java.util.Set;
 
 import com.google.common.collect.Sets;
 import org.junit.Test;
+import org.junit.experimental.categories.Category;
 
 import org.apache.cassandra.dht.Range;
 import org.apache.cassandra.dht.Token;
+import org.apache.cassandra.test.tags.Unit;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 import static org.apache.cassandra.repair.asymmetric.ReduceHelperTest.range;
 
+@Category(Unit.class)
 public class RangeDenormalizerTest
 {
     @Test

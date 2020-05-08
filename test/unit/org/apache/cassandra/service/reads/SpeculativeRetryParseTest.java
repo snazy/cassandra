@@ -23,11 +23,13 @@ import java.util.Collection;
 import java.util.Locale;
 
 import org.junit.Test;
+import org.junit.experimental.categories.Category;
 import org.junit.experimental.runners.Enclosed;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 
 import org.apache.cassandra.exceptions.ConfigurationException;
+import org.apache.cassandra.test.tags.Unit;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.runners.Parameterized.Parameters;
@@ -35,6 +37,7 @@ import static org.junit.runners.Parameterized.Parameters;
 import static org.apache.cassandra.service.reads.HybridSpeculativeRetryPolicy.Function;
 
 @RunWith(Enclosed.class)
+@Category(Unit.class)
 public class SpeculativeRetryParseTest
 {
     @RunWith(Parameterized.class)

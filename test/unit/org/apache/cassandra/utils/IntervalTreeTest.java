@@ -28,15 +28,19 @@ import java.util.Collections;
 import java.util.List;
 
 import org.junit.Test;
+import org.junit.experimental.categories.Category;
+
 import org.apache.cassandra.io.ISerializer;
 import org.apache.cassandra.io.IVersionedSerializer;
 import org.apache.cassandra.io.util.DataInputBuffer;
 import org.apache.cassandra.io.util.DataInputPlus;
 import org.apache.cassandra.io.util.DataOutputBuffer;
 import org.apache.cassandra.io.util.DataOutputPlus;
+import org.apache.cassandra.test.tags.Unit;
 
 import static org.junit.Assert.assertEquals;
 
+@Category(Unit.class)
 public class IntervalTreeTest
 {
     @Test

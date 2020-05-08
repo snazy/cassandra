@@ -18,10 +18,13 @@ package org.apache.cassandra.utils;
 
 import org.junit.Assert;
 import org.junit.Test;
+import org.junit.experimental.categories.Category;
 
 import java.lang.ref.WeakReference;
 import java.util.Iterator;
 import java.util.NoSuchElementException;
+
+import org.apache.cassandra.test.tags.Unit;
 
 /**
  * Unit test for {@code AbstractIterator}.
@@ -30,6 +33,7 @@ import java.util.NoSuchElementException;
  */
 @SuppressWarnings("serial") // No serialization is used in this test
 // TODO(cpovirk): why is this slow (>1m/test) under GWT when fully optimized?
+@Category(Unit.class)
 public class AbstractIteratorTest
 {
     @Test

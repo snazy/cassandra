@@ -22,12 +22,15 @@ package org.apache.cassandra.schema;
 
 import org.junit.Assert;
 import org.junit.Test;
+import org.junit.experimental.categories.Category;
 
 import org.apache.cassandra.cql3.ColumnIdentifier;
+import org.apache.cassandra.test.tags.Unit;
 
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
+@Category(Unit.class)
 public class IndexMetadataTest {
     
     @Test

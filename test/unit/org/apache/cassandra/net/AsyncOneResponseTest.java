@@ -22,9 +22,13 @@ import java.util.concurrent.TimeUnit;
 
 import org.junit.Assert;
 import org.junit.Test;
+import org.junit.experimental.categories.Category;
+
+import org.apache.cassandra.test.tags.Unit;
 
 import static org.junit.Assert.assertTrue;
 
+@Category(Unit.class)
 public class AsyncOneResponseTest
 {
     @Test

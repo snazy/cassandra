@@ -37,10 +37,14 @@ import net.openhft.chronicle.queue.ChronicleQueueBuilder;
 import net.openhft.chronicle.queue.ExcerptAppender;
 import net.openhft.chronicle.queue.RollCycles;
 import net.openhft.chronicle.wire.WireOut;
+import org.junit.experimental.categories.Category;
+
 import org.apache.cassandra.audit.BinAuditLogger;
+import org.apache.cassandra.test.tags.Unit;
 
 import static org.junit.Assert.assertTrue;
 
+@Category(Unit.class)
 public class AuditLogViewerTest
 {
     private Path path;

@@ -24,14 +24,17 @@ import java.util.List;
 
 import org.apache.cassandra.db.marshal.Int32Type;
 import org.apache.cassandra.db.marshal.UTF8Type;
+import org.apache.cassandra.test.tags.Unit;
 import org.apache.cassandra.utils.ByteBufferUtil;
 import org.apache.commons.io.IOUtils;
 
 import org.junit.Assert;
 import org.junit.Test;
+import org.junit.experimental.categories.Category;
 
 import static org.junit.Assert.assertEquals;
 
+@Category(Unit.class)
 public class DelimiterAnalyzerTest
 {
 

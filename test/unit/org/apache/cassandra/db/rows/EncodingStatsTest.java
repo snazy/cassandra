@@ -23,13 +23,16 @@ import java.util.function.Function;
 import com.google.common.collect.ImmutableList;
 import org.junit.Assert;
 import org.junit.Test;
+import org.junit.experimental.categories.Category;
 
 import org.apache.cassandra.db.LivenessInfo;
+import org.apache.cassandra.test.tags.Unit;
 
 import static org.quicktheories.QuickTheory.qt;
 import static org.quicktheories.generators.SourceDSL.integers;
 import static org.quicktheories.generators.SourceDSL.longs;
 
+@Category(Unit.class)
 public class EncodingStatsTest
 {
     @Test

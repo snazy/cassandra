@@ -28,6 +28,9 @@ import org.apache.commons.lang.CharRange;
 import org.junit.Assert;
 import org.junit.Ignore;
 import org.junit.Test;
+import org.junit.experimental.categories.Category;
+
+import org.apache.cassandra.test.tags.Unit;
 
 import com.datastax.driver.core.VersionNumber;
 import org.apache.cassandra.io.sstable.format.Version;
@@ -44,6 +47,7 @@ import static org.junit.Assert.fail;
 import static org.junit.matchers.JUnitMatchers.containsString;
 import static org.quicktheories.QuickTheory.qt;
 
+@Category(Unit.class)
 public class CassandraVersionTest
 {
     @Test

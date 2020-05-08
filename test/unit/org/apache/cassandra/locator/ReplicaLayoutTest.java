@@ -20,11 +20,15 @@ package org.apache.cassandra.locator;
 
 import org.apache.cassandra.dht.Murmur3Partitioner;
 import org.apache.cassandra.dht.Token;
+import org.apache.cassandra.test.tags.Unit;
+
 import org.junit.Assert;
 import org.junit.Test;
+import org.junit.experimental.categories.Category;
 
 import static org.apache.cassandra.locator.ReplicaUtils.*;
 
+@Category(Unit.class)
 public class ReplicaLayoutTest
 {
     @Test

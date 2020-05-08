@@ -22,10 +22,14 @@ import java.util.List;
 import java.util.ArrayList;
 
 import org.junit.Test;
+import org.junit.experimental.categories.Category;
+import org.apache.cassandra.test.tags.Unit;
+
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
+@Category(Unit.class)
 public class TimestampSerializerTest
 {
     public static final long ONE_SECOND = 1000L;

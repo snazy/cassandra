@@ -20,11 +20,14 @@ package org.apache.cassandra.transport.messages;
 
 import org.junit.Assert;
 import org.junit.Test;
+import org.junit.experimental.categories.Category;
 
 import org.apache.cassandra.auth.PasswordAuthenticator;
+import org.apache.cassandra.test.tags.Unit;
 import org.apache.cassandra.transport.Message;
 import org.apache.cassandra.transport.ProtocolVersion;
 
+@Category(Unit.class)
 public class AuthenticateMessageTest extends EncodeAndDecodeTestBase<AuthenticateMessage>
 {
     @Test

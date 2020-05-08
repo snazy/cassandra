@@ -25,11 +25,13 @@ import java.util.Date;
 import java.util.List;
 
 import org.junit.Test;
+import org.junit.experimental.categories.Category;
 
 import org.apache.cassandra.db.marshal.LongType;
 import org.apache.cassandra.db.marshal.SimpleDateType;
 import org.apache.cassandra.db.marshal.TimeUUIDType;
 import org.apache.cassandra.db.marshal.TimestampType;
+import org.apache.cassandra.test.tags.Unit;
 import org.apache.cassandra.transport.ProtocolVersion;
 import org.apache.cassandra.utils.ByteBufferUtil;
 import org.apache.cassandra.utils.UUIDGen;
@@ -38,6 +40,7 @@ import static org.apache.cassandra.cql3.functions.TimeFcts.*;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNull;
 
+@Category(Unit.class)
 public class TimeFctsTest
 {
     private static final LocalDate LOCAL_DATE = LocalDate.of(2019, 8, 3);

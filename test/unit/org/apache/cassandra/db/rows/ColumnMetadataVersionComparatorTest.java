@@ -23,9 +23,11 @@ import java.util.Set;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
+import org.junit.experimental.categories.Category;
 
 import org.apache.cassandra.db.marshal.*;
 import org.apache.cassandra.schema.ColumnMetadata;
+import org.apache.cassandra.test.tags.Unit;
 
 import static java.util.Arrays.asList;
 import static org.apache.cassandra.cql3.FieldIdentifier.forUnquoted;
@@ -33,6 +35,7 @@ import static org.apache.cassandra.utils.ByteBufferUtil.bytes;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.fail;
 
+@Category(Unit.class)
 public class ColumnMetadataVersionComparatorTest
 {
     private UserType udtWith2Fields;

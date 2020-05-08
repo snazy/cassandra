@@ -20,6 +20,7 @@ package org.apache.cassandra.db.marshal;
 
 import org.apache.cassandra.Util;
 import org.apache.cassandra.serializers.MarshalException;
+import org.apache.cassandra.test.tags.Unit;
 import org.apache.cassandra.utils.AbstractTypeGenerators;
 import org.apache.cassandra.utils.Pair;
 import org.apache.cassandra.utils.UUIDGen;
@@ -28,6 +29,7 @@ import org.quicktheories.core.Gen;
 import org.quicktheories.generators.SourceDSL;
 
 import org.junit.Test;
+import org.junit.experimental.categories.Category;
 
 import java.io.UnsupportedEncodingException;
 import java.nio.ByteBuffer;
@@ -39,6 +41,7 @@ import static org.apache.cassandra.utils.AbstractTypeGenerators.primitiveTypeGen
 import static org.apache.cassandra.utils.AbstractTypeGenerators.userTypeGen;
 import static org.quicktheories.QuickTheory.qt;
 
+@Category(Unit.class)
 public class TypeValidationTest
 {
     @Test(expected = MarshalException.class)

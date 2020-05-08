@@ -25,12 +25,16 @@ import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 
 import org.junit.Test;
+import org.junit.experimental.categories.Category;
+
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.fail;
 
+import org.apache.cassandra.test.tags.Unit;
 import org.apache.cassandra.utils.ByteBufferUtil;
 import org.apache.cassandra.serializers.*;
 
+@Category(Unit.class)
 public class CollectionTypeTest
 {
     @Test

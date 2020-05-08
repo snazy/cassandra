@@ -49,9 +49,22 @@ import org.apache.cassandra.utils.FBUtilities;
 
 import org.junit.After;
 import org.junit.BeforeClass;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public class SchemaLoader
 {
+    static final Logger logger = LoggerFactory.getLogger(SchemaLoader.class);
+
+    static
+    {
+        if (Boolean.getBoolean("cassandra.test.pureunit"))
+        {
+            logger.error("Must not use SchemaLoader in pure unit-tests (system property cassandra.test.pureunit={})", System.getProperty("cassandra.test.pureunit"));
+            throw new IllegalStateException("Must not use SchemaLoader in pure unit-tests");
+        }
+    }
+
     @BeforeClass
     public static void loadSchema() throws ConfigurationException
     {

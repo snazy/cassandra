@@ -40,9 +40,13 @@ import com.google.common.base.Charsets;
 import com.google.common.primitives.UnsignedBytes;
 import com.google.common.primitives.UnsignedInteger;
 import com.google.common.primitives.UnsignedLong;
+import org.junit.experimental.categories.Category;
+
+import org.apache.cassandra.test.tags.Unit;
 
 import static org.junit.Assert.*;
 
+@Category(Unit.class)
 public class NIODataInputStreamTest
 {
 

@@ -19,11 +19,15 @@ package org.apache.cassandra.index.sasi.utils;
 
 import org.junit.Assert;
 import org.junit.Test;
+import org.junit.experimental.categories.Category;
 
 import java.io.IOException;
 
+import org.apache.cassandra.test.tags.Unit;
+
 import static org.apache.cassandra.index.sasi.utils.LongIterator.convert;
 
+@Category(Unit.class)
 public class LongIteratorTest
 {
     @Test

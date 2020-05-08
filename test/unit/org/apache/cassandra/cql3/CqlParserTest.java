@@ -25,10 +25,14 @@ import org.antlr.runtime.CharStream;
 import org.antlr.runtime.CommonTokenStream;
 import org.antlr.runtime.RecognitionException;
 import org.antlr.runtime.TokenStream;
+import org.junit.experimental.categories.Category;
+
 import org.apache.cassandra.cql3.statements.PropertyDefinitions;
+import org.apache.cassandra.test.tags.Unit;
 
 import static org.junit.Assert.*;
 
+@Category(Unit.class)
 public class CqlParserTest
 {
     @Test

@@ -20,9 +20,13 @@ package org.apache.cassandra.cql3;
 import org.antlr.runtime.CharStream;
 import org.antlr.runtime.Token;
 import org.junit.Test;
+import org.junit.experimental.categories.Category;
+
+import org.apache.cassandra.test.tags.Unit;
 
 import static org.junit.Assert.assertEquals;
 
+@Category(Unit.class)
 public class ErrorCollectorTest
 {
     @Test

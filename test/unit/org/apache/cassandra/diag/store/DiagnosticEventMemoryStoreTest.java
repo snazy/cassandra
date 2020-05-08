@@ -22,13 +22,16 @@ import java.util.Map;
 import java.util.NavigableMap;
 
 import org.junit.Test;
+import org.junit.experimental.categories.Category;
 
 import org.apache.cassandra.diag.DiagnosticEvent;
 import org.apache.cassandra.diag.DiagnosticEventServiceTest.TestEvent1;
+import org.apache.cassandra.test.tags.Unit;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertSame;
 
+@Category(Unit.class)
 public class DiagnosticEventMemoryStoreTest
 {
     @Test
