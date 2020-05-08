@@ -25,14 +25,17 @@ import java.util.List;
 
 import org.apache.cassandra.db.*;
 import org.junit.Test;
+import org.junit.experimental.categories.Category;
 
 import org.apache.cassandra.db.marshal.AbstractType;
 import org.apache.cassandra.db.marshal.Int32Type;
+import org.apache.cassandra.test.tags.Unit;
 import org.apache.cassandra.utils.ByteBufferUtil;
 
 import static org.apache.cassandra.db.ClusteringPrefix.Kind.*;
 import static org.junit.Assert.*;
 
+@Category(Unit.class)
 public class SliceTest
 {
     @Test

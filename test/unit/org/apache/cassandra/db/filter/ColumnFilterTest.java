@@ -34,11 +34,14 @@ import org.apache.cassandra.io.util.DataOutputBuffer;
 import org.apache.cassandra.net.MessagingService;
 import org.apache.cassandra.schema.ColumnMetadata;
 import org.apache.cassandra.schema.TableMetadata;
+import org.apache.cassandra.test.tags.Unit;
 import org.apache.cassandra.utils.ByteBufferUtil;
 import org.junit.Test;
 
 import org.junit.Assert;
+import org.junit.experimental.categories.Category;
 
+@Category(Unit.class)
 public class ColumnFilterTest
 {
     final static ColumnFilter.Serializer serializer = new ColumnFilter.Serializer();

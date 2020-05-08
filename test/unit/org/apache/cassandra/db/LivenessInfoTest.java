@@ -20,10 +20,13 @@ package org.apache.cassandra.db;
 
 import static org.junit.Assert.*;
 
+import org.apache.cassandra.test.tags.Unit;
 import org.apache.cassandra.utils.FBUtilities;
 import org.apache.hadoop.mapred.machines_jsp;
 import org.junit.Test;
+import org.junit.experimental.categories.Category;
 
+@Category(Unit.class)
 public class LivenessInfoTest
 {
     @Test

@@ -31,11 +31,16 @@ import java.util.UUID;
 import org.junit.Test;
 
 import org.junit.Assert;
+
+import org.apache.cassandra.test.tags.Unit;
 import org.apache.cassandra.utils.ByteBufferUtil;
 import org.apache.cassandra.utils.UUIDGen;
+
+import org.junit.experimental.categories.Category;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+@Category(Unit.class)
 public class UUIDTypeTest
 {
 

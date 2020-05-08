@@ -17,20 +17,17 @@
  */
 package org.apache.cassandra.net;
 
-import org.junit.After;
 import org.junit.Test;
 
 import io.netty.util.concurrent.ImmediateEventExecutor;
 import io.netty.util.concurrent.Promise;
+import org.junit.experimental.categories.Category;
 
+import org.apache.cassandra.test.tags.Unit;
+
+@Category(Unit.class)
 public class AsyncPromiseTest extends TestAbstractAsyncPromise
 {
-    @After
-    public void shutdown()
-    {
-        exec.shutdownNow();
-    }
-
     private <V> Promise<V> newPromise()
     {
         return new AsyncPromise<>(ImmediateEventExecutor.INSTANCE);

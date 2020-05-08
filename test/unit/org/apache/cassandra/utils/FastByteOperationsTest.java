@@ -22,7 +22,11 @@ import java.util.Arrays;
 import java.util.Random;
 
 import org.junit.Test;
+import org.junit.experimental.categories.Category;
 
+import org.apache.cassandra.test.tags.Unit;
+
+@Category(Unit.class)
 public class FastByteOperationsTest
 {
 

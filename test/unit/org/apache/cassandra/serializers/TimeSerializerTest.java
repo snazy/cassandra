@@ -19,10 +19,14 @@
 package org.apache.cassandra.serializers;
 
 import org.junit.Test;
+import org.junit.experimental.categories.Category;
 
 import java.nio.ByteBuffer;
 import java.util.concurrent.TimeUnit;
 
+import org.apache.cassandra.test.tags.Unit;
+
+@Category(Unit.class)
 public class TimeSerializerTest
 {
     @Test

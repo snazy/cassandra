@@ -21,12 +21,15 @@ package org.apache.cassandra.schema;
 import java.util.*;
 
 import org.apache.cassandra.db.marshal.*;
+import org.apache.cassandra.test.tags.Unit;
 
 import org.junit.Test;
+import org.junit.experimental.categories.Category;
 
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
+@Category(Unit.class)
 public class ValidationTest
 {
     @Test

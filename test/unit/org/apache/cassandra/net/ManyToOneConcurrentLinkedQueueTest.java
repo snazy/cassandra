@@ -23,10 +23,14 @@ import java.util.concurrent.Executor;
 import java.util.concurrent.Executors;
 
 import org.junit.Test;
+import org.junit.experimental.categories.Category;
+
+import org.apache.cassandra.test.tags.Unit;
 
 import static org.junit.Assert.*;
 
 @SuppressWarnings("ConstantConditions")
+@Category(Unit.class)
 public class ManyToOneConcurrentLinkedQueueTest
 {
     private final ManyToOneConcurrentLinkedQueue<Integer> queue = new ManyToOneConcurrentLinkedQueue<>();

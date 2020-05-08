@@ -21,9 +21,13 @@ package org.apache.cassandra.utils.concurrent;
 import java.util.Iterator;
 
 import org.junit.Test;
+import org.junit.experimental.categories.Category;
+
+import org.apache.cassandra.test.tags.Unit;
 
 import static org.junit.Assert.*;
 
+@Category(Unit.class)
 public class AccumulatorTest
 {
     @Test

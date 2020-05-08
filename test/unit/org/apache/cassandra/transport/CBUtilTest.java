@@ -25,7 +25,11 @@ import org.junit.Test;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.ByteBufAllocator;
 import io.netty.buffer.PooledByteBufAllocator;
+import org.junit.experimental.categories.Category;
 
+import org.apache.cassandra.test.tags.Unit;
+
+@Category(Unit.class)
 public class CBUtilTest
 {
     private static final ByteBufAllocator allocator = PooledByteBufAllocator.DEFAULT;

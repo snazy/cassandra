@@ -22,8 +22,12 @@ package org.apache.cassandra.db.marshal;
 import java.nio.ByteBuffer;
 
 import org.junit.Test;
-import org.apache.cassandra.serializers.SimpleDateSerializer;
+import org.junit.experimental.categories.Category;
 
+import org.apache.cassandra.serializers.SimpleDateSerializer;
+import org.apache.cassandra.test.tags.Unit;
+
+@Category(Unit.class)
 public class SimpleDateTypeTest
 {
     @Test public void TestComparison()

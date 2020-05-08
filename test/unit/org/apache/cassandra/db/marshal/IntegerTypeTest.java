@@ -29,7 +29,11 @@ import java.util.Random;
 
 import org.junit.ComparisonFailure;
 import org.junit.Test;
+import org.junit.experimental.categories.Category;
 
+import org.apache.cassandra.test.tags.Unit;
+
+@Category(Unit.class)
 public class IntegerTypeTest
 {
     private static void assertSignum(String message, int expected, double value)

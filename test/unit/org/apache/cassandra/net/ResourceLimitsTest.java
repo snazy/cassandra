@@ -24,11 +24,14 @@ import java.util.concurrent.TimeUnit;
 import java.util.function.LongFunction;
 
 import org.junit.Test;
+import org.junit.experimental.categories.Category;
 
 import org.apache.cassandra.net.ResourceLimits.*;
+import org.apache.cassandra.test.tags.Unit;
 
 import static org.junit.Assert.*;
 
+@Category(Unit.class)
 public class ResourceLimitsTest
 {
     @Test

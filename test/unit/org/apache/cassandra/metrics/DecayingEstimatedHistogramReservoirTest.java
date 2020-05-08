@@ -33,8 +33,12 @@ import org.junit.Test;
 
 import com.codahale.metrics.Clock;
 import com.codahale.metrics.Snapshot;
+
+import org.apache.cassandra.test.tags.Unit;
 import org.apache.cassandra.utils.EstimatedHistogram;
 import org.apache.cassandra.utils.Pair;
+
+import org.junit.experimental.categories.Category;
 import org.quicktheories.core.Gen;
 
 import static org.junit.Assert.assertEquals;
@@ -43,6 +47,7 @@ import static org.junit.Assert.assertTrue;
 import static org.quicktheories.QuickTheory.qt;
 import static org.quicktheories.generators.SourceDSL.*;
 
+@Category(Unit.class)
 public class DecayingEstimatedHistogramReservoirTest
 {
     private static final double DOUBLE_ASSERT_DELTA = 0;

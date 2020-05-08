@@ -28,8 +28,12 @@ import org.apache.cassandra.io.util.DataOutputBuffer;
 
 import org.apache.cassandra.locator.InetAddressAndPort;
 import org.apache.cassandra.net.MessagingService;
-import org.junit.Test;
+import org.apache.cassandra.test.tags.Unit;
 
+import org.junit.Test;
+import org.junit.experimental.categories.Category;
+
+@Category(Unit.class)
 public class GossipDigestTest
 {
     @Test

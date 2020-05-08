@@ -24,12 +24,16 @@ import java.util.concurrent.ThreadLocalRandom;
 import org.junit.Test;
 
 import org.junit.Assert;
+import org.junit.experimental.categories.Category;
+
 import org.apache.cassandra.db.marshal.AbstractType;
 import org.apache.cassandra.db.marshal.BytesType;
 import org.apache.cassandra.db.marshal.UTF8Type;
+import org.apache.cassandra.test.tags.Unit;
 import org.apache.cassandra.utils.ByteBufferUtil;
 import static org.junit.Assert.assertEquals;
 
+@Category(Unit.class)
 public class ColumnIdentifierTest
 {
 

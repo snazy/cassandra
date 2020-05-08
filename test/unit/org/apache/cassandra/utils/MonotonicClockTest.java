@@ -21,7 +21,11 @@ import static org.apache.cassandra.utils.MonotonicClock.approxTime;
 import static org.junit.Assert.*;
 
 import org.junit.Test;
+import org.junit.experimental.categories.Category;
 
+import org.apache.cassandra.test.tags.Unit;
+
+@Category(Unit.class)
 public class MonotonicClockTest
 {
     @Test

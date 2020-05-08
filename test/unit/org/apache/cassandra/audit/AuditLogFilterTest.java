@@ -23,9 +23,13 @@ import java.util.Set;
 
 import org.junit.Assert;
 import org.junit.Test;
+import org.junit.experimental.categories.Category;
+
+import org.apache.cassandra.test.tags.Unit;
 
 import static org.apache.cassandra.audit.AuditLogFilter.isFiltered;
 
+@Category(Unit.class)
 public class AuditLogFilterTest
 {
     @Test

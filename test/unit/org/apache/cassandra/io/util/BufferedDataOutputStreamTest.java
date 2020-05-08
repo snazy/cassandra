@@ -37,16 +37,19 @@ import java.nio.channels.WritableByteChannel;
 import java.util.Arrays;
 import java.util.Random;
 
+import org.apache.cassandra.test.tags.Unit;
 import org.apache.cassandra.utils.vint.VIntCoding;
 import org.junit.Test;
 
 import com.google.common.primitives.UnsignedBytes;
 import com.google.common.primitives.UnsignedInteger;
 import com.google.common.primitives.UnsignedLong;
+import org.junit.experimental.categories.Category;
 
 import static org.apache.cassandra.utils.FBUtilities.preventIllegalAccessWarnings;
 import static org.junit.Assert.*;
 
+@Category(Unit.class)
 public class BufferedDataOutputStreamTest
 {
     static

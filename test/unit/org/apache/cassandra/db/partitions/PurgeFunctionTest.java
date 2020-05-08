@@ -24,6 +24,7 @@ import java.util.function.LongPredicate;
 import com.google.common.collect.Iterators;
 import org.junit.Before;
 import org.junit.Test;
+import org.junit.experimental.categories.Category;
 
 import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.db.ClusteringPrefix.Kind;
@@ -34,6 +35,7 @@ import org.apache.cassandra.db.rows.*;
 import org.apache.cassandra.db.transform.Transformation;
 import org.apache.cassandra.dht.Murmur3Partitioner;
 import org.apache.cassandra.schema.TableMetadata;
+import org.apache.cassandra.test.tags.Unit;
 import org.apache.cassandra.utils.FBUtilities;
 
 import static org.junit.Assert.assertEquals;
@@ -41,6 +43,7 @@ import static org.junit.Assert.assertTrue;
 
 import static org.apache.cassandra.utils.ByteBufferUtil.bytes;
 
+@Category(Unit.class)
 public final class PurgeFunctionTest
 {
     private static final String KEYSPACE = "PurgeFunctionTest";

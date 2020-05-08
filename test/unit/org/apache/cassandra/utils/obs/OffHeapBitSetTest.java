@@ -26,13 +26,17 @@ import java.util.Random;
 
 import com.google.common.collect.Lists;
 import org.apache.cassandra.io.util.DataOutputBuffer;
+import org.apache.cassandra.test.tags.Unit;
+
 import org.junit.Assert;
 import org.junit.Test;
+import org.junit.experimental.categories.Category;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
+@Category(Unit.class)
 public class OffHeapBitSetTest
 {
     private static final Random random = new Random();

@@ -22,8 +22,10 @@ package org.apache.cassandra.concurrent;
 
 
 import org.apache.cassandra.Util;
+import org.apache.cassandra.test.tags.Unit;
 import org.apache.cassandra.utils.concurrent.WaitQueue;
 import org.junit.*;
+import org.junit.experimental.categories.Category;
 
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -31,6 +33,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.Assert.*;
 
+@Category(Unit.class)
 public class WaitQueueTest
 {
 

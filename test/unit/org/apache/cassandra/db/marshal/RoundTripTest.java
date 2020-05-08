@@ -21,15 +21,18 @@ package org.apache.cassandra.db.marshal;
  */
 
 import org.apache.cassandra.serializers.*;
+import org.apache.cassandra.test.tags.Unit;
 import org.apache.cassandra.utils.Hex;
 import org.apache.cassandra.utils.UUIDGen;
 import org.junit.Test;
+import org.junit.experimental.categories.Category;
 
 import java.math.BigInteger;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.util.UUID;
 
+@Category(Unit.class)
 public class RoundTripTest
 {
     @Test

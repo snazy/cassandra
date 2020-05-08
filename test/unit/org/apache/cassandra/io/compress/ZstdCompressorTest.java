@@ -24,12 +24,16 @@ import com.google.common.collect.ImmutableMap;
 import org.junit.Test;
 
 import com.github.luben.zstd.Zstd;
+import org.junit.experimental.categories.Category;
+
+import org.apache.cassandra.test.tags.Unit;
 
 import static org.junit.Assert.assertEquals;
 
 /**
  * Zstd Compressor specific tests. General compressor tests are in {@link CompressorTest}
  */
+@Category(Unit.class)
 public class ZstdCompressorTest
 {
     @Test
