@@ -21,10 +21,14 @@ package org.apache.cassandra.metrics;
 import java.util.concurrent.TimeUnit;
 
 import org.junit.Test;
+import org.junit.experimental.categories.Category;
+
+import org.apache.cassandra.test.tags.Unit;
 
 import static junit.framework.Assert.assertEquals;
 import static junit.framework.Assert.assertFalse;
 
+@Category(Unit.class)
 public class LatencyMetricsTest
 {
     private final MetricNameFactory factory = new TestMetricsNameFactory();

@@ -23,10 +23,14 @@ import java.util.Arrays;
 import java.util.List;
 
 import org.junit.Test;
+import org.junit.experimental.categories.Category;
+
+import org.apache.cassandra.test.tags.Unit;
 
 import static org.apache.cassandra.db.MutationExceededMaxSizeException.makeTopKeysString;
 import static org.junit.Assert.*;
 
+@Category(Unit.class)
 public class MutationExceededMaxSizeExceptionTest
 {
 

@@ -2,8 +2,10 @@ package org.apache.cassandra.db.marshal;
 
 import org.apache.cassandra.Util;
 import org.apache.cassandra.serializers.MarshalException;
+import org.apache.cassandra.test.tags.Unit;
 import org.apache.cassandra.utils.UUIDGen;
 import org.junit.Test;
+import org.junit.experimental.categories.Category;
 
 import java.io.UnsupportedEncodingException;
 import java.nio.ByteBuffer;
@@ -29,6 +31,7 @@ import java.util.UUID;
  */
 
 
+@Category(Unit.class)
 public class TypeValidationTest
 {
     @Test(expected = MarshalException.class)

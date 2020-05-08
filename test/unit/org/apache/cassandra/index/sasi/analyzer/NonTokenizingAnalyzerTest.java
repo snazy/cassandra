@@ -21,14 +21,17 @@ import java.nio.ByteBuffer;
 
 import org.apache.cassandra.db.marshal.Int32Type;
 import org.apache.cassandra.db.marshal.UTF8Type;
+import org.apache.cassandra.test.tags.Unit;
 import org.apache.cassandra.utils.ByteBufferUtil;
 
 import org.junit.Assert;
 import org.junit.Test;
+import org.junit.experimental.categories.Category;
 
 /**
  * Tests for the non-tokenizing analyzer
  */
+@Category(Unit.class)
 public class NonTokenizingAnalyzerTest
 {
     @Test

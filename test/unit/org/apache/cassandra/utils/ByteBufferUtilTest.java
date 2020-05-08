@@ -29,14 +29,17 @@ import java.util.concurrent.ThreadLocalRandom;
 
 import org.junit.Assert;
 import org.junit.Test;
+import org.junit.experimental.categories.Category;
 
 import org.apache.cassandra.io.util.DataOutputBuffer;
+import org.apache.cassandra.test.tags.Unit;
 
 import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.fail;
 
+@Category(Unit.class)
 public class ByteBufferUtilTest
 {
     private static final String s = "cassandra";

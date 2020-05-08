@@ -25,20 +25,25 @@ import java.net.ServerSocket;
 import java.rmi.server.RMIServerSocketFactory;
 
 import org.junit.Test;
+import org.junit.experimental.categories.Category;
 
+import org.apache.cassandra.test.tags.Unit;
 import org.apache.cassandra.utils.RMIServerSocketFactoryImpl;
 
 import static org.junit.Assert.assertTrue;
 
 
+@Category(Unit.class)
 public class RMIServerSocketFactoryImplTest
 {
     @Test
     public void testReusableAddrSocket() throws IOException
     {
         RMIServerSocketFactory serverFactory = new RMIServerSocketFactoryImpl(null);
-        ServerSocket socket = serverFactory.createServerSocket(7199);
-        assertTrue(socket.getReuseAddress());
+        try (ServerSocket socket = serverFactory.createServerSocket(7199))
+        {
+            assertTrue(socket.getReuseAddress());
+        }
     }
 
 }

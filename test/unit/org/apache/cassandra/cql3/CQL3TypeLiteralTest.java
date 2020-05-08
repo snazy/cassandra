@@ -28,9 +28,11 @@ import java.util.concurrent.ThreadLocalRandom;
 import java.util.regex.Pattern;
 
 import org.junit.Test;
+import org.junit.experimental.categories.Category;
 
 import org.apache.cassandra.db.marshal.*;
 import org.apache.cassandra.serializers.*;
+import org.apache.cassandra.test.tags.Unit;
 import org.apache.cassandra.transport.ProtocolVersion;
 import org.apache.cassandra.utils.ByteBufferUtil;
 import org.apache.cassandra.utils.UUIDGen;
@@ -41,6 +43,7 @@ import static org.junit.Assert.assertEquals;
  * Test functionality to re-create a CQL literal from its serialized representation.
  * This test uses some randomness to generate the values and nested structures (collections,tuples,UDTs).
  */
+@Category(Unit.class)
 public class CQL3TypeLiteralTest
 {
     private static final Pattern QUOTE = Pattern.compile("'");

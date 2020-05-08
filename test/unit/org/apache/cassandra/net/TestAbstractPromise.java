@@ -26,16 +26,30 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Predicate;
 
+import org.junit.After;
 import org.junit.Assert;
 
 import io.netty.util.concurrent.Promise;
 import net.openhft.chronicle.core.util.ThrowingBiConsumer;
 import net.openhft.chronicle.core.util.ThrowingConsumer;
 import net.openhft.chronicle.core.util.ThrowingFunction;
+import org.junit.Before;
 
 abstract class TestAbstractPromise
 {
-    final ExecutorService exec = Executors.newCachedThreadPool();
+    ExecutorService exec;
+
+    @Before
+    public void newThreadPool()
+    {
+        exec = Executors.newCachedThreadPool();
+    }
+
+    @After
+    public void stopThreadPool()
+    {
+        exec.shutdownNow();
+    }
 
     class Async
     {

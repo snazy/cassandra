@@ -24,15 +24,18 @@ import java.nio.ByteBuffer;
 import java.util.LinkedHashMap;
 
 import org.junit.Test;
+import org.junit.experimental.categories.Category;
 
 import org.apache.cassandra.io.sstable.Component;
 import org.apache.cassandra.io.util.DataInputBuffer;
 import org.apache.cassandra.io.util.DataOutputBufferFixed;
 import org.apache.cassandra.net.MessagingService;
 import org.apache.cassandra.serializers.SerializationUtils;
+import org.apache.cassandra.test.tags.Unit;
 
 import static org.junit.Assert.assertNotEquals;
 
+@Category(Unit.class)
 public class ComponentManifestTest
 {
     @Test

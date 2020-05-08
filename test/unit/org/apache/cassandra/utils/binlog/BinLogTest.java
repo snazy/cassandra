@@ -38,8 +38,11 @@ import net.openhft.chronicle.queue.ChronicleQueueBuilder;
 import net.openhft.chronicle.queue.ExcerptTailer;
 import net.openhft.chronicle.queue.RollCycles;
 import net.openhft.chronicle.wire.WireOut;
+import org.junit.experimental.categories.Category;
+
 import org.apache.cassandra.Util;
 import org.apache.cassandra.io.util.FileUtils;
+import org.apache.cassandra.test.tags.Unit;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
@@ -47,6 +50,7 @@ import static org.junit.Assert.assertNotEquals;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
+@Category(Unit.class)
 public class BinLogTest
 {
     public static Path tempDir() throws Exception

@@ -25,15 +25,18 @@ import org.junit.Test;
 
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
+import org.junit.experimental.categories.Category;
 
 import org.apache.cassandra.db.TypeSizes;
 import org.apache.cassandra.db.marshal.AbstractType;
 import org.apache.cassandra.db.marshal.AsciiType;
 import org.apache.cassandra.db.marshal.LongType;
+import org.apache.cassandra.test.tags.Unit;
 import org.apache.cassandra.utils.Pair;
 
 import static org.junit.Assert.assertEquals;
 
+@Category(Unit.class)
 public class DataTypeTest
 {
     @Test

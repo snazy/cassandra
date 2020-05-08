@@ -28,12 +28,15 @@ import java.io.DataInputStream;
 import java.io.DataOutputStream;
 
 import org.junit.Test;
+import org.junit.experimental.categories.Category;
 
 import org.apache.cassandra.io.util.BytesReadTracker;
 import org.apache.cassandra.io.util.DataInputPlus;
 import org.apache.cassandra.io.util.TrackedDataInputPlus;
 import org.apache.cassandra.io.util.TrackedInputStream;
+import org.apache.cassandra.test.tags.Unit;
 
+@Category(Unit.class)
 public class BytesReadTrackerTest
 {
 

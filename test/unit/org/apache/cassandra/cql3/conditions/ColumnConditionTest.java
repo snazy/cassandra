@@ -22,6 +22,7 @@ import java.util.*;
 
 import org.junit.Assert;
 import org.junit.Test;
+import org.junit.experimental.categories.Category;
 
 import org.apache.cassandra.cql3.*;
 import org.apache.cassandra.db.Clustering;
@@ -33,6 +34,7 @@ import org.apache.cassandra.db.rows.*;
 import org.apache.cassandra.exceptions.InvalidRequestException;
 import org.apache.cassandra.schema.ColumnMetadata;
 import org.apache.cassandra.serializers.TimeUUIDSerializer;
+import org.apache.cassandra.test.tags.Unit;
 import org.apache.cassandra.utils.ByteBufferUtil;
 import org.apache.cassandra.utils.UUIDGen;
 
@@ -44,6 +46,7 @@ import static org.apache.cassandra.cql3.Operator.*;
 import static org.apache.cassandra.utils.ByteBufferUtil.EMPTY_BYTE_BUFFER;
 
 
+@Category(Unit.class)
 public class ColumnConditionTest
 {
     public static final ByteBuffer ZERO = Int32Type.instance.fromString("0");

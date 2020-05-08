@@ -30,11 +30,14 @@ import com.google.common.io.Files;
 import static org.junit.Assert.*;
 import org.junit.Assert;
 import org.junit.Test;
+import org.junit.experimental.categories.Category;
 
 import org.apache.cassandra.io.util.FileUtils;
 import org.apache.cassandra.io.util.RandomAccessReader;
+import org.apache.cassandra.test.tags.Unit;
 import org.apache.cassandra.utils.ByteBufferUtil;
 
+@Category(Unit.class)
 public class CompressorTest
 {
     ICompressor compressor;

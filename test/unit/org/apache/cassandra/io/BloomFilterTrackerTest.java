@@ -22,11 +22,14 @@ package org.apache.cassandra.io;
 
 
 import org.junit.Test;
+import org.junit.experimental.categories.Category;
 
 import org.apache.cassandra.io.sstable.BloomFilterTracker;
+import org.apache.cassandra.test.tags.Unit;
 
 import static org.junit.Assert.assertEquals;
 
+@Category(Unit.class)
 public class BloomFilterTrackerTest
 {
     @Test

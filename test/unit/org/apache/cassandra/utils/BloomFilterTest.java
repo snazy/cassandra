@@ -26,6 +26,7 @@ import java.util.Random;
 import java.util.Set;
 
 import org.junit.*;
+import org.junit.experimental.categories.Category;
 
 import org.apache.cassandra.dht.IPartitioner;
 import org.apache.cassandra.dht.Murmur3Partitioner;
@@ -33,12 +34,14 @@ import org.apache.cassandra.io.util.BufferedDataOutputStreamPlus;
 import org.apache.cassandra.io.util.DataOutputBuffer;
 import org.apache.cassandra.io.util.DataOutputStreamPlus;
 import org.apache.cassandra.io.util.FileUtils;
+import org.apache.cassandra.test.tags.Unit;
 import org.apache.cassandra.utils.IFilter.FilterKey;
 import org.apache.cassandra.utils.KeyGenerator.RandomStringGenerator;
 import org.apache.cassandra.utils.obs.IBitSet;
 
 import static org.junit.Assert.assertEquals;
 
+@Category(Unit.class)
 public class BloomFilterTest
 {
     public IFilter bfInvHashes;

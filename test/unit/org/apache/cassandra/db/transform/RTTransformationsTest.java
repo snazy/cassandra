@@ -24,6 +24,7 @@ import org.junit.Before;
 import org.junit.Test;
 
 import com.google.common.collect.Iterators;
+import org.junit.experimental.categories.Category;
 
 import org.apache.cassandra.db.*;
 import org.apache.cassandra.db.ClusteringPrefix.Kind;
@@ -35,6 +36,7 @@ import org.apache.cassandra.db.rows.*;
 import org.apache.cassandra.db.transform.RTBoundValidator.Stage;
 import org.apache.cassandra.dht.Murmur3Partitioner;
 import org.apache.cassandra.schema.TableMetadata;
+import org.apache.cassandra.test.tags.Unit;
 import org.apache.cassandra.utils.FBUtilities;
 
 import static org.apache.cassandra.db.transform.RTBoundCloser.close;
@@ -45,6 +47,7 @@ import static org.junit.Assert.assertTrue;
 import static org.apache.cassandra.db.transform.RTBoundValidator.validate;
 import static org.apache.cassandra.utils.ByteBufferUtil.bytes;
 
+@Category(Unit.class)
 public final class RTTransformationsTest
 {
     private static final String KEYSPACE = "RTBoundCloserTest";

@@ -29,9 +29,11 @@ import org.apache.cassandra.dht.Murmur3Partitioner;
 import org.apache.cassandra.dht.Range;
 import org.apache.cassandra.dht.Token;
 import org.apache.cassandra.locator.ReplicaCollection.Builder.Conflict;
+import org.apache.cassandra.test.tags.Unit;
 import org.apache.cassandra.utils.FBUtilities;
 import org.junit.Assert;
 import org.junit.Test;
+import org.junit.experimental.categories.Category;
 
 import java.net.UnknownHostException;
 import java.util.ArrayList;
@@ -48,6 +50,7 @@ import static org.apache.cassandra.locator.Replica.fullReplica;
 import static org.apache.cassandra.locator.Replica.transientReplica;
 import static org.apache.cassandra.locator.ReplicaUtils.*;
 
+@Category(Unit.class)
 public class ReplicaCollectionTest
 {
 

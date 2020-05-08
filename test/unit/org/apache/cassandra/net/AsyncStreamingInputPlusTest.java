@@ -32,12 +32,16 @@ import org.junit.Test;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
 import io.netty.channel.embedded.EmbeddedChannel;
+import org.junit.experimental.categories.Category;
+
 import org.apache.cassandra.io.util.BufferedDataOutputStreamPlus;
 import org.apache.cassandra.net.AsyncStreamingInputPlus;
 import org.apache.cassandra.net.AsyncStreamingInputPlus.InputTimeoutException;
+import org.apache.cassandra.test.tags.Unit;
 
 import static org.junit.Assert.assertFalse;
 
+@Category(Unit.class)
 public class AsyncStreamingInputPlusTest
 {
     private EmbeddedChannel channel;

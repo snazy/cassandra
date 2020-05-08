@@ -23,10 +23,14 @@ import java.util.List;
 import java.util.Set;
 
 import org.junit.Test;
+import org.junit.experimental.categories.Category;
+
+import org.apache.cassandra.test.tags.Unit;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 
+@Category(Unit.class)
 public class BoundsTest
 {
 

@@ -27,7 +27,9 @@ import java.util.Set;
 import java.util.stream.Collectors;
 
 import org.junit.Test;
+import org.junit.experimental.categories.Category;
 
+import org.apache.cassandra.test.tags.Unit;
 import org.apache.cassandra.utils.Pair;
 
 import static com.google.common.collect.Sets.newHashSet;
@@ -35,6 +37,7 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
+@Category(Unit.class)
 public class SplitterTest
 {
 

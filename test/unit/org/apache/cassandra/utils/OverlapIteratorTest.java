@@ -28,9 +28,13 @@ import java.util.TreeSet;
 import java.util.concurrent.ThreadLocalRandom;
 
 import org.junit.Test;
+import org.junit.experimental.categories.Category;
+
+import org.apache.cassandra.test.tags.Unit;
 
 import static org.junit.Assert.assertTrue;
 
+@Category(Unit.class)
 public class OverlapIteratorTest
 {
 

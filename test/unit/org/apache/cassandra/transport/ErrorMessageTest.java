@@ -24,6 +24,7 @@ import java.util.Map;
 
 import org.junit.BeforeClass;
 import org.junit.Test;
+import org.junit.experimental.categories.Category;
 
 import org.apache.cassandra.db.ConsistencyLevel;
 import org.apache.cassandra.db.WriteType;
@@ -34,6 +35,7 @@ import org.apache.cassandra.exceptions.RequestFailureReason;
 import org.apache.cassandra.exceptions.WriteFailureException;
 import org.apache.cassandra.exceptions.WriteTimeoutException;
 import org.apache.cassandra.locator.InetAddressAndPort;
+import org.apache.cassandra.test.tags.Unit;
 import org.apache.cassandra.transport.messages.EncodeAndDecodeTestBase;
 import org.apache.cassandra.transport.messages.ErrorMessage;
 
@@ -41,6 +43,7 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
+@Category(Unit.class)
 public class ErrorMessageTest extends EncodeAndDecodeTestBase<ErrorMessage>
 {
     private static Map<InetAddressAndPort, RequestFailureReason> failureReasonMap1;

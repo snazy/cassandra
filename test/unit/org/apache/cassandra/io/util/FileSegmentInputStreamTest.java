@@ -26,13 +26,16 @@ import java.util.Random;
 
 import com.google.common.primitives.Ints;
 import org.junit.Test;
+import org.junit.experimental.categories.Category;
 
+import org.apache.cassandra.test.tags.Unit;
 import org.apache.cassandra.utils.ByteBufferUtil;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
+@Category(Unit.class)
 public class FileSegmentInputStreamTest
 {
     private ByteBuffer allocateBuffer(int size)

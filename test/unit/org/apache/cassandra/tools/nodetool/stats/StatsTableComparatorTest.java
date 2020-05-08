@@ -25,7 +25,11 @@ import java.util.List;
 import static org.junit.Assert.assertEquals;
 import org.junit.BeforeClass;
 import org.junit.Test;
+import org.junit.experimental.categories.Category;
 
+import org.apache.cassandra.test.tags.Unit;
+
+@Category(Unit.class)
 public class StatsTableComparatorTest extends TableStatsTestBase
 {
 

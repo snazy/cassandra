@@ -23,6 +23,8 @@ import java.util.*;
 
 import com.google.common.base.Function;
 import com.google.common.base.Objects;
+
+import org.apache.cassandra.test.tags.Unit;
 import org.apache.cassandra.utils.AbstractIterator;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Iterators;
@@ -32,12 +34,14 @@ import com.google.common.collect.Sets;
 
 import org.junit.Assert;
 import org.junit.Test;
+import org.junit.experimental.categories.Category;
 
 import org.apache.cassandra.db.marshal.AbstractType;
 import org.apache.cassandra.db.marshal.TimeUUIDType;
 import org.apache.cassandra.db.marshal.UUIDType;
 import org.apache.cassandra.utils.MergeIterator.Reducer;
 
+@Category(Unit.class)
 public class MergeIteratorComparisonTest
 {
     private static class CountingComparator<T> implements Comparator<T>

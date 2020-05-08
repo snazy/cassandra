@@ -24,6 +24,8 @@ import java.util.Iterator;
 import org.junit.Test;
 
 import org.junit.Assert;
+import org.junit.experimental.categories.Category;
+
 import org.apache.cassandra.Util;
 import org.apache.cassandra.db.BufferDecoratedKey;
 import org.apache.cassandra.db.DecoratedKey;
@@ -35,9 +37,11 @@ import org.apache.cassandra.db.marshal.Int32Type;
 import org.apache.cassandra.dht.Murmur3Partitioner;
 import org.apache.cassandra.schema.ColumnMetadata;
 import org.apache.cassandra.schema.TableMetadata;
+import org.apache.cassandra.test.tags.Unit;
 import org.apache.cassandra.utils.ByteBufferUtil;
 import org.apache.cassandra.utils.FBUtilities;
 
+@Category(Unit.class)
 public class UnfilteredRowIteratorsTest
 {
     static final TableMetadata metadata;

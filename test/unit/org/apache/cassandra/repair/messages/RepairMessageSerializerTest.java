@@ -23,17 +23,20 @@ import java.io.IOException;
 import com.google.common.collect.Sets;
 import org.junit.Assert;
 import org.junit.Test;
+import org.junit.experimental.categories.Category;
 
 import org.apache.cassandra.io.IVersionedSerializer;
 import org.apache.cassandra.io.util.DataInputBuffer;
 import org.apache.cassandra.io.util.DataOutputBuffer;
 import org.apache.cassandra.locator.InetAddressAndPort;
 import org.apache.cassandra.net.MessagingService;
+import org.apache.cassandra.test.tags.Unit;
 import org.apache.cassandra.utils.UUIDGen;
 
 /**
  * verifies repair message serializers are working as advertised
  */
+@Category(Unit.class)
 public class RepairMessageSerializerTest
 {
     private static int MS_VERSION = MessagingService.current_version;

@@ -25,16 +25,19 @@ import java.util.List;
 import com.google.common.collect.ImmutableMultimap;
 import com.google.common.collect.Multimap;
 import org.junit.Test;
+import org.junit.experimental.categories.Category;
 import org.junit.matchers.JUnitMatchers;
 
 import org.apache.cassandra.locator.InetAddressAndPort;
 import org.apache.cassandra.locator.ReplicaPlan;
 import org.apache.cassandra.locator.ReplicaPlans;
+import org.apache.cassandra.test.tags.Unit;
 
 import static org.hamcrest.CoreMatchers.is;
 import static org.junit.Assert.assertThat;
 import static org.junit.Assert.assertTrue;
 
+@Category(Unit.class)
 public class BatchlogEndpointFilterTest
 {
     private static final String LOCAL = "local";

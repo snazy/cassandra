@@ -28,14 +28,17 @@ import org.apache.commons.lang3.time.DateUtils;
 
 import org.junit.Assert;
 import org.junit.Test;
+import org.junit.experimental.categories.Category;
 
 import static org.junit.Assert.assertEquals;
 
 import org.apache.cassandra.exceptions.InvalidRequestException;
+import org.apache.cassandra.test.tags.Unit;
 
 import static org.apache.cassandra.cql3.Duration.*;
 import static org.apache.cassandra.cql3.Duration.NANOS_PER_HOUR;
 
+@Category(Unit.class)
 public class DurationTest
 {
     @Test
