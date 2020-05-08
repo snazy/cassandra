@@ -22,6 +22,7 @@ import java.nio.ByteBuffer;
 
 import org.junit.Assert;
 import org.junit.Test;
+import org.junit.experimental.categories.Category;
 
 import org.apache.cassandra.cql3.functions.UDHelper;
 import org.apache.cassandra.db.marshal.AbstractType;
@@ -48,8 +49,10 @@ import org.apache.cassandra.db.marshal.UTF8Type;
 import org.apache.cassandra.db.marshal.UUIDType;
 import org.apache.cassandra.serializers.MarshalException;
 import org.apache.cassandra.serializers.TypeSerializer;
+import org.apache.cassandra.test.tags.Unit;
 import org.apache.cassandra.utils.ByteBufferUtil;
 
+@Category(Unit.class)
 public class UDHelperTest
 {
     static class UFTestCustomType extends AbstractType<String>

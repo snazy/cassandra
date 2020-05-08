@@ -32,12 +32,15 @@ import com.google.common.base.Charsets;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
+import org.junit.experimental.categories.Category;
 
 import org.apache.cassandra.config.TransparentDataEncryptionOptions;
+import org.apache.cassandra.test.tags.Unit;
 
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.fail;
 
+@Category(Unit.class)
 public class CipherFactoryTest
 {
     // http://www.gutenberg.org/files/4300/4300-h/4300-h.htm

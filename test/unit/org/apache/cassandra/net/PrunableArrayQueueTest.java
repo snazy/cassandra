@@ -18,11 +18,14 @@
 package org.apache.cassandra.net;
 
 import org.junit.Test;
+import org.junit.experimental.categories.Category;
 
 import org.apache.cassandra.net.PrunableArrayQueue;
+import org.apache.cassandra.test.tags.Unit;
 
 import static org.junit.Assert.*;
 
+@Category(Unit.class)
 public class PrunableArrayQueueTest
 {
     private final PrunableArrayQueue<Integer> queue = new PrunableArrayQueue<>(8);

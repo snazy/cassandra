@@ -19,10 +19,14 @@
 package org.apache.cassandra.db.marshal;
 
 import org.junit.Test;
+import org.junit.experimental.categories.Category;
+
+import org.apache.cassandra.test.tags.Unit;
 
 import static org.apache.cassandra.utils.ByteBufferUtil.bytes;
 import static org.apache.cassandra.utils.ByteBufferUtil.EMPTY_BYTE_BUFFER;
 
+@Category(Unit.class)
 public class ReversedTypeTest
 {
     @Test

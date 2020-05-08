@@ -22,12 +22,15 @@ import java.util.concurrent.ThreadLocalRandom;
 
 import org.apache.cassandra.index.sasi.disk.Token;
 import org.apache.cassandra.io.util.FileUtils;
+import org.apache.cassandra.test.tags.Unit;
 
 import org.junit.Assert;
 import org.junit.Test;
+import org.junit.experimental.categories.Category;
 
 import static org.apache.cassandra.index.sasi.utils.LongIterator.convert;
 
+@Category(Unit.class)
 public class RangeUnionIteratorTest
 {
     @Test

@@ -24,9 +24,11 @@ import java.util.Arrays;
 import com.google.common.hash.Hashing;
 import org.junit.Assert;
 import org.junit.Test;
+import org.junit.experimental.categories.Category;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import org.apache.cassandra.test.tags.Unit;
 import org.apache.cassandra.utils.ByteBufferUtil;
 import org.apache.cassandra.utils.Hex;
 import org.apache.cassandra.utils.UUIDGen;
@@ -34,6 +36,7 @@ import org.apache.cassandra.utils.UUIDGen;
 import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
 
+@Category(Unit.class)
 public class DigestTest
 {
     private static final Logger logger = LoggerFactory.getLogger(DigestTest.class);

@@ -30,9 +30,12 @@ import java.util.NoSuchElementException;
 
 import com.google.common.collect.Iterables;
 
+import org.apache.cassandra.test.tags.Unit;
 import org.apache.cassandra.utils.btree.BTree.Dir;
 import org.junit.Test;
+import org.junit.experimental.categories.Category;
 
+@Category(Unit.class)
 public class BTreeSearchIteratorTest
 {
 

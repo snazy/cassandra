@@ -21,11 +21,14 @@ package org.apache.cassandra.cql3.statements;
 import com.google.common.collect.Sets;
 import org.junit.Assert;
 import org.junit.Test;
+import org.junit.experimental.categories.Category;
 
 import org.apache.cassandra.auth.DCPermissions;
 import org.apache.cassandra.cql3.CQLStatement;
 import org.apache.cassandra.cql3.QueryProcessor;
+import org.apache.cassandra.test.tags.Unit;
 
+@Category(Unit.class)
 public class AlterRoleStatementTest
 {
     private static AlterRoleStatement parse(String query)

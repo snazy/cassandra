@@ -33,12 +33,16 @@ import com.google.common.collect.Sets;
 import org.junit.Test;
 
 import net.openhft.chronicle.queue.impl.single.SingleChronicleQueue;
+import org.junit.experimental.categories.Category;
+
+import org.apache.cassandra.test.tags.Unit;
 import org.apache.cassandra.utils.Pair;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
+@Category(Unit.class)
 public class ExternalArchiverTest
 {
     @Test

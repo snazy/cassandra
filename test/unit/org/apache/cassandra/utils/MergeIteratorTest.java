@@ -21,12 +21,15 @@ package org.apache.cassandra.utils;
 import java.util.Arrays;
 import java.util.Iterator;
 
+import org.apache.cassandra.test.tags.Unit;
 import org.apache.cassandra.utils.AbstractIterator;
 import com.google.common.collect.Iterators;
 import com.google.common.collect.Ordering;
 import org.junit.Before;
 import org.junit.Test;
+import org.junit.experimental.categories.Category;
 
+@Category(Unit.class)
 public class MergeIteratorTest
 {
     CLI<String> all = null, cat = null, a = null, b = null, c = null, d = null;

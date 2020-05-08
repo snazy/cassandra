@@ -26,10 +26,13 @@ import java.util.concurrent.ThreadLocalRandom;
 import org.apache.cassandra.db.marshal.LongType;
 import org.apache.cassandra.io.util.ChannelProxy;
 import org.apache.cassandra.io.util.FileUtils;
+import org.apache.cassandra.test.tags.Unit;
 
 import org.junit.Assert;
 import org.junit.Test;
+import org.junit.experimental.categories.Category;
 
+@Category(Unit.class)
 public class MappedBufferTest
 {
     @Test

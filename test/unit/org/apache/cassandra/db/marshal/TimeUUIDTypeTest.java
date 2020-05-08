@@ -24,10 +24,14 @@ import java.util.UUID;
 import org.junit.Assert;
 import org.apache.cassandra.serializers.MarshalException;
 import org.junit.Test;
+import org.junit.experimental.categories.Category;
+
 import static org.junit.Assert.assertEquals;
 
+import org.apache.cassandra.test.tags.Unit;
 import org.apache.cassandra.utils.UUIDGen;
 
+@Category(Unit.class)
 public class TimeUUIDTypeTest
 {
     TimeUUIDType timeUUIDType = new TimeUUIDType();

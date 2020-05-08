@@ -35,10 +35,13 @@ import org.junit.Test;
 import com.google.common.collect.Sets;
 
 import org.apache.cassandra.db.marshal.TimeUUIDType;
+import org.apache.cassandra.test.tags.Unit;
 import org.apache.cassandra.utils.UUIDGen;
 import org.cliffc.high_scale_lib.NonBlockingHashMap;
+import org.junit.experimental.categories.Category;
 
 
+@Category(Unit.class)
 public class UUIDTests
 {
     @Test

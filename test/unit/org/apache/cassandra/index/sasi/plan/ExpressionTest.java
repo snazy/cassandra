@@ -22,10 +22,13 @@ import java.nio.ByteBuffer;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 import org.junit.Test;
+import org.junit.experimental.categories.Category;
 
 import org.apache.cassandra.db.marshal.UTF8Type;
 import org.apache.cassandra.index.sasi.plan.Expression.Bound;
+import org.apache.cassandra.test.tags.Unit;
 
+@Category(Unit.class)
 public class ExpressionTest
 {
 

@@ -28,12 +28,16 @@ import java.util.concurrent.ThreadLocalRandom;
 import org.junit.Test;
 
 import org.junit.Assert;
+import org.junit.experimental.categories.Category;
+
+import org.apache.cassandra.test.tags.Unit;
 import org.apache.cassandra.utils.memory.MemoryUtil;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
+@Category(Unit.class)
 public class MemoryTest
 {
 

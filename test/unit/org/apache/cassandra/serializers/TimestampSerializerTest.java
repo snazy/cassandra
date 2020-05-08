@@ -22,11 +22,15 @@ import java.util.List;
 import java.util.ArrayList;
 
 import org.junit.Test;
+import org.junit.experimental.categories.Category;
+
 import static org.junit.Assert.assertTrue;
 
 import org.apache.cassandra.serializers.MarshalException;
 import org.apache.cassandra.serializers.TimestampSerializer;
+import org.apache.cassandra.test.tags.Unit;
 
+@Category(Unit.class)
 public class TimestampSerializerTest
 {
     private String dates[] = new String[]

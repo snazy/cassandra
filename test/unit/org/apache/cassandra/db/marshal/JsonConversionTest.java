@@ -24,10 +24,13 @@ import java.nio.ByteBuffer;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.cassandra.cql3.QueryOptions;
+import org.apache.cassandra.test.tags.Unit;
 import org.apache.cassandra.transport.ProtocolVersion;
 import org.apache.cassandra.utils.UUIDGen;
 import org.junit.Test;
+import org.junit.experimental.categories.Category;
 
+@Category(Unit.class)
 public class JsonConversionTest
 {
     private static final ObjectMapper JSON_OBJECT_MAPPER = new ObjectMapper();

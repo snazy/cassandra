@@ -20,8 +20,12 @@
 package org.apache.cassandra.db.marshal;
 
 import org.apache.cassandra.serializers.MarshalException;
-import org.junit.Test;
+import org.apache.cassandra.test.tags.Unit;
 
+import org.junit.Test;
+import org.junit.experimental.categories.Category;
+
+@Category(Unit.class)
 public class BytesTypeTest
 {
     private static final String INVALID_HEX = "33AG45F"; // Invalid (has a G)

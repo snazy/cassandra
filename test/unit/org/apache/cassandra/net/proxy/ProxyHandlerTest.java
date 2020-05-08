@@ -43,7 +43,11 @@ import io.netty.channel.local.LocalServerChannel;
 import io.netty.channel.nio.NioEventLoopGroup;
 import io.netty.handler.logging.LogLevel;
 import io.netty.handler.logging.LoggingHandler;
+import org.junit.experimental.categories.Category;
 
+import org.apache.cassandra.test.tags.Unit;
+
+@Category(Unit.class)
 public class ProxyHandlerTest
 {
     private final Object PAYLOAD = new Object();
@@ -165,48 +169,72 @@ public class ProxyHandlerTest
     public void test(DoTest test) throws Throwable
     {
         EventLoopGroup serverGroup = new NioEventLoopGroup(1);
-        EventLoopGroup clientGroup = new NioEventLoopGroup(1);
+        try
+        {
+            EventLoopGroup clientGroup = new NioEventLoopGroup(1);
+            try
+            {
+                InboundProxyHandler.Controller controller = new InboundProxyHandler.Controller();
+                InboundProxyHandler proxyHandler = new InboundProxyHandler(controller);
+                TestHandler testHandler = new TestHandler();
 
-        InboundProxyHandler.Controller controller = new InboundProxyHandler.Controller();
-        InboundProxyHandler proxyHandler = new InboundProxyHandler(controller);
-        TestHandler testHandler = new TestHandler();
+                ServerBootstrap sb = new ServerBootstrap();
+                sb.group(serverGroup)
+                  .channel(LocalServerChannel.class)
+                  .childHandler(new ChannelInitializer<LocalChannel>()
+                  {
+                      @Override
+                      public void initChannel(LocalChannel ch)
+                      {
+                          ch.pipeline()
+                            .addLast(proxyHandler)
+                            .addLast(testHandler);
+                      }
+                  })
+                  .childOption(ChannelOption.AUTO_READ, false);
 
-        ServerBootstrap sb = new ServerBootstrap();
-        sb.group(serverGroup)
-          .channel(LocalServerChannel.class)
-          .childHandler(new ChannelInitializer<LocalChannel>() {
-              @Override
-              public void initChannel(LocalChannel ch)
-              {
-                  ch.pipeline()
-                    .addLast(proxyHandler)
-                    .addLast(testHandler);
-              }
-          })
-          .childOption(ChannelOption.AUTO_READ, false);
+                Bootstrap cb = new Bootstrap();
+                cb.group(clientGroup)
+                  .channel(LocalChannel.class)
+                  .handler(new ChannelInitializer<LocalChannel>()
+                  {
+                      @Override
+                      public void initChannel(LocalChannel ch) throws Exception
+                      {
+                          ch.pipeline()
+                            .addLast(new LoggingHandler(LogLevel.TRACE));
+                      }
+                  });
 
-        Bootstrap cb = new Bootstrap();
-        cb.group(clientGroup)
-          .channel(LocalChannel.class)
-          .handler(new ChannelInitializer<LocalChannel>() {
-              @Override
-              public void initChannel(LocalChannel ch) throws Exception {
-                  ch.pipeline()
-                    .addLast(new LoggingHandler(LogLevel.TRACE));
-              }
-          });
+                final LocalAddress addr = new LocalAddress("test");
 
-        final LocalAddress addr = new LocalAddress("test");
-
-        Channel serverChannel = sb.bind(addr).sync().channel();
-
-        Channel clientChannel = cb.connect(addr).sync().channel();
-        test.doTest(controller, testHandler, clientChannel);
-
-        clientChannel.close();
-        serverChannel.close();
-        serverGroup.shutdownGracefully();
-        clientGroup.shutdownGracefully();
+                Channel serverChannel = sb.bind(addr).sync().channel();
+                try
+                {
+                    Channel clientChannel = cb.connect(addr).sync().channel();
+                    try
+                    {
+                        test.doTest(controller, testHandler, clientChannel);
+                    }
+                    finally
+                    {
+                        clientChannel.close();
+                    }
+                }
+                finally
+                {
+                    serverChannel.close();
+                }
+            }
+            finally
+            {
+                clientGroup.shutdownGracefully();
+            }
+        }
+        finally
+        {
+            serverGroup.shutdownGracefully();
+        }
     }
 
 

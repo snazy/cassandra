@@ -26,15 +26,18 @@ import org.apache.cassandra.index.sasi.utils.RangeIntersectionIterator.Strategy;
 import org.apache.cassandra.index.sasi.utils.RangeIntersectionIterator.LookupIntersectionIterator;
 import org.apache.cassandra.index.sasi.utils.RangeIntersectionIterator.BounceIntersectionIterator;
 import org.apache.cassandra.io.util.FileUtils;
+import org.apache.cassandra.test.tags.Unit;
 
 import com.carrotsearch.hppc.LongHashSet;
 import com.carrotsearch.hppc.LongSet;
 
 import org.junit.Assert;
 import org.junit.Test;
+import org.junit.experimental.categories.Category;
 
 import static org.apache.cassandra.index.sasi.utils.LongIterator.convert;
 
+@Category(Unit.class)
 public class RangeIntersectionIteratorTest
 {
     @Test

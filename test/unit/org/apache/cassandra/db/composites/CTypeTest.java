@@ -18,11 +18,14 @@
 package org.apache.cassandra.db.composites;
 
 import org.apache.cassandra.db.marshal.*;
+import org.apache.cassandra.test.tags.Unit;
 import org.apache.cassandra.utils.ByteBufferUtil;
 import org.junit.Test;
+import org.junit.experimental.categories.Category;
 
 import java.nio.ByteBuffer;
 
+@Category(Unit.class)
 public class CTypeTest
 {
     @Test

@@ -22,9 +22,13 @@ import java.math.BigDecimal;
 import java.nio.ByteBuffer;
 
 import org.apache.cassandra.serializers.DecimalSerializer;
+import org.apache.cassandra.test.tags.Unit;
+
 import org.junit.Assert;
 import org.junit.Test;
+import org.junit.experimental.categories.Category;
 
+@Category(Unit.class)
 public class JdbcDecimalTest
 {
     @Test

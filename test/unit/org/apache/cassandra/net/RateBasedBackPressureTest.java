@@ -27,8 +27,10 @@ import com.google.common.collect.Sets;
 import com.google.common.util.concurrent.RateLimiter;
 
 import org.junit.Test;
+import org.junit.experimental.categories.Category;
 
 import org.apache.cassandra.locator.InetAddressAndPort;
+import org.apache.cassandra.test.tags.Unit;
 import org.apache.cassandra.utils.TestTimeSource;
 import org.apache.cassandra.utils.TimeSource;
 
@@ -40,6 +42,7 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
+@Category(Unit.class)
 public class RateBasedBackPressureTest
 {
     @Test(expected = IllegalArgumentException.class)

@@ -29,6 +29,9 @@ import org.junit.Test;
 import org.apache.cassandra.db.rows.Cell;
 import org.apache.cassandra.io.util.DataInputBuffer;
 import org.apache.cassandra.io.util.DataOutputBuffer;
+import org.apache.cassandra.test.tags.Unit;
+
+import org.junit.experimental.categories.Category;
 import org.psjava.util.AssertStatus;
 import org.quicktheories.core.Gen;
 
@@ -41,6 +44,7 @@ import static org.quicktheories.QuickTheory.qt;
 import static org.quicktheories.generators.SourceDSL.integers;
 import static org.quicktheories.generators.SourceDSL.lists;
 
+@Category(Unit.class)
 public class StreamingTombstoneHistogramBuilderTest
 {
     @Test

@@ -22,11 +22,15 @@ import java.net.InetAddress;
 import java.net.UnknownHostException;
 
 import org.junit.Test;
+import org.junit.experimental.categories.Category;
+
+import org.apache.cassandra.test.tags.Unit;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
+@Category(Unit.class)
 public class InetAddressAndPortTest
 {
     private static interface ThrowingRunnable

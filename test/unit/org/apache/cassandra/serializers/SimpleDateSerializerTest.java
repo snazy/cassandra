@@ -19,7 +19,10 @@
 package org.apache.cassandra.serializers;
 
 import org.apache.cassandra.db.marshal.SimpleDateType;
+import org.apache.cassandra.test.tags.Unit;
+
 import org.junit.Test;
+import org.junit.experimental.categories.Category;
 
 import java.nio.ByteBuffer;
 import java.sql.Timestamp;
@@ -27,6 +30,7 @@ import java.text.SimpleDateFormat;
 import java.time.temporal.ChronoUnit;
 import java.util.*;
 
+@Category(Unit.class)
 public class SimpleDateSerializerTest
 {
     private static final long millisPerDay = ChronoUnit.DAYS.getDuration().toMillis();

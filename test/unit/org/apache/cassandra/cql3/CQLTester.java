@@ -91,6 +91,15 @@ public abstract class CQLTester
 {
     protected static final Logger logger = LoggerFactory.getLogger(CQLTester.class);
 
+    static
+    {
+        if (Boolean.getBoolean("cassandra.test.pureunit"))
+        {
+            logger.error("Must not use CQLTester in pure unit-tests (system property cassandra.test.pureunit={})", System.getProperty("cassandra.test.pureunit"));
+            throw new IllegalStateException("Must not use CQLTester in pure unit-tests");
+        }
+    }
+
     public static final String KEYSPACE = "cql_test_keyspace";
     public static final String KEYSPACE_PER_TEST = "cql_test_keyspace_alt";
     protected static final boolean USE_PREPARED_VALUES = Boolean.valueOf(System.getProperty("cassandra.test.use_prepared", "true"));
