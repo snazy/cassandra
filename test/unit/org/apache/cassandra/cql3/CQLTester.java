@@ -415,6 +415,7 @@ public abstract class CQLTester
                                              .withoutJMXReporting()
                                              .addContactPoints(nativeAddr)
                                              .withClusterName("Test Cluster")
+                                             .withSocketOptions(new SocketOptions().setReadTimeoutMillis(30_000))
                                              .withPort(nativePort);
 
             if (version.isBeta())
