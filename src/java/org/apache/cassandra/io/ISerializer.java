@@ -19,9 +19,12 @@ package org.apache.cassandra.io;
 
 import java.io.IOException;
 
+import org.github.jamm.Unmetered;
+
 import org.apache.cassandra.io.util.DataInputPlus;
 import org.apache.cassandra.io.util.DataOutputPlus;
 
+@Unmetered
 public interface ISerializer<T>
 {
     /**

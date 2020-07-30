@@ -38,7 +38,6 @@ import org.apache.cassandra.metrics.DefaultNameFactory;
 import org.apache.cassandra.metrics.MetricNameFactory;
 import org.apache.cassandra.utils.ObjectSizes;
 import org.apache.cassandra.utils.vint.VIntCoding;
-import org.github.jamm.Unmetered;
 
 import static org.apache.cassandra.metrics.CassandraMetricsRegistry.Metrics;
 
@@ -425,7 +424,6 @@ public class RowIndexEntry<T> implements IMeasurableMemory
         private final IndexInfo[] columnsIndex;
         private final int[] offsets;
         private final int indexedPartSize;
-        @Unmetered
         private final ISerializer<IndexInfo> idxInfoSerializer;
 
         private IndexedEntry(long dataFilePosition, DeletionTime deletionTime, long headerLength,
@@ -604,7 +602,6 @@ public class RowIndexEntry<T> implements IMeasurableMemory
 
         private final int indexedPartSize;
         private final int offsetsOffset;
-        @Unmetered
         private final ISerializer<IndexInfo> idxInfoSerializer;
         private final int fieldsSerializedSize;
 

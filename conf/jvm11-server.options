@@ -8,20 +8,36 @@
 #  GC SETTINGS  #
 #################
 
+-XX:+UnlockDiagnosticVMOptions
+
+# Use a segmented code cache (since Java 9), JEP 197
+-XX:+SegmentedCodeCache
+# Use intrinsics for java.util.Base64 (since Java 11)
+-XX:+UseBASE64Intrinsics
+# Enables intrinsification of java.lang.Character functions (since Java 12)
+-XX:+UseCharacterCompareIntrinsics
+# Compilation modes (since Java 14):
+# - default: normal tiered compilation
+# - quick-only: C1-only mode
+# - high-only: C2/JVMCI-only mode
+# - high-only-quick-internal: C2/JVMCI-only mode, with JVMCI compiler compiled with C1
+-XX:CompilationMode=high-only-quick-internal
 
 
 ### CMS Settings
--XX:+UseConcMarkSweepGC
--XX:+CMSParallelRemarkEnabled
--XX:SurvivorRatio=8
--XX:MaxTenuringThreshold=1
--XX:CMSInitiatingOccupancyFraction=75
--XX:+UseCMSInitiatingOccupancyOnly
--XX:CMSWaitDuration=10000
--XX:+CMSParallelInitialMarkEnabled
--XX:+CMSEdenChunksRecordAlways
+#-XX:+UseConcMarkSweepGC
+#-XX:+CMSParallelRemarkEnabled
+#-XX:SurvivorRatio=8
+#-XX:MaxTenuringThreshold=1
+#-XX:CMSInitiatingOccupancyFraction=75
+#-XX:+UseCMSInitiatingOccupancyOnly
+#-XX:CMSWaitDuration=10000
+#-XX:+CMSParallelInitialMarkEnabled
+#-XX:+CMSEdenChunksRecordAlways
 ## some JVMs will fill up their heap when accessed via JMX, see CASSANDRA-6541
--XX:+CMSClassUnloadingEnabled
+#-XX:+CMSClassUnloadingEnabled
+
+-XX:+UseShenandoahGC
 
 
 

@@ -166,7 +166,7 @@ val testDistributed = tasks.named<Test>("testDistributed") {
  */
 
 val bytemanVersion by extra("4.0.6")
-val jammVersion by extra("0.3.2")
+val jammVersion by extra("0.4.0-SNAPSHOT")
 val ohcVersion by extra("0.5.1")
 val asmVersion by extra("7.1")
 val allocationInstrumenterVersion by extra("3.2.0")

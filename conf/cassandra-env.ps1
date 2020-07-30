@@ -380,7 +380,7 @@ Function SetCassandraEnvironment
     $env:JVM_OPTS = "$env:JVM_OPTS -XX:CompileCommandFile=""$env:CASSANDRA_CONF\hotspot_compiler"""
 
     # add the jamm javaagent
-    $env:JVM_OPTS = "$env:JVM_OPTS -javaagent:""$env:CASSANDRA_HOME\lib\jamm-0.3.2.jar"""
+    $env:JVM_OPTS = "$env:JVM_OPTS -javaagent:""$env:CASSANDRA_HOME\lib\jamm-0.4.0-SNAPSHOT.jar"""
 
     # set jvm HeapDumpPath with CASSANDRA_HEAPDUMP_DIR
     if ($env:CASSANDRA_HEAPDUMP_DIR)

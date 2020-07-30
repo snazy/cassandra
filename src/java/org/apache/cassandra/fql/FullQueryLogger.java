@@ -20,8 +20,6 @@ package org.apache.cassandra.fql;
 import java.io.File;
 import java.nio.ByteBuffer;
 import java.nio.file.Path;
-import java.nio.file.Paths;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 
@@ -50,7 +48,6 @@ import org.apache.cassandra.utils.ObjectSizes;
 import org.apache.cassandra.utils.binlog.BinLog;
 import org.apache.cassandra.utils.binlog.BinLogOptions;
 import org.apache.cassandra.utils.concurrent.WeightedQueue;
-import org.github.jamm.MemoryLayoutSpecification;
 
 /**
  * A logger that logs entire query contents after the query finishes (or times out).
@@ -80,14 +77,6 @@ public class FullQueryLogger implements QueryEvents.Listener
     public static final String QUERIES = "queries";
     public static final String VALUES = "values";
 
-    private static final int EMPTY_BYTEBUFFER_SIZE = Ints.checkedCast(ObjectSizes.sizeOnHeapExcludingData(ByteBuffer.allocate(0)));
-
-    private static final int EMPTY_LIST_SIZE = Ints.checkedCast(ObjectSizes.measureDeep(new ArrayList(0)));
-    private static final int EMPTY_BYTEBUF_SIZE;
-
-    private static final int OBJECT_HEADER_SIZE = MemoryLayoutSpecification.SPEC.getObjectHeaderSize();
-    private static final int OBJECT_REFERENCE_SIZE = MemoryLayoutSpecification.SPEC.getReferenceSize();
-
     public static final FullQueryLogger instance = new FullQueryLogger();
 
     volatile BinLog binLog;
@@ -105,19 +94,6 @@ public class FullQueryLogger implements QueryEvents.Listener
                                           .maxArchiveRetries(maxArchiveRetries)
                                           .build(true);
         QueryEvents.instance.registerListener(this);
-    }
-
-    static
-    {
-        ByteBuf buf = CBUtil.allocator.buffer(0, 0);
-        try
-        {
-            EMPTY_BYTEBUF_SIZE = Ints.checkedCast(ObjectSizes.measure(buf));
-        }
-        finally
-        {
-            buf.release();
-        }
     }
 
     public FullQueryLoggerOptions getFullQueryLoggerOptions()
@@ -363,25 +339,7 @@ public class FullQueryLogger implements QueryEvents.Listener
             this.queries = queries;
             this.values = values;
             this.batchType = batchType;
-
-            int weight = super.weight();
-
-            // weight, queries, values, batch type
-            weight += 4 +                    // cached weight
-                      2 * EMPTY_LIST_SIZE +  // queries + values lists
-                      OBJECT_REFERENCE_SIZE; // batchType reference, worst case
-
-            for (String query : queries)
-                weight += ObjectSizes.sizeOf(query);
-
-            for (List<ByteBuffer> subValues : values)
-            {
-                weight += EMPTY_LIST_SIZE;
-                for (ByteBuffer value : subValues)
-                    weight += EMPTY_BYTEBUFFER_SIZE + value.capacity();
-            }
-
-            this.weight = weight;
+            this.weight = Ints.checkedCast(ObjectSizes.measureDeep(this));
         }
 
         @Override
@@ -494,15 +452,9 @@ public class FullQueryLogger implements QueryEvents.Listener
         @Override
         public int weight()
         {
-            return OBJECT_HEADER_SIZE
-                 + 8                                                  // queryStartTime
-                 + 4                                                  // protocolVersion
-                 + EMPTY_BYTEBUF_SIZE + queryOptionsBuffer.capacity() // queryOptionsBuffer
-                 + 8                                                  // generatedTimestamp
-                 + 4                                                  // generatedNowInSeconds
-                 + (keyspace != null
-                    ? Ints.checkedCast(ObjectSizes.sizeOf(keyspace))  // keyspace
-                    : OBJECT_REFERENCE_SIZE);                         // null
+            return Ints.checkedCast(ObjectSizes.measureDeep(this) +
+                                    (queryOptionsBuffer.isDirect() ? queryOptionsBuffer.capacity()
+                                                                   : 0));
         }
     }
 

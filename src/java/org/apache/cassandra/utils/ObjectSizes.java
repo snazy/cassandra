@@ -23,7 +23,6 @@ package org.apache.cassandra.utils;
 
 import java.nio.ByteBuffer;
 
-import org.github.jamm.MemoryLayoutSpecification;
 import org.github.jamm.MemoryMeter;
 
 /**
@@ -31,13 +30,20 @@ import org.github.jamm.MemoryMeter;
  */
 public class ObjectSizes
 {
-    private static final MemoryMeter meter = new MemoryMeter()
-                                             .omitSharedBufferOverhead()
-                                             .withGuessing(MemoryMeter.Guess.FALLBACK_UNSAFE)
-                                             .ignoreKnownSingletons();
+    private static final MemoryMeter meter = MemoryMeter.builder()
+                                                        .omitSharedBufferOverhead()
+                                                        .ignoreKnownSingletons()
+                                                        .build();
+    private static final MemoryMeter meterShallowBb = MemoryMeter.builder()
+                                                                 .onlyShallowByteBuffers()
+                                                                 .ignoreKnownSingletons()
+                                                                 .build();
+    private static final MemoryMeter meterBbHeapOnly = MemoryMeter.builder()
+                                                                  .byteBuffersHeapOnlyNoSlice()
+                                                                  .ignoreKnownSingletons()
+                                                                  .build();
 
-    private static final long BUFFER_EMPTY_SIZE = measure(ByteBufferUtil.EMPTY_BYTE_BUFFER);
-    private static final long STRING_EMPTY_SIZE = measure("");
+    private static final long BUFFER_EMPTY_SIZE = meter.measure(ByteBufferUtil.EMPTY_BYTE_BUFFER);
 
     /**
      * Memory a byte array consumes
@@ -46,7 +52,7 @@ public class ObjectSizes
      */
     public static long sizeOfArray(byte[] bytes)
     {
-        return sizeOfArray(bytes.length, 1);
+        return meter.sizeOfArray(bytes);
     }
 
     /**
@@ -56,7 +62,7 @@ public class ObjectSizes
      */
     public static long sizeOfArray(long[] longs)
     {
-        return sizeOfArray(longs.length, 8);
+        return meter.sizeOfArray(longs);
     }
 
     /**
@@ -66,7 +72,7 @@ public class ObjectSizes
      */
     public static long sizeOfArray(int[] ints)
     {
-        return sizeOfArray(ints.length, 4);
+        return meter.sizeOfArray(ints);
     }
 
     /**
@@ -76,7 +82,7 @@ public class ObjectSizes
      */
     public static long sizeOfReferenceArray(int length)
     {
-        return sizeOfArray(length, MemoryLayoutSpecification.SPEC.getReferenceSize());
+        return meter.sizeOfArray(length, Object.class);
     }
 
     /**
@@ -86,12 +92,7 @@ public class ObjectSizes
      */
     public static long sizeOfArray(Object[] objects)
     {
-        return sizeOfReferenceArray(objects.length);
-    }
-
-    private static long sizeOfArray(int length, long elementSize)
-    {
-        return MemoryLayoutSpecification.sizeOfArray(length, elementSize);
+        return meter.sizeOfArray(objects);
     }
 
     /**
@@ -99,17 +100,12 @@ public class ObjectSizes
      */
     public static long sizeOnHeapOf(ByteBuffer[] array)
     {
-        long allElementsSize = 0;
-        for (int i = 0; i < array.length; i++)
-            if (array[i] != null)
-                allElementsSize += sizeOnHeapOf(array[i]);
-
-        return allElementsSize + sizeOfArray(array);
+        return meterBbHeapOnly.measureDeep(array);
     }
 
     public static long sizeOnHeapExcludingData(ByteBuffer[] array)
     {
-        return BUFFER_EMPTY_SIZE * array.length + sizeOfArray(array);
+        return meterShallowBb.measureDeep(array);
     }
 
     /**
@@ -119,13 +115,7 @@ public class ObjectSizes
      */
     public static long sizeOnHeapOf(ByteBuffer buffer)
     {
-        if (buffer.isDirect())
-            return BUFFER_EMPTY_SIZE;
-        // if we're only referencing a sub-portion of the ByteBuffer, don't count the array overhead (assume it's slab
-        // allocated, so amortized over all the allocations the overhead is negligible and better to undercount than over)
-        if (buffer.capacity() > buffer.remaining())
-            return buffer.remaining();
-        return BUFFER_EMPTY_SIZE + sizeOfArray(buffer.capacity(), 1);
+        return meterBbHeapOnly.measureDeep(buffer);
     }
 
     public static long sizeOnHeapExcludingData(ByteBuffer buffer)
@@ -138,10 +128,9 @@ public class ObjectSizes
      * @param str String to calculate memory size of
      * @return Total in-memory size of the String
      */
-    //@TODO hard coding this to 2 isn't necessarily correct in Java 11
     public static long sizeOf(String str)
     {
-        return STRING_EMPTY_SIZE + sizeOfArray(str.length(), 2);
+        return meter.measure(str);
     }
 
     /**

@@ -115,7 +115,7 @@
     <property name="jacoco.version" value="0.8.5"/>
 
     <property name="byteman.version" value="4.0.6"/>
-    <property name="jamm.version" value="0.3.2"/>
+    <property name="jamm.version" value="0.4.0-SNAPSHOT"/>
     <property name="ecj.version" value="4.6.1"/>
     <property name="ohc.version" value="0.5.1"/>
     <property name="asm.version" value="7.1"/>

@@ -112,7 +112,7 @@
 -XX:+AlwaysPreTouch
 
 # Disable biased locking as it does not benefit Cassandra.
--XX:-UseBiasedLocking
+#-XX:-UseBiasedLocking
 
 # Enable thread-local allocation blocks and allow the JVM to automatically
 # resize them at runtime.
