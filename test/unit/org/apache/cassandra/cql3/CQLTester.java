@@ -349,23 +349,41 @@ public abstract class CQLTester
     }
 
     @AfterClass
-    public static void tearDownClass()
+    public static void tearDownClass() throws InterruptedException
     {
+        logger.info("Tear down - closing driver sessions...");
         for (Session sess : sessions.values())
                 sess.close();
+
+        logger.info("Tear down - closing driver clusters...");
         for (Cluster cl : clusters.values())
                 cl.close();
 
+        logger.info("Tear down - stopping server...");
         if (server != null)
             server.stop();
 
         // We use queryInternal for CQLTester so prepared statement will populate our internal cache (if reusePrepared is used; otherwise prepared
         // statements are not cached but re-prepared every time). So we clear the cache between test files to avoid accumulating too much.
+        logger.info("Tear down - clear internal statements cache...");
         if (reusePrepared)
             QueryProcessor.clearInternalStatementsCache();
 
+        logger.info("Tear down - shutdown commit log...");
+        try
+        {
+            StorageService.instance.drain();
+        }
+        catch (Exception e)
+        {
+            logger.error("Failed to drain", e);
+        }
+
+        logger.info("Tear down - clear token-metadata...");
         TokenMetadata metadata = StorageService.instance.getTokenMetadata();
         metadata.clearUnsafe();
+
+        logger.info("Tear down - finished.");
     }
 
     @Before
