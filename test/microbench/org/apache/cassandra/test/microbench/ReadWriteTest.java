@@ -65,6 +65,7 @@ public class ReadWriteTest extends CQLTester
     @TearDown(Level.Trial)
     public void teardown() throws IOException, ExecutionException, InterruptedException
     {
+        CQLTester.tearDownClass();
         CQLTester.cleanup();
     }
 
