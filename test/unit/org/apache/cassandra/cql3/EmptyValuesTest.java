@@ -19,12 +19,12 @@
 package org.apache.cassandra.cql3;
 
 import java.io.ByteArrayOutputStream;
-import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
 import java.util.regex.Pattern;
 
 import org.apache.commons.io.IOUtils;
 
+import org.hamcrest.CoreMatchers;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -73,21 +73,21 @@ public class EmptyValuesTest extends CQLTester
         ByteArrayOutputStream buf = new ByteArrayOutputStream();
         for (SSTableReader ssTable : cfs.getLiveSSTables())
         {
-            try (PrintStream out = new PrintStream(buf, true))
+            ProcessBuilder pb = new ProcessBuilder("tools/bin/sstabledump", ssTable.getFilename());
+            Process process = pb.start();
+            process.waitFor();
+            IOUtils.copy(process.getInputStream(), buf);
+            if (process.exitValue() != 0)
             {
-                ProcessBuilder pb = new ProcessBuilder("tools/bin/sstabledump", ssTable.getFilename());
-                Process process = pb.start();
-                process.waitFor();
-                IOUtils.copy(process.getInputStream(), buf);
-            }
-            catch (Throwable t)
-            {
-                Assert.fail(t.getClass().getName());
+                IOUtils.copy(process.getErrorStream(), buf);
+                throw new RuntimeException("sstabledump failed with exit code " +
+                                           process.exitValue() + "\n" +
+                                           new String(buf.toByteArray(), StandardCharsets.UTF_8));
             }
         }
         
         String outString = new String(buf.toByteArray(), StandardCharsets.UTF_8);
-        Assert.assertTrue(outString, outString.contains("{ \"name\" : \"v\", \"value\" : \"" + emptyValue + "\" }"));
+        Assert.assertThat(outString, CoreMatchers.containsString("{ \"name\" : \"v\", \"value\" : \"" + emptyValue + "\" }"));
     }
 
     private void verifyPlainInsert(String emptyValue) throws Throwable
